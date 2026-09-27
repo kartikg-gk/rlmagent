@@ -4,7 +4,7 @@ While plan mode is active the session hands the model a restricted tool set
 and an extra system-prompt block telling it to research and propose rather
 than act.  Two things change:
 
-* Mutating tools (``Write``, ``Edit``) are removed from the tool list, so the
+* Mutating tools (``Write``, ``Edit``, ``python``) are removed from the tool list, so the
   model cannot call them at all.
 * ``Bash`` is wrapped so only commands ``safety.is_safe_command`` recognises
   as read-only are executed; anything else is refused without running.
@@ -28,7 +28,8 @@ from rlmagent_harness.contracts.tooling import (
 from rlmagent_harness.contracts.values import JValue
 
 #: Tools removed entirely while plan mode is active.
-MUTATING_TOOLS = frozenset({"Write", "Edit"})
+#: The python kernel can write anything, so it cannot be limited to reading.
+MUTATING_TOOLS = frozenset({"Write", "Edit", "python"})
 
 #: Tool whose commands are filtered rather than removed.
 _SHELL_TOOL = "Bash"

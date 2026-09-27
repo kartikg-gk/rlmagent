@@ -1,4 +1,4 @@
-"""Coding tools (files, bash) + tool registry/assembly."""
+"""Coding tools (files, the python kernel) + tool registry/assembly."""
 
 from __future__ import annotations
 
@@ -15,19 +15,16 @@ from rlmagent_app.tools._shared import (
     ToolOutcome,
     ToolSpec,
 )
-from rlmagent_app.tools.bash import bash_tools
 from rlmagent_app.tools.files import file_tools
+from rlmagent_app.tools.kernel import make_python_tool
 
 
-def build_tool_registry() -> list[ToolSpec]:
-    """Assemble all available coding tools.
-
-    Called by ``cli/main.py`` at startup.  As new tool modules are added
-    (subagent, etc.), their factory functions get called here.
-    """
+def build_tool_registry(kernel=None) -> list[ToolSpec]:
+    """File tools, plus the python tool when the agent has a kernel."""
     tools: list[ToolSpec] = []
     tools.extend(file_tools())
-    tools.extend(bash_tools())
+    if kernel is not None:
+        tools.append(make_python_tool(kernel))
     return tools
 
 
@@ -43,7 +40,7 @@ __all__ = [
     "RunHandler",
     "ToolOutcome",
     "ToolSpec",
-    "bash_tools",
     "build_tool_registry",
     "file_tools",
+    "make_python_tool",
 ]
