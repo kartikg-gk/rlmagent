@@ -8,8 +8,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from rlmness import Allowance
+from rlmness import Allowance, AllowanceSpent
 
+from rlmagent_app.agents.budget import BudgetedProvider
 from rlmagent_app.agents.bridge import BridgeServer, kernel_env
 from rlmagent_app.agents.kernel_api import KERNEL_API
 from rlmagent_app.kernel import KernelSession
@@ -48,7 +49,8 @@ class AgentTree:
         system_for: Callable[[AgentNode, list[ToolSpec]], str],
         first_message_for: Callable[[AgentNode], str],
     ) -> None:
-        self.provider = provider
+        # Every call in the tree, the root's included, goes through one allowance.
+        self.provider = BudgetedProvider(provider, allowance)
         self.provider_name = provider_name
         self.model = model
         self.cwd = cwd
@@ -110,8 +112,13 @@ class AgentTree:
             return await self.run_child(agent_id, str(args.get("task", "")), args.get("context"))
         if op == "gather":
             jobs = [(str(task), context) for task, context in args.get("jobs", [])]
-            async with asyncio.TaskGroup() as group:
-                tasks = [group.create_task(self.run_child(agent_id, t, c)) for t, c in jobs]
+            try:
+                async with asyncio.TaskGroup() as group:
+                    tasks = [group.create_task(self.run_child(agent_id, t, c)) for t, c in jobs]
+            except* Exception as failed:
+                # One child's failure stops the rest; the caller needs its
+                # reason, not "a task group failed".
+                raise failed.exceptions[0] from None
             return [task.result() for task in tasks]
         raise RuntimeError(f"unknown request {op!r}")
 
@@ -148,6 +155,8 @@ class AgentTree:
                 for attempt in range(2):
                     async for _ in session.submit(message):
                         pass
+                    if self.provider.refusal is not None:
+                        raise AllowanceSpent(self.provider.refusal)
                     if node.final_given:
                         return node.final_value
                     message = NUDGE
