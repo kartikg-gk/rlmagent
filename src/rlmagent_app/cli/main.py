@@ -126,7 +126,7 @@ def _build_run_parser() -> argparse.ArgumentParser:
     """Build the argument parser for the default run mode."""
     p = argparse.ArgumentParser(
         prog="rlm-agent",
-        description="rlm-agent - a small, readable coding-agent harness.",
+        description="rlm-agent - a coding agent with a persistent Python kernel and sub-agents.",
     )
     p.add_argument(
         "--version", "-V", action="version", version=f"rlm-agent {get_version()}",
@@ -152,6 +152,19 @@ def _build_run_parser() -> argparse.ArgumentParser:
         help="Limit agent turns per submission.",
     )
     p.add_argument("--verbose", "-v", action="store_true", help="Verbose diagnostics.")
+    budget = p.add_argument_group("limits for the whole tree of agents")
+    budget.add_argument("--max-depth", type=int, default=2,
+                        help="How many levels of sub-agents may be started (default 2).")
+    budget.add_argument("--max-calls", type=int, default=200,
+                        help="Model calls allowed across all agents (default 200).")
+    budget.add_argument("--max-cost", type=float, default=2.0,
+                        help="Spend allowed across all agents, in dollars (default 2.0).")
+    budget.add_argument("--max-live", type=int, default=8,
+                        help="Sub-agents running at the same time (default 8).")
+    budget.add_argument("--max-seconds", type=float, default=None,
+                        help="Wall-clock limit for the whole run (default none).")
+    budget.add_argument("--cell-timeout", type=float, default=300.0,
+                        help="Seconds one kernel cell may run before it is interrupted (default 300).")
     p.add_argument(
         "--no-session", action="store_true", help="Disable session persistence.",
     )
@@ -256,10 +269,10 @@ def _resolve_system(
 # ---------------------------------------------------------------------------
 
 
-def _load_tools(verbose: bool = False) -> list[ToolSpec]:
+def _load_tools(verbose: bool = False, kernel=None) -> list[ToolSpec]:
     try:
         from rlmagent_app.tools import build_tool_registry  # type: ignore[import-not-found]
-        tools: list[ToolSpec] = build_tool_registry()
+        tools: list[ToolSpec] = build_tool_registry(kernel)
         if verbose:
             _info(f"Loaded {len(tools)} tool(s).")
         return tools

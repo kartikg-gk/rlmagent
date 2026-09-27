@@ -48,6 +48,7 @@ class AgentTree:
         sessions_dir: Path | None,
         system_for: Callable[[AgentNode, list[ToolSpec]], str],
         first_message_for: Callable[[AgentNode], str],
+        cell_timeout: float = 300.0,
     ) -> None:
         # Every call in the tree, the root's included, goes through one allowance.
         self.provider = BudgetedProvider(provider, allowance)
@@ -58,9 +59,11 @@ class AgentTree:
         self.sessions_dir = sessions_dir
         self.system_for = system_for
         self.first_message_for = first_message_for
+        self.cell_timeout = cell_timeout
         self.nodes: dict[str, AgentNode] = {}
         self.kernels: dict[str, KernelSession] = {}
         self.sessions: list = []
+        self._children: dict[str, list[str]] = {}
         self._bridge = BridgeServer(self._handle)
         self._live = asyncio.Semaphore(max(1, allowance.max_live))
         self._ids = itertools.count(1)
@@ -78,6 +81,8 @@ class AgentTree:
         return node.depth < self.allowance.max_depth
 
     def _kernel_for(self, node: AgentNode) -> KernelSession:
+        if not self._bridge.port:
+            raise RuntimeError("start() the agent tree before creating kernels")
         env = kernel_env(
             self._bridge.port,
             self._bridge.token,
@@ -85,7 +90,9 @@ class AgentTree:
             can_delegate=self._can_delegate(node),
             is_child=node.parent_id is not None,
         )
-        kernel = KernelSession(cwd=self.cwd, env=env, startup_code=KERNEL_API)
+        kernel = KernelSession(
+            cwd=self.cwd, env=env, startup_code=KERNEL_API, timeout=self.cell_timeout
+        )
         self.kernels[node.id] = kernel
         return kernel
 
@@ -150,6 +157,7 @@ class AgentTree:
             )
             await session.set_name(f"sub-agent {node.id}: {task[:60]}")
             self.sessions.append(session)
+            self._children.setdefault(parent_id, []).append(session.session_id)
             try:
                 message = self.first_message_for(node)
                 for attempt in range(2):
@@ -163,6 +171,10 @@ class AgentTree:
                 return f"{_last_text(session)}\n{NEVER_FINAL}"
             finally:
                 await kernel.shutdown()
+
+    def child_session_ids(self, parent_id: str) -> list[str]:
+        """Saved-session ids of the sub-agents an agent started, in order."""
+        return list(self._children.get(parent_id, []))
 
     async def close(self) -> None:
         for kernel in list(self.kernels.values()):

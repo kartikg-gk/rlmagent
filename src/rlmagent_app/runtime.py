@@ -40,6 +40,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     )
     from rlmagent_app.config.loader import apply_config, load_model
     from rlmagent_app.conversation import CodingSession
+    from rlmagent_app.agents.prompts import root_system
     from rlmagent_app.safety import ApprovalPolicy
 
     provider_name = _resolve_provider_name(getattr(ns, "provider", None))
@@ -55,22 +56,33 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
 
     verbose = getattr(ns, "verbose", False)
     await settle_project_trust(ns)
+
+    no_session = getattr(ns, "no_session", False)
+    sessions_dir = None if no_session else _sessions_dir(getattr(ns, "session_dir", None))
+
+    # The root agent and every sub-agent share one tree: one budget, one
+    # channel back from the kernels, one place that shuts them all down.
+    tree = make_agent_tree(ns, provider, provider_name, model, sessions_dir, cwd=os.getcwd())
+    await tree.start()
+    kernel = tree.root_kernel()
+    provider = tree.provider
+
     _load_extensions(verbose=verbose)
-    tools = _load_tools(verbose=verbose)
+    tools = _load_tools(verbose=verbose, kernel=kernel)
     skills = _load_skills(os.getcwd(), verbose=verbose)
-    system = _resolve_system(getattr(ns, "system_prompt", None), tools=tools, skills=skills)
+    system = root_system(
+        _resolve_system(getattr(ns, "system_prompt", None), tools=tools, skills=skills),
+        can_delegate=tree.allowance.max_depth > 0,
+    )
 
     def _tools_loader():
-        return _load_tools()
+        return _load_tools(kernel=kernel)
 
     def _skills_loader():
         return _load_skills(os.getcwd())
 
     def _templates_loader():
         return _load_prompt_templates(os.getcwd())
-
-    no_session = getattr(ns, "no_session", False)
-    sessions_dir = None if no_session else _sessions_dir(getattr(ns, "session_dir", None))
 
     resume = getattr(ns, "resume", None)
     if resume:
@@ -107,6 +119,8 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
             templates_loader=_templates_loader,
         )
 
+    session.agent_tree = tree
+
     max_turns = getattr(ns, "max_turns", None)
     if max_turns is not None:
         session.harness.settings.max_turns = max_turns
@@ -115,6 +129,40 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     _install_safety(session.harness, ApprovalPolicy.AUTO)
     attach_logger(session)
     return session
+
+
+def make_agent_tree(ns, provider, provider_name, model, sessions_dir, *, cwd):
+    """Build the tree of agents a run uses, with the limits from the command line."""
+    from rlmness import Allowance
+
+    from rlmagent_app.agents.prompts import child_first_message, child_system
+    from rlmagent_app.agents.tree import AgentTree
+    from rlmagent_app.cli.main import _resolve_system
+
+    allowance = Allowance(
+        max_depth=getattr(ns, "max_depth", 2),
+        max_calls=getattr(ns, "max_calls", 200),
+        max_cost=getattr(ns, "max_cost", 2.0),
+        max_live=getattr(ns, "max_live", 8),
+        max_seconds=getattr(ns, "max_seconds", None),
+    )
+
+    def system_for(node, tools):
+        base = _resolve_system(None, tools=tools, skills=[])
+        return child_system(base, node, node.depth < allowance.max_depth)
+
+    tree = AgentTree(
+        provider=provider,
+        provider_name=provider_name,
+        model=model,
+        cwd=cwd,
+        allowance=allowance,
+        sessions_dir=sessions_dir,
+        system_for=system_for,
+        first_message_for=child_first_message,
+        cell_timeout=getattr(ns, "cell_timeout", 300.0),
+    )
+    return tree
 
 
 def _is_interactive(ns: argparse.Namespace) -> bool:
