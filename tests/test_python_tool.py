@@ -49,3 +49,36 @@ def test_python_calls_count_as_mutating_for_approval():
     context = _approval_context(CallBlock(name="python", id="c1", arguments={"code": "open('x','w')"}))
     assert context.is_mutating
     assert context.command == "open('x','w')"
+
+
+class _Cancelled:
+    def __init__(self):
+        self.flag = False
+
+    def is_cancelled(self):
+        return self.flag
+
+
+async def test_cancel_returns_promptly_even_if_the_cell_ignores_the_interrupt(tmp_path):
+    import asyncio
+    import time
+
+    kernel = KernelSession(cwd=str(tmp_path), timeout=120)
+    tool = make_python_tool(kernel)
+    token = _Cancelled()
+    try:
+        await tool.execute("c0", {"code": "x = 1"})
+
+        async def cancel_soon():
+            await asyncio.sleep(1.5)
+            token.flag = True
+
+        started = time.monotonic()
+        asyncio.get_running_loop().create_task(cancel_soon())
+        outcome = await tool.execute("c1", {"code": "import time\ntime.sleep(120)"}, token)
+        assert time.monotonic() - started < 15
+        assert "cancelled" in outcome.text.lower()
+        after = await tool.execute("c2", {"code": "print('alive')"})
+        assert "alive" in after.text
+    finally:
+        await kernel.shutdown()

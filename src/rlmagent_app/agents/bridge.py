@@ -22,9 +22,14 @@ def kernel_env(port: int, token: str, agent_id: str, *, can_delegate: bool, is_c
 
 
 class BridgeServer:
+    """Serves requests from kernels. Each agent gets its own token, and the
+    token alone says who is calling: a kernel can rewrite anything it sends,
+    so nothing else in a request is trusted for identity."""
+
     def __init__(self, handler: Handler) -> None:
         self._handler = handler
-        self.token = secrets.token_hex(16)
+        self._agents: dict[str, str] = {}
+        self._running: set[asyncio.Task] = set()
         self.port = 0
         self._server: asyncio.base_events.Server | None = None
 
@@ -34,20 +39,31 @@ class BridgeServer:
         )
         self.port = self._server.sockets[0].getsockname()[1]
 
+    def issue(self, agent_id: str) -> str:
+        token = secrets.token_hex(16)
+        self._agents[token] = agent_id
+        return token
+
+    def revoke(self, token: str) -> None:
+        self._agents.pop(token, None)
+
+    def _caller(self, token: object) -> str | None:
+        for known, agent_id in self._agents.items():
+            if secrets.compare_digest(str(token), known):
+                return agent_id
+        return None
+
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             line = await reader.readline()
             request = json.loads(line)
-            if not secrets.compare_digest(str(request.get("token", "")), self.token):
+            caller = self._caller(request.get("token", "")) if isinstance(request, dict) else None
+            if caller is None:
                 reply: dict = {"error": "refused: bad token"}
             else:
-                try:
-                    value = await self._handler(
-                        str(request["agent"]), str(request["op"]), dict(request.get("args") or {})
-                    )
-                    reply = {"ok": value}
-                except Exception as exc:  # the kernel sees it as an exception in its cell
-                    reply = {"error": str(exc) or type(exc).__name__}
+                reply = await self._answer(caller, request, reader)
+                if reply is None:
+                    return  # the caller hung up; nobody is left to answer
             writer.write((json.dumps(reply, default=repr) + "\n").encode())
             await writer.drain()
         except (json.JSONDecodeError, ConnectionError):
@@ -55,7 +71,35 @@ class BridgeServer:
         finally:
             writer.close()
 
+    async def _answer(self, caller: str, request: dict, reader: asyncio.StreamReader) -> dict | None:
+        """Run the request, stopping it if the kernel hangs up first.
+
+        A kernel that was restarted or killed mid-call closes its end. The
+        sub-agent it was waiting on would otherwise run on, spending budget
+        on an answer nobody can receive.
+        """
+        work = asyncio.create_task(
+            self._handler(caller, str(request["op"]), dict(request.get("args") or {}))
+        )
+        self._running.add(work)
+        hangup = asyncio.create_task(reader.read(1))
+        try:
+            await asyncio.wait({work, hangup}, return_when=asyncio.FIRST_COMPLETED)
+            if not work.done():
+                work.cancel()
+                await asyncio.gather(work, return_exceptions=True)
+                return None
+            try:
+                return {"ok": work.result()}
+            except Exception as exc:  # the kernel sees it as an exception in its cell
+                return {"error": str(exc) or type(exc).__name__}
+        finally:
+            hangup.cancel()
+            self._running.discard(work)
+
     async def close(self) -> None:
+        for work in list(self._running):
+            work.cancel()
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()

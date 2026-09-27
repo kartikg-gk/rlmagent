@@ -42,6 +42,24 @@ def format_cell(result: CellResult) -> str:
     return "\n".join(parts) if parts else "(no output)"
 
 
+_CANCEL_GRACE = 3.0
+
+
+async def _cancel(kernel: KernelSession, task: asyncio.Task) -> str:
+    """Stop a running cell for a cancel, and never wait long for it."""
+    await kernel.interrupt()
+    done, _ = await asyncio.wait({task}, timeout=_CANCEL_GRACE)
+    if done:
+        return format_cell(task.result()) + "\n[Cancelled by the user.]"
+    # The cell ignored the interrupt, as a blocking call can.
+    await kernel.kill()
+    await asyncio.gather(task, return_exceptions=True)
+    return (
+        "[Cancelled by the user. The cell ignored the interrupt, so the kernel was "
+        "stopped: variables from before are gone.]"
+    )
+
+
 def make_python_tool(kernel: KernelSession) -> ToolSpec:
     async def run(
         tool_call_id: str,
@@ -51,13 +69,15 @@ def make_python_tool(kernel: KernelSession) -> ToolSpec:
     ) -> ToolOutcome:
         code = str(arguments.get("code", ""))
         task = asyncio.create_task(kernel.run(code))
-        while not task.done():
-            if signal is not None and signal.is_cancelled():
-                await kernel.interrupt()
-                break
-            await asyncio.sleep(0.2)
-        result = await task
-        return ToolOutcome(content=format_cell(result))
+        try:
+            while not task.done():
+                if signal is not None and signal.is_cancelled():
+                    return ToolOutcome(content=await _cancel(kernel, task))
+                await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            await kernel.interrupt()
+            raise
+        return ToolOutcome(content=format_cell(await task))
 
     return ToolSpec(
         name="python",

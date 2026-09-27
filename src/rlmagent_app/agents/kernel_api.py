@@ -9,13 +9,12 @@ import socket as _rlmagent_socket
 _RLMAGENT = {
     "port": int(_rlmagent_os.environ["RLM_AGENT_BRIDGE_PORT"]),
     "token": _rlmagent_os.environ["RLM_AGENT_BRIDGE_TOKEN"],
-    "agent": _rlmagent_os.environ["RLM_AGENT_ID"],
 }
 
 
 def _rlmagent_payload(op, args):
-    return (_rlmagent_json.dumps({"token": _RLMAGENT["token"], "agent": _RLMAGENT["agent"],
-                                  "op": op, "args": args}) + "\n").encode()
+    return (_rlmagent_json.dumps({"token": _RLMAGENT["token"], "op": op, "args": args})
+            + "\n").encode()
 
 
 def _rlmagent_reply(line):

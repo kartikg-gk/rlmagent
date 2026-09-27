@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 from collections.abc import Mapping
@@ -48,9 +49,24 @@ class KernelSession:
         self.timeout = timeout
         self.output_limit = output_limit
         self.interrupt_grace = interrupt_grace
+        self._waiting_outside = 0
         self._manager: AsyncKernelManager | None = None
         self._client = None
         self._lock = asyncio.Lock()
+
+    @contextlib.contextmanager
+    def waiting_outside(self):
+        """Mark the running cell as waiting on work done elsewhere.
+
+        The cell timeout is for code that runs too long. A cell awaiting a
+        sub-agent is idle while the sub-agent works, which is bounded by the
+        budget instead; its clock starts again once the wait ends.
+        """
+        self._waiting_outside += 1
+        try:
+            yield
+        finally:
+            self._waiting_outside -= 1
 
     @property
     def started(self) -> bool:
@@ -104,6 +120,8 @@ class KernelSession:
         error: str | None = None
         timed_out = False
         while True:
+            if self._waiting_outside and not timed_out:
+                deadline = loop.time() + timeout
             remaining = deadline - loop.time()
             if remaining <= 0 and not timed_out:
                 timed_out = True
@@ -134,6 +152,19 @@ class KernelSession:
         if timed_out and error and "KeyboardInterrupt" in error:
             error = None
         return CellResult(output="".join(parts), error=error, timed_out=timed_out)
+
+    async def kill(self) -> None:
+        """Stop the kernel process now, even while a cell holds the lock.
+
+        The running cell then ends as "kernel died", and the next cell starts
+        a fresh kernel and says so.
+        """
+        manager = self._manager
+        if manager is not None:
+            try:
+                await manager.shutdown_kernel(now=True)
+            except Exception:
+                pass
 
     async def interrupt(self) -> None:
         if self._manager is not None:
