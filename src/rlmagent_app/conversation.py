@@ -1871,15 +1871,19 @@ class CodingSession:
             )
         return report
 
-    async def _cmd_name(self, arg: str) -> str:
-        if not arg:
-            return f"Session: {self._title or self._session_id}"
-        self._title = arg
+    async def set_name(self, title: str) -> None:
+        """Give the session a fixed name, so no model call is spent on titling it."""
+        self._title = title
         self._named = True
         # An explicit name is final — stop auto-renaming over it.
         self._renamed_manually = True
-        await self._append_record(TagRecord(label=arg))
-        self._sync_title_to_catalog(arg)
+        await self._append_record(TagRecord(label=title))
+        self._sync_title_to_catalog(title)
+
+    async def _cmd_name(self, arg: str) -> str:
+        if not arg:
+            return f"Session: {self._title or self._session_id}"
+        await self.set_name(arg)
         return f"Session named: {arg}"
 
     async def _cmd_export(self, arg: str) -> str:
