@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import itertools
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -85,7 +86,7 @@ class AgentTree:
             raise RuntimeError("start() the agent tree before creating kernels")
         env = kernel_env(
             self._bridge.port,
-            self._bridge.token,
+            self._bridge.issue(node.id),
             node.id,
             can_delegate=self._can_delegate(node),
             is_child=node.parent_id is not None,
@@ -116,18 +117,43 @@ class AgentTree:
             node.final_given = True
             return None
         if op == "rlm":
-            return await self.run_child(agent_id, str(args.get("task", "")), args.get("context"))
+            async with self._waiting_on_children(node):
+                return await self.run_child(
+                    agent_id, str(args.get("task", "")), args.get("context")
+                )
         if op == "gather":
             jobs = [(str(task), context) for task, context in args.get("jobs", [])]
-            try:
-                async with asyncio.TaskGroup() as group:
-                    tasks = [group.create_task(self.run_child(agent_id, t, c)) for t, c in jobs]
-            except* Exception as failed:
-                # One child's failure stops the rest; the caller needs its
-                # reason, not "a task group failed".
-                raise failed.exceptions[0] from None
+            async with self._waiting_on_children(node):
+                try:
+                    async with asyncio.TaskGroup() as group:
+                        tasks = [
+                            group.create_task(self.run_child(agent_id, t, c)) for t, c in jobs
+                        ]
+                except* Exception as failed:
+                    # One child's failure stops the rest; the caller needs its
+                    # reason, not "a task group failed".
+                    raise failed.exceptions[0] from None
             return [task.result() for task in tasks]
         raise RuntimeError(f"unknown request {op!r}")
+
+    @contextlib.asynccontextmanager
+    async def _waiting_on_children(self, node: AgentNode):
+        """While an agent waits on its own sub-agents, pause its cell timeout
+        and give up its live slot.
+
+        A sub-agent holds a slot for its whole run. If it kept that slot while
+        awaiting children, a tree as deep as the slots are few would wait on
+        itself forever. The root never holds one.
+        """
+        with self.kernels[node.id].waiting_outside():
+            if node.parent_id is None:
+                yield
+                return
+            self._live.release()
+            try:
+                yield
+            finally:
+                await self._live.acquire()
 
     async def run_child(self, parent_id: str, task: str, context: object) -> object:
         from rlmagent_app.conversation import CodingSession
@@ -166,10 +192,13 @@ class AgentTree:
                     if self.provider.refusal is not None:
                         raise AllowanceSpent(self.provider.refusal)
                     if node.final_given:
+                        if node.final_note:
+                            return f"{node.final_value}\n[{node.final_note}]"
                         return node.final_value
                     message = NUDGE
                 return f"{_last_text(session)}\n{NEVER_FINAL}"
             finally:
+                self._bridge.revoke(kernel.env["RLM_AGENT_BRIDGE_TOKEN"])
                 await kernel.shutdown()
 
     def child_session_ids(self, parent_id: str) -> list[str]:

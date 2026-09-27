@@ -47,3 +47,12 @@ async def test_budget_is_shared_across_the_tree_and_stops_a_gather(tmp_path):
         assert "calls" in result.error
     finally:
         await tree.close()
+
+
+async def test_every_call_after_the_limit_names_the_limit():
+    allowance = Allowance(max_calls=1)
+    provider = BudgetedProvider(ReplayProvider([text_turn("one")]), allowance)
+    for _ in range(3):
+        events = [e async for e in provider.stream_response(model="m", system="s", messages=[], tools=[])]
+    assert events[-1].type == "error"
+    assert "calls" in events[-1].error.error_message

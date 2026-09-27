@@ -49,14 +49,28 @@ async def test_wrong_token_is_refused(server):
 
 
 async def test_handler_value_and_error(server):
-    ok = await _ask(server.port, {"token": server.token, "agent": "a", "op": "rlm", "args": {"task": "t"}})
+    token = server.issue("a")
+    ok = await _ask(server.port, {"token": token, "op": "rlm", "args": {"task": "t"}})
     assert ok == {"ok": "done: t"}
-    bad = await _ask(server.port, {"token": server.token, "agent": "a", "op": "boom", "args": {}})
+    bad = await _ask(server.port, {"token": token, "op": "boom", "args": {}})
     assert bad == {"error": "it broke"}
 
 
+async def test_the_caller_is_whoever_its_token_was_issued_to(server):
+    token = server.issue("leaf")
+    await _ask(server.port, {"token": token, "agent": "root", "op": "rlm", "args": {"task": "t"}})
+    assert server.calls[-1][0] == "leaf"
+
+
+async def test_a_revoked_token_is_refused(server):
+    token = server.issue("gone")
+    server.revoke(token)
+    reply = await _ask(server.port, {"token": token, "op": "rlm", "args": {}})
+    assert "error" in reply and server.calls == []
+
+
 async def test_kernel_api_round_trip(server, tmp_path):
-    env = kernel_env(server.port, server.token, "child-1", can_delegate=True, is_child=True)
+    env = kernel_env(server.port, server.issue("child-1"), "child-1", can_delegate=True, is_child=True)
     kernel = KernelSession(cwd=str(tmp_path), env=env, startup_code=KERNEL_API, timeout=30)
     try:
         assert (await kernel.run("print(CONTEXT['rows'])")).output.strip() == "[1, 2, 3]"
@@ -72,7 +86,7 @@ async def test_kernel_api_round_trip(server, tmp_path):
 
 
 async def test_no_rlm_when_delegation_is_off(server, tmp_path):
-    env = kernel_env(server.port, server.token, "leaf", can_delegate=False, is_child=True)
+    env = kernel_env(server.port, server.issue("leaf"), "leaf", can_delegate=False, is_child=True)
     kernel = KernelSession(cwd=str(tmp_path), env=env, startup_code=KERNEL_API, timeout=30)
     try:
         result = await kernel.run("rlm")
@@ -82,10 +96,36 @@ async def test_no_rlm_when_delegation_is_off(server, tmp_path):
 
 
 async def test_root_has_no_final_and_no_context(server, tmp_path):
-    env = kernel_env(server.port, server.token, "root", can_delegate=True, is_child=False)
+    env = kernel_env(server.port, server.issue("root"), "root", can_delegate=True, is_child=False)
     kernel = KernelSession(cwd=str(tmp_path), env=env, startup_code=KERNEL_API, timeout=30)
     try:
         assert "NameError" in (await kernel.run("FINAL")).error
         assert "NameError" in (await kernel.run("CONTEXT")).error
     finally:
         await kernel.shutdown()
+
+
+async def test_a_request_is_cancelled_when_its_caller_hangs_up():
+    import asyncio
+
+    stopped = asyncio.Event()
+
+    async def handler(agent, op, args):
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            stopped.set()
+            raise
+
+    server = BridgeServer(handler)
+    await server.start()
+    try:
+        token = server.issue("a")
+        reader, writer = await asyncio.open_connection("127.0.0.1", server.port)
+        writer.write((json.dumps({"token": token, "op": "rlm", "args": {}}) + "\n").encode())
+        await writer.drain()
+        await asyncio.sleep(0.3)
+        writer.close()
+        await asyncio.wait_for(stopped.wait(), timeout=5)
+    finally:
+        await server.close()
