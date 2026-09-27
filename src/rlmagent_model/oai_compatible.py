@@ -25,6 +25,10 @@ Usage::
 
 from __future__ import annotations
 
+import uuid
+
+import os
+
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
 from dataclasses import replace
@@ -175,6 +179,11 @@ class OpenAIProvider:
 
         retry = self._profile.retry
         max_attempts = retry.max_retries + 1
+        # One key per logical call, kept across its retries, so a proxy in
+        # front of the provider can drop a duplicate of a request it served.
+        idempotency_key = (
+            None if os.environ.get("RLM_AGENT_NO_IDEMPOTENCY") == "1" else uuid.uuid4().hex
+        )
 
         for attempt in range(max_attempts):
             if signal is not None and signal.is_cancelled():
@@ -190,6 +199,8 @@ class OpenAIProvider:
                 headers = self._build_headers(cred)
             if routing_key is not None and endpoint == "responses":
                 headers["session_id"] = routing_key
+            if idempotency_key is not None:
+                headers["Idempotency-Key"] = idempotency_key
 
             try:
                 decoder: StreamDecoder
