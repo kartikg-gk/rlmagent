@@ -24,6 +24,10 @@ Usage::
 
 from __future__ import annotations
 
+import uuid
+
+import os
+
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
 from dataclasses import replace
@@ -424,6 +428,11 @@ class AnthropicProvider:
 
         retry = self._profile.retry
         ceiling = retry.max_retries + 1
+        # One key per logical call, kept across its retries, so a proxy in
+        # front of the provider can drop a duplicate of a request it served.
+        idempotency_key = (
+            None if os.environ.get("RLM_AGENT_NO_IDEMPOTENCY") == "1" else uuid.uuid4().hex
+        )
 
         for attempt in range(ceiling):
             if signal is not None and signal.is_cancelled():
@@ -434,6 +443,8 @@ class AnthropicProvider:
                 cred = await self._profile.resolver()
 
             headers = _auth_headers(cred)
+            if idempotency_key is not None:
+                headers["Idempotency-Key"] = idempotency_key
             machine = ResponseMachine(model=model, provider=self._profile.name)
 
             # The stream-open event is held back until real content arrives.
