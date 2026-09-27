@@ -1,0 +1,80 @@
+[project]
+name = "rlmagent"
+version = "0.1.0"
+description = "A terminal coding agent with a persistent Python kernel and recursive sub-agents."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Kartik G" }]
+keywords = ["agent", "cli", "coding-agent", "llm", "tui", "recursive-language-models"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+]
+dependencies = [
+    "pydantic>=2.7",
+    "httpx[socks]>=0.27",
+    "textual>=8.2.8",
+    "ipykernel>=6.29",
+    "jupyter_client>=8.6",
+    "rlmness>=0.2.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/kartikg-gk/rlm-agent"
+Repository = "https://github.com/kartikg-gk/rlm-agent"
+Issues = "https://github.com/kartikg-gk/rlm-agent/issues"
+
+[project.scripts]
+rlm-agent = "rlmagent_app.cli.main:main"
+
+[dependency-groups]
+# Development tools; installed by `uv sync`, never part of the published package.
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+# Ship only what a consumer needs.
+include = ["/src/rlmagent_harness", "/src/rlmagent_model", "/src/rlmagent_app", "/README.md", "/LICENSE", "/pyproject.toml"]
+exclude = ["__pycache__", "*.pyc"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rlmagent_harness", "src/rlmagent_model", "src/rlmagent_app"]
+
+[tool.hatch.build]
+# Editable installs expose all of src/.
+dev-mode-dirs = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test fixtures carry long canned payloads and expected-completion strings.
+"tests/*" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
