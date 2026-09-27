@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import sys
-import time
 from pathlib import Path
 
 from rlmagent_app.conversation import CodingSession
-from rlmagent_app.tools.bash import make_bash_tool
 from rlmagent_harness.contracts.stream import RunEndEvent
 from rlmagent_harness.contracts.transcript import (
     HumanEntry,
@@ -35,20 +32,6 @@ async def test_unicode_line_separators_round_trip(tmp_path: Path) -> None:
     await vault.append(TranscriptRecord(message=HumanEntry(content="next")))
     records = await vault.read_all()
     assert [r.message.content for r in records] == [text, "next"]
-
-
-# ---------------------------------------------------------------------------
-# Shell commands never read the terminal
-# ---------------------------------------------------------------------------
-
-
-async def test_prompting_command_fails_fast_instead_of_waiting() -> None:
-    tool = make_bash_tool()
-    started = time.monotonic()
-    command = f'"{sys.executable}" -c "input()"'
-    outcome = await tool.execute("c1", {"command": command}, None, None)
-    assert time.monotonic() - started < 10
-    assert "EOFError" in outcome.text
 
 
 # ---------------------------------------------------------------------------

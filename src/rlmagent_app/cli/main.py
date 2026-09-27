@@ -336,13 +336,13 @@ def _install_hooks(harness: RuntimeHarness, verbose: bool = False) -> None:
         pass
 
 
-_MUTATING_TOOLS = frozenset({"Write", "Edit", "Bash"})
+_MUTATING_TOOLS = frozenset({"Write", "Edit", "python"})
 
 
 def _approval_context(call: CallBlock) -> ApprovalContext:
     """Describe a pending tool call for the approval manager."""
     args = call.arguments
-    command = args.get("command")
+    command = args.get("command", args.get("code"))
     path = args.get("file_path")
     return ApprovalContext(
         tool_name=call.name,
