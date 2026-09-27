@@ -45,6 +45,7 @@ from rlmagent_app.context.budget import (
     plan_compaction,
     resolve_window,
 )
+from rlmagent_app.agents.prompts import COMPACTION_NOTE, RESUMED_NOTICE
 from rlmagent_app.directives import build_default_registry, parse_command
 from rlmagent_app.instructions import PromptSection
 from rlmagent_app.routing import ROUTED_PROVIDER, RoutePin, is_route_failure, pin_from_storage
@@ -675,6 +676,8 @@ class CodingSession:
             )
             session._apply_route()
         await session._mend_stored_history()
+        # A kernel cannot be saved, so a resumed session starts a fresh one.
+        session.inject(RESUMED_NOTICE)
         return session
 
     # ── run lifecycle ──────────────────────────────────────────────────
@@ -729,6 +732,11 @@ class CodingSession:
     async def shutdown(self) -> None:
         """Flush pending state and release resources."""
         self._unsubscribe()
+        tree = getattr(self, "agent_tree", None)
+        if tree is not None:
+            # Every kernel in the tree, sub-agents' included, ends with the session.
+            self.agent_tree = None
+            await tree.close()
         if self._tip_id and self._pending_header is None:
             await self._append_record(
                 TipRecord(entry_id=self._tip_id), advance_tip=False
@@ -885,6 +893,10 @@ class CodingSession:
             max_chars=_CONTEXT_LIMITS.max_summary_chars,
         )
         summary_text = await self._utility_completion(user_prompt, system_prompt)
+        # The transcript shrinks but the kernel does not: say so, or the
+        # model rebuilds variables it still has.
+        if not summary_text.rstrip().endswith(COMPACTION_NOTE):
+            summary_text = f"{summary_text.rstrip()}\n\n{COMPACTION_NOTE}"
 
         prune_record = PruneRecord(
             summary=summary_text,
