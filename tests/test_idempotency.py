@@ -1,4 +1,8 @@
-"""Every model call carries one idempotency key, kept across its retries."""
+"""With the switch on, every model call carries one idempotency key, kept across its retries.
+
+Off by default: the official clients do not send this header on the endpoints
+used here, so nothing shows the providers accept it.
+"""
 
 from __future__ import annotations
 
@@ -35,7 +39,8 @@ async def _call(provider) -> None:
         pass
 
 
-async def test_openai_retry_keeps_the_key_and_a_new_call_gets_a_new_one() -> None:
+async def test_openai_retry_keeps_the_key_and_a_new_call_gets_a_new_one(monkeypatch) -> None:
+    monkeypatch.setenv("RLM_AGENT_IDEMPOTENCY", "1")
     provider, _ = _openai([])
     provider._client, keys = _recording(
         [_chat_sse(_OVERLOAD), _chat_sse(*_CHAT_OK), _chat_sse(*_CHAT_OK)]
@@ -48,7 +53,8 @@ async def test_openai_retry_keeps_the_key_and_a_new_call_gets_a_new_one() -> Non
     assert keys[2] and keys[2] != keys[0]
 
 
-async def test_anthropic_retry_keeps_the_key() -> None:
+async def test_anthropic_retry_keeps_the_key(monkeypatch) -> None:
+    monkeypatch.setenv("RLM_AGENT_IDEMPOTENCY", "1")
     provider, _ = _anthropic([])
     provider._client, keys = _recording(
         [_anthropic_sse(_A_START, _a_error()), _anthropic_sse(_A_START, *_A_TEXT)]
@@ -59,10 +65,14 @@ async def test_anthropic_retry_keeps_the_key() -> None:
     assert keys[0] and keys[0] == keys[1]
 
 
-async def test_the_key_can_be_switched_off(monkeypatch) -> None:
-    monkeypatch.setenv("RLM_AGENT_NO_IDEMPOTENCY", "1")
+async def test_no_key_is_sent_unless_asked_for(monkeypatch) -> None:
+    monkeypatch.delenv("RLM_AGENT_IDEMPOTENCY", raising=False)
     provider, _ = _openai([])
     provider._client, keys = _recording([_chat_sse(*_CHAT_OK)])
     await _call(provider)
     await provider.close()
-    assert keys == [None]
+    anthropic, _ = _anthropic([])
+    anthropic._client, more = _recording([_anthropic_sse(_A_START, *_A_TEXT)])
+    await _call(anthropic)
+    await anthropic.close()
+    assert keys == [None] and more == [None]
