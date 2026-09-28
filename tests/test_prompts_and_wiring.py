@@ -271,3 +271,10 @@ def test_prompts_describe_background_sub_agents():
     assert "spawn(" in text and "keep=True" in text and "tell_parent" not in text
     assert "tell_parent" in child_system("BASE", AgentNode(id="root.1", depth=1, parent_id="root"), True)
     assert "spawn" in child_system("BASE", node, can_delegate=False)  # leaf note names it
+
+
+def test_delegating_prompts_say_a_request_for_sub_agents_must_be_followed():
+    for text in (root_system("BASE", can_delegate=True),
+                 child_system("BASE", AgentNode(id="root.1", depth=1, parent_id="root"), True)):
+        assert "you must call rlm, gather_rlm or spawn" in text
+    assert "must call" not in child_system("BASE", AgentNode(id="root.1", depth=2, parent_id="root"), False)
