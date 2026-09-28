@@ -20,7 +20,8 @@ def _rlmagent_payload(op, args):
 def _rlmagent_reply(line):
     reply = _rlmagent_json.loads(line)
     if "error" in reply:
-        raise RuntimeError(reply["error"])
+        kind = TimeoutError if reply.get("type") == "TimeoutError" else RuntimeError
+        raise kind(reply["error"])
     return reply["ok"]
 
 
@@ -58,7 +59,51 @@ if _rlmagent_os.environ.get("RLM_AGENT_CAN_DELEGATE") == "1":
         pairs = [list(j) if isinstance(j, (tuple, list)) else [j, None] for j in jobs]
         return await _rlmagent_call("gather", {"jobs": [[str(t), c] for t, c in pairs]})
 
+class _SubAgent:
+    """A sub-agent started with spawn(). Losing this object does not stop it."""
+
+    def __init__(self, id):
+        self.id = id
+
+    def __repr__(self):
+        return f"<sub-agent {self.id}>"
+
+    async def status(self):
+        """'starting', 'running', 'idle', 'done', 'failed' or 'cancelled'."""
+        return await _rlmagent_call("status", {"id": self.id})
+
+    async def result(self, timeout=None):
+        """Its FINAL value; waits for it. TimeoutError if still running after `timeout` seconds."""
+        return await _rlmagent_call("result", {"id": self.id, "timeout": timeout})
+
+    async def cancel(self):
+        """Stop it and every sub-agent it started."""
+        return await _rlmagent_call("cancel", {"id": self.id})
+
+    async def send(self, text):
+        """Give it another instruction; wakes it if it is idle."""
+        return await _rlmagent_call("send", {"id": self.id, "text": str(text)})
+
+    async def messages(self):
+        """Notes it sent with tell_parent, oldest first; each is returned once."""
+        return await _rlmagent_call("messages", {"id": self.id})
+
+
+if _rlmagent_os.environ.get("RLM_AGENT_CAN_DELEGATE") == "1":
+    async def spawn(task, data=None, keep=False):
+        """Start a sub-agent and return at once. keep=True: it stays idle after FINAL, ready for send()."""
+        return _SubAgent(await _rlmagent_call(
+            "spawn", {"task": str(task), "context": data, "keep": bool(keep)}))
+
+    async def children():
+        """Every sub-agent you started, in order."""
+        return [_SubAgent(i) for i in await _rlmagent_call("children", {})]
+
 if _rlmagent_os.environ.get("RLM_AGENT_IS_CHILD") == "1":
+    async def tell_parent(text):
+        """Leave a note the agent that started you can read with messages()."""
+        await _rlmagent_call("tell_parent", {"text": str(text)})
+
     def FINAL(value):
         """Return `value` to the agent that started you. Call once, when done."""
         try:
