@@ -74,5 +74,13 @@ def context_preview(value: object, limit: int = 600) -> str:
     return f"CONTEXT is {kind}. It begins:\n{head}"
 
 
+RETURN_REMINDER = (
+    "Deliver your answer by calling FINAL(value) in the python tool. "
+    "A plain text reply is not returned to the agent that asked."
+)
+
+
 def child_first_message(node: AgentNode) -> str:
-    return f"{node.task}\n\n{context_preview(node.context)}"
+    # Said in the task itself, not only in the system prompt: most sub-agents
+    # otherwise answer in prose first and need a second turn to call FINAL.
+    return f"{node.task}\n\n{context_preview(node.context)}\n\n{RETURN_REMINDER}"
