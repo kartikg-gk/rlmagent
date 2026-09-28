@@ -139,3 +139,30 @@ async def test_kernel_start_writes_nothing_to_the_terminal(tmp_path, capfd):
     finally:
         await k.shutdown()
     assert "without encryption" not in capfd.readouterr().err
+
+
+async def test_a_kernel_that_keeps_dying_is_given_up_on(tmp_path):
+    k = KernelSession(cwd=str(tmp_path), timeout=20, max_restarts=2)
+    try:
+        crash = "import os; os._exit(1)"
+        await k.run(crash)                       # dies
+        assert (await k.run(crash)).restarted    # restart 1, dies again
+        assert (await k.run(crash)).restarted    # restart 2, dies again
+        result = await k.run("print('hi')")      # cap reached
+        assert not result.restarted
+        assert "unavailable" in result.error
+    finally:
+        await k.shutdown()
+
+
+async def test_a_clean_cell_resets_the_restart_count(tmp_path):
+    k = KernelSession(cwd=str(tmp_path), timeout=20, max_restarts=1)
+    try:
+        crash = "import os; os._exit(1)"
+        await k.run(crash)
+        assert (await k.run("print('ok')")).restarted   # restart 1, clean
+        await k.run(crash)
+        again = await k.run("print('ok again')")
+        assert again.restarted and "ok again" in again.output
+    finally:
+        await k.shutdown()
