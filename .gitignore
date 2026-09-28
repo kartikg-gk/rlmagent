@@ -44,10 +44,8 @@ sessions/
 .rlm-agent/
 config.toml
 
-# Markdown other than the README
+# Markdown files stay local
 *.md
-!/README.md
-!/docs/**/*.md
 
 # Coverage
 .coverage
