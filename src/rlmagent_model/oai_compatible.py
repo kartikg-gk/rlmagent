@@ -181,8 +181,10 @@ class OpenAIProvider:
         max_attempts = retry.max_retries + 1
         # One key per logical call, kept across its retries, so a proxy in
         # front of the provider can drop a duplicate of a request it served.
+        # Opt-in: the providers' own clients do not send it on these
+        # endpoints, so nothing shows the providers accept it.
         idempotency_key = (
-            None if os.environ.get("RLM_AGENT_NO_IDEMPOTENCY") == "1" else uuid.uuid4().hex
+            uuid.uuid4().hex if os.environ.get("RLM_AGENT_IDEMPOTENCY") == "1" else None
         )
 
         for attempt in range(max_attempts):
