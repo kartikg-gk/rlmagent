@@ -14,6 +14,10 @@ from jupyter_client.manager import AsyncKernelManager
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _POLL = 0.5
 _STUCK = "__still_running_after_interrupt__"
+_UNAVAILABLE = (
+    "The kernel is unavailable: it stopped again after {} restarts in a row and will "
+    "not be restarted. Finish the task without the python tool."
+)
 
 
 @dataclass
@@ -42,6 +46,7 @@ class KernelSession:
         timeout: float = 300.0,
         output_limit: int = 20_000,
         interrupt_grace: float = 10.0,
+        max_restarts: int = 3,
     ) -> None:
         self.cwd = cwd
         self.env = dict(env or {})
@@ -49,6 +54,8 @@ class KernelSession:
         self.timeout = timeout
         self.output_limit = output_limit
         self.interrupt_grace = interrupt_grace
+        self.max_restarts = max_restarts
+        self._restarts_in_row = 0
         self._waiting_outside = 0
         self._manager: AsyncKernelManager | None = None
         self._client = None
@@ -104,7 +111,10 @@ class KernelSession:
                 if self._manager is None:
                     setup_error = await self._start()
                 elif not await self._alive():
+                    if self._restarts_in_row >= self.max_restarts:
+                        return CellResult(output="", error=_UNAVAILABLE.format(self._restarts_in_row))
                     setup_error = await self._restart()
+                    self._restarts_in_row += 1
                     restarted = True
                 else:
                     setup_error = None
@@ -116,10 +126,13 @@ class KernelSession:
             if result.error == _STUCK:
                 # Ignored the interrupt (a blocking call can): a fresh kernel beats a stuck one.
                 await self._restart()
+                self._restarts_in_row += 1
                 result.error = None
                 restarted = True
-            if result.error == "__kernel_died__":
+            elif result.error == "__kernel_died__":
                 result.error = "The kernel process exited while running this cell."
+            else:
+                self._restarts_in_row = 0
             result.restarted = restarted
             result.output = clip(result.output, self.output_limit)
             return result
