@@ -29,7 +29,7 @@ _PARAMETERS: Mapping[str, JValue] = {
 
 def format_cell(result: CellResult) -> str:
     parts: list[str] = []
-    if result.restarted:
+    if result.restarted and not result.timed_out:
         parts.append(
             "[The kernel had stopped and was restarted: variables from before are gone.]"
         )
@@ -37,7 +37,12 @@ def format_cell(result: CellResult) -> str:
         parts.append(result.output.rstrip("\n"))
     if result.error:
         parts.append(result.error)
-    if result.timed_out:
+    if result.timed_out and result.restarted:
+        parts.append(
+            "[The cell timed out and ignored the interrupt, so the kernel was restarted: "
+            "variables from before are gone.]"
+        )
+    elif result.timed_out:
         parts.append("[The cell timed out and was interrupted; state up to that point is kept.]")
     return "\n".join(parts) if parts else "(no output)"
 

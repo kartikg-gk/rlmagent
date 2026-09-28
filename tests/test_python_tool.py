@@ -82,3 +82,9 @@ async def test_cancel_returns_promptly_even_if_the_cell_ignores_the_interrupt(tm
         assert "alive" in after.text
     finally:
         await kernel.shutdown()
+
+
+def test_a_restarted_timeout_does_not_claim_state_was_kept():
+    text = format_cell(CellResult(output="", timed_out=True, restarted=True))
+    assert "gone" in text
+    assert "kept" not in text
