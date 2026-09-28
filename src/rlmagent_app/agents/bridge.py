@@ -95,7 +95,7 @@ class BridgeServer:
             try:
                 return {"ok": work.result()}
             except Exception as exc:  # the kernel sees it as an exception in its cell
-                return {"error": str(exc) or type(exc).__name__}
+                return {"error": str(exc) or type(exc).__name__, "type": type(exc).__name__}
         finally:
             hangup.cancel()
             self._running.discard(work)

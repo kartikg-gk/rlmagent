@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import itertools
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from rlmness import Allowance, AllowanceSpent
@@ -23,6 +23,8 @@ NUDGE = (
     "python tool with the result the agent that started you asked for."
 )
 NEVER_FINAL = "[this sub-agent never called FINAL; this is its last reply]"
+_ENDED = ("done", "failed", "cancelled")
+_SETTLED = (*_ENDED, "idle")
 
 
 @dataclass
@@ -35,6 +37,26 @@ class AgentNode:
     final_value: object = None
     final_given: bool = False
     final_note: str = ""
+
+
+@dataclass
+class ChildRecord:
+    node: AgentNode
+    keep: bool = False
+    status: str = "starting"
+    task: asyncio.Task | None = None
+    session: object = None
+    value: object = None
+    error: str | None = None
+    holds_slot: bool = False
+    inbox: asyncio.Queue = field(default_factory=asyncio.Queue)
+    outbox: list = field(default_factory=list)
+    changed: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def set(self, status: str) -> None:
+        self.status = status
+        self.changed.set()
+        self.changed = asyncio.Event()
 
 
 class AgentTree:
@@ -50,6 +72,7 @@ class AgentTree:
         system_for: Callable[[AgentNode, list[ToolSpec]], str],
         first_message_for: Callable[[AgentNode], str],
         cell_timeout: float = 300.0,
+        max_agents: int = 50,
     ) -> None:
         self.provider = BudgetedProvider(provider, allowance)
         self.provider_name = provider_name
@@ -60,6 +83,10 @@ class AgentTree:
         self.system_for = system_for
         self.first_message_for = first_message_for
         self.cell_timeout = cell_timeout
+        self.max_agents = max_agents
+        self.records: dict[str, ChildRecord] = {}
+        self._kids: dict[str, list[str]] = {}
+        self._agents_started = 0
         self.nodes: dict[str, AgentNode] = {}
         self.kernels: dict[str, KernelSession] = {}
         self.sessions: list = []
@@ -126,43 +153,99 @@ class AgentTree:
             node.final_note = str(args.get("note") or "")
             node.final_given = True
             return None
+        if op == "tell_parent":
+            rec = self.records.get(agent_id)
+            if rec is None:
+                raise RuntimeError("only sub-agents have a parent")
+            rec.outbox.append(str(args.get("text", "")))
+            return None
+        if op == "spawn":
+            return self.spawn(
+                agent_id, str(args.get("task", "")), args.get("context"), bool(args.get("keep"))
+            )
+        if op == "children":
+            return list(self._kids.get(agent_id, []))
         if op == "rlm":
-            async with self._waiting_on_children(node):
-                return await self.run_child(
-                    agent_id, str(args.get("task", "")), args.get("context")
-                )
-        if op == "gather":
-            jobs = [(str(task), context) for task, context in args.get("jobs", [])]
+            child = self.records[self.spawn(agent_id, str(args.get("task", "")), args.get("context"))]
             async with self._waiting_on_children(node):
                 try:
-                    async with asyncio.TaskGroup() as group:
-                        tasks = [
-                            group.create_task(self.run_child(agent_id, t, c)) for t, c in jobs
-                        ]
-                except* Exception as failed:
-                    raise failed.exceptions[0] from None
-            return [task.result() for task in tasks]
+                    return await self._result(child, None)
+                except asyncio.CancelledError:
+                    await self._cancel(child)
+                    raise
+        if op == "gather":
+            jobs = [(str(task), context) for task, context in args.get("jobs", [])]
+            children = []
+            try:
+                for task, context in jobs:
+                    children.append(self.records[self.spawn(agent_id, task, context)])
+                async with self._waiting_on_children(node):
+                    return await self._gather(children)
+            except BaseException:
+                for child in children:
+                    await self._cancel(child)
+                raise
+        rec = self._own(agent_id, str(args.get("id")))
+        if op == "status":
+            return rec.status
+        if op == "messages":
+            out, rec.outbox = rec.outbox, []
+            return out
+        if op == "cancel":
+            await self._cancel(rec)
+            return None
+        if op == "send":
+            await self._send(rec, str(args.get("text", "")))
+            return None
+        if op == "result":
+            async with self._waiting_on_children(node):
+                return await self._result(rec, args.get("timeout"))
         raise RuntimeError(f"unknown request {op!r}")
+
+    def _own(self, agent_id: str, child_id: str) -> ChildRecord:
+        rec = self.records.get(child_id)
+        if rec is None or rec.node.parent_id != agent_id:
+            raise RuntimeError(f"{child_id} is not your sub-agent")
+        return rec
+
+    async def _gather(self, children: list[ChildRecord]) -> list:
+        try:
+            async with asyncio.TaskGroup() as group:
+                waits = [group.create_task(self._result(c, None)) for c in children]
+        except* Exception as failed:
+            raise failed.exceptions[0] from None
+        return [w.result() for w in waits]
 
     @contextlib.asynccontextmanager
     async def _waiting_on_children(self, node: AgentNode):
         """Pause the agent's cell timeout and free its live slot while it awaits sub-agents."""
         with self.kernels[node.id].waiting_outside():
-            if node.parent_id is None:
+            rec = self.records.get(node.id)
+            if rec is None or not rec.holds_slot:
                 yield
                 return
-            self._live.release()
+            self._release(rec)
             try:
                 yield
             finally:
-                await self._live.acquire()
+                await self._acquire(rec)
 
-    async def run_child(self, parent_id: str, task: str, context: object) -> object:
-        from rlmagent_app.conversation import CodingSession
+    async def _acquire(self, rec: ChildRecord) -> None:
+        await self._live.acquire()
+        rec.holds_slot = True
 
+    def _release(self, rec: ChildRecord) -> None:
+        if rec.holds_slot:
+            rec.holds_slot = False
+            self._live.release()
+
+    def spawn(self, parent_id: str, task: str, context: object, keep: bool = False) -> str:
         parent = self.nodes[parent_id]
         if not self._can_delegate(parent):
             raise RuntimeError("sub-agents are not available at this depth")
+        if self._agents_started >= self.max_agents:
+            raise RuntimeError(f"the limit of {self.max_agents} sub-agents started is reached")
+        self._agents_started += 1
         node = AgentNode(
             id=f"{parent_id}.{next(self._ids)}",
             depth=parent.depth + 1,
@@ -171,7 +254,59 @@ class AgentTree:
             context=context,
         )
         self.nodes[node.id] = node
-        async with self._live:
+        rec = ChildRecord(node=node, keep=keep)
+        self.records[node.id] = rec
+        self._kids.setdefault(parent_id, []).append(node.id)
+        rec.task = asyncio.get_running_loop().create_task(self._run(rec))
+        return node.id
+
+    async def run_child(self, parent_id: str, task: str, context: object) -> object:
+        return await self._result(self.records[self.spawn(parent_id, task, context)], None)
+
+    async def _result(self, rec: ChildRecord, timeout: float | None) -> object:
+        async def settled() -> object:
+            while rec.status not in _SETTLED:
+                await rec.changed.wait()
+            if rec.status == "failed":
+                raise RuntimeError(rec.error)
+            if rec.status == "cancelled":
+                raise RuntimeError(f"{rec.node.id} was cancelled")
+            return rec.value
+
+        if timeout is None:
+            return await settled()
+        try:
+            return await asyncio.wait_for(settled(), float(timeout))
+        except (asyncio.TimeoutError, TimeoutError):
+            raise TimeoutError(f"{rec.node.id} is still {rec.status}") from None
+
+    async def _cancel(self, rec: ChildRecord) -> None:
+        if rec.task is None:
+            return
+        if rec.status not in _ENDED:
+            rec.task.cancel()
+        # A finished agent may still be shutting its kernel down; let that end.
+        await asyncio.gather(rec.task, return_exceptions=True)
+
+    async def _send(self, rec: ChildRecord, text: str) -> None:
+        if rec.status in _ENDED:
+            raise RuntimeError(f"{rec.node.id} has finished; start a new sub-agent")
+        if rec.status == "idle":
+            rec.set("starting")
+            rec.inbox.put_nowait(text)
+        elif rec.session is not None:
+            rec.session.inject(text)
+        else:
+            rec.inbox.put_nowait(text)
+
+    async def _run(self, rec: ChildRecord) -> None:
+        from rlmagent_app.conversation import CodingSession
+
+        node = rec.node
+        kernel = None
+        try:
+            await self._acquire(rec)
+            rec.set("running")
             kernel = self._kernel_for(node)
             tools = build_tool_registry(kernel)
             session = await CodingSession.create(
@@ -183,35 +318,59 @@ class AgentTree:
                 sessions_dir=self.sessions_dir,
                 cwd=self.cwd,
             )
-            await session.set_name(f"sub-agent {node.id}: {task[:60]}")
+            rec.session = session
+            await session.set_name(f"sub-agent {node.id}: {node.task[:60]}")
             self.sessions.append(session)
-            self._children.setdefault(parent_id, []).append(session.session_id)
+            self._children.setdefault(node.parent_id, []).append(session.session_id)
             self.attach(node.id, session)
-            parent_session = self._session_of.get(parent_id)
+            parent_session = self._session_of.get(node.parent_id)
             if parent_session is not None:
                 await parent_session.note_sub_agent(session.session_id)
-            try:
-                message = self.first_message_for(node)
-                for attempt in range(2):
-                    async for _ in session.submit(message):
-                        pass
-                    if self.provider.refusal is not None:
-                        raise AllowanceSpent(self.provider.refusal)
-                    if node.final_given:
-                        if node.final_note:
-                            return f"{node.final_value}\n[{node.final_note}]"
-                        return node.final_value
-                    message = NUDGE
-                return f"{_last_text(session)}\n{NEVER_FINAL}"
-            finally:
+            message = self.first_message_for(node)
+            while True:
+                rec.value = await self._round(session, node, message)
+                if not rec.keep:
+                    rec.set("done")
+                    return
+                self._release(rec)
+                rec.set("idle")
+                message = await rec.inbox.get()
+                await self._acquire(rec)
+                node.final_given = False
+                rec.set("running")
+        except asyncio.CancelledError:
+            rec.set("cancelled")
+        except Exception as exc:
+            rec.error = str(exc) or type(exc).__name__
+            rec.set("failed")
+        finally:
+            self._release(rec)
+            for child_id in self._kids.get(node.id, []):
+                await self._cancel(self.records[child_id])
+            if kernel is not None:
                 self._bridge.revoke(kernel.env["RLM_AGENT_BRIDGE_TOKEN"])
                 await kernel.shutdown()
+
+    async def _round(self, session, node: AgentNode, message: str) -> object:
+        for _ in range(2):
+            async for _event in session.submit(message):
+                pass
+            if self.provider.refusal is not None:
+                raise AllowanceSpent(self.provider.refusal)
+            if node.final_given:
+                if node.final_note:
+                    return f"{node.final_value}\n[{node.final_note}]"
+                return node.final_value
+            message = NUDGE
+        return f"{_last_text(session)}\n{NEVER_FINAL}"
 
     def child_session_ids(self, parent_id: str) -> list[str]:
         """Saved-session ids of the sub-agents an agent started, in order."""
         return list(self._children.get(parent_id, []))
 
     async def close(self) -> None:
+        for rec in list(self.records.values()):
+            await self._cancel(rec)
         for kernel in list(self.kernels.values()):
             await kernel.shutdown()
         await self._bridge.close()

@@ -53,7 +53,7 @@ async def test_handler_value_and_error(server):
     ok = await _ask(server.port, {"token": token, "op": "rlm", "args": {"task": "t"}})
     assert ok == {"ok": "done: t"}
     bad = await _ask(server.port, {"token": token, "op": "boom", "args": {}})
-    assert bad == {"error": "it broke"}
+    assert bad["error"] == "it broke"
 
 
 async def test_the_caller_is_whoever_its_token_was_issued_to(server):
