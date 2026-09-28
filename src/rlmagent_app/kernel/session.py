@@ -72,35 +72,50 @@ class KernelSession:
     def started(self) -> bool:
         return self._manager is not None
 
-    async def _start(self) -> None:
+    async def _start(self) -> str | None:
+        """Start the kernel; return the setup code's error, if any."""
         manager = AsyncKernelManager(kernel_name="python3")
-        await manager.start_kernel(cwd=self.cwd, env={**os.environ, **self.env})
-        client = manager.client()
-        client.start_channels()
-        await client.wait_for_ready(timeout=60)
+        try:
+            await manager.start_kernel(cwd=self.cwd, env={**os.environ, **self.env})
+            client = manager.client()
+            client.start_channels()
+            await client.wait_for_ready(timeout=60)
+        except Exception:
+            try:
+                await manager.shutdown_kernel(now=True)
+            except Exception:
+                pass
+            raise
         self._manager, self._client = manager, client
         if self.startup_code:
-            await self._execute(self.startup_code, self.timeout)
+            return (await self._execute(self.startup_code, self.timeout)).error
+        return None
 
     async def _alive(self) -> bool:
         return self._manager is not None and await self._manager.is_alive()
 
-    async def _restart(self) -> None:
+    async def _restart(self) -> str | None:
         await self.shutdown()
-        await self._start()
+        return await self._start()
 
     async def run(self, code: str, timeout: float | None = None) -> CellResult:
         async with self._lock:
             restarted = False
-            if self._manager is None:
-                await self._start()
-            elif not await self._alive():
-                await self._restart()
-                restarted = True
+            try:
+                if self._manager is None:
+                    setup_error = await self._start()
+                elif not await self._alive():
+                    setup_error = await self._restart()
+                    restarted = True
+                else:
+                    setup_error = None
+            except Exception as exc:
+                return CellResult(output="", error=f"The kernel could not start: {exc}")
+            if setup_error:
+                return CellResult(output="", error=f"Kernel setup failed:\n{setup_error}")
             result = await self._execute(code, timeout or self.timeout)
             if result.error == _STUCK:
-                # The cell ignored the interrupt, as a blocking call can. A
-                # kernel that never returns is worse than one that forgets.
+                # Ignored the interrupt (a blocking call can): a fresh kernel beats a stuck one.
                 await self._restart()
                 result.error = None
                 restarted = True
