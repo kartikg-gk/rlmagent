@@ -85,3 +85,48 @@ def test_clip_keeps_head_and_tail():
     assert out.startswith("H" * 50) and out.endswith("T" * 50)
     assert "characters omitted" in out
     assert clip("short", 200) == "short"
+
+
+async def test_setup_code_errors_are_reported(tmp_path):
+    k = KernelSession(cwd=str(tmp_path), startup_code="raise ValueError('bad setup')", timeout=20)
+    try:
+        result = await k.run("print('after')")
+        assert "bad setup" in (result.error or "")
+    finally:
+        await k.shutdown()
+
+
+async def test_a_kernel_that_cannot_start_is_shut_down_and_reported(tmp_path, monkeypatch):
+    import rlmagent_app.kernel.session as module
+
+    shut = []
+
+    class _Client:
+        def start_channels(self):
+            pass
+
+        def stop_channels(self):
+            pass
+
+        async def wait_for_ready(self, timeout=None):
+            raise RuntimeError("kernel never answered")
+
+    class _Manager:
+        def __init__(self, **kwargs):
+            pass
+
+        async def start_kernel(self, **kwargs):
+            pass
+
+        def client(self):
+            return _Client()
+
+        async def shutdown_kernel(self, now=False):
+            shut.append(now)
+
+    monkeypatch.setattr(module, "AsyncKernelManager", _Manager)
+    k = KernelSession(cwd=str(tmp_path))
+    result = await k.run("1")
+    assert shut == [True]
+    assert "could not start" in result.error and "kernel never answered" in result.error
+    assert not k.started
