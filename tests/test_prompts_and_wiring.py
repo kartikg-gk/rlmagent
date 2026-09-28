@@ -254,3 +254,20 @@ async def test_sub_agent_records_survive_resume(tmp_path):
     assert len(resumed.transcript) == 2
     assert await resumed.sub_agent_sessions() == ["child123"]
     await resumed.shutdown()
+
+
+def test_cli_accepts_max_agents_and_the_tree_uses_it(tmp_path):
+    from rlmagent_app.cli.main import _build_run_parser
+    from rlmagent_app.runtime import make_agent_tree
+    from rlmagent_model.scripted import ReplayProvider
+
+    ns = _build_run_parser().parse_args(["--max-agents", "7"])
+    assert make_agent_tree(ns, ReplayProvider([]), "r", "m", None, cwd=str(tmp_path)).max_agents == 7
+
+
+def test_prompts_describe_background_sub_agents():
+    node = AgentNode(id="root.1", depth=2, parent_id="root", task="t")
+    text = root_system("BASE", can_delegate=True)
+    assert "spawn(" in text and "keep=True" in text and "tell_parent" not in text
+    assert "tell_parent" in child_system("BASE", AgentNode(id="root.1", depth=1, parent_id="root"), True)
+    assert "spawn" in child_system("BASE", node, can_delegate=False)  # leaf note names it

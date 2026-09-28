@@ -159,6 +159,8 @@ def _build_run_parser() -> argparse.ArgumentParser:
                         help="Model calls allowed across all agents (default 200).")
     budget.add_argument("--max-cost", type=float, default=2.0,
                         help="Spend allowed across all agents, in dollars (default 2.0).")
+    budget.add_argument("--max-agents", type=int, default=50,
+                        help="Sub-agents that may be started in one session (default 50).")
     budget.add_argument("--max-live", type=int, default=8,
                         help="Sub-agents running at the same time (default 8).")
     budget.add_argument("--max-seconds", type=float, default=None,

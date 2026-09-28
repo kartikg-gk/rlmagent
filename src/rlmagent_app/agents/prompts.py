@@ -30,15 +30,33 @@ several separate questions) or when reading everything yourself would crowd \
 out the rest of the task. Do small things yourself; a sub-agent costs a full \
 agent run.
 - gather_rlm runs its jobs at the same time and returns results in order. If \
-one fails, the others are stopped and the call raises."""
+one fails, the others are stopped and the call raises.
 
-LEAF_NOTE = "Sub-agents are not available to you: rlm and gather_rlm are not defined in your kernel. Do this task yourself."
+To keep working while a sub-agent runs, start it in the background:
+
+    h = await spawn("run the test suite and report failures", data)
+    ...                       # carry on with other cells
+    report = await h.result() # waits; h.result(timeout=10) raises TimeoutError if not done
+    await h.status()          # starting, running, idle, done, failed or cancelled
+    await h.cancel()          # stops it and everything it started
+    await h.messages()        # notes it left for you
+    hs = await children()     # every sub-agent you started
+
+- Use spawn for long work you do not need yet or may want to stop; use \
+gather_rlm for independent pieces you need all of now.
+- spawn(task, data, keep=True) keeps the sub-agent after its FINAL, idle, so \
+h.send("next instruction") can give it more work; h.result() then returns its \
+newest FINAL.
+- When you finish, sub-agents you started are stopped; collect what you need \
+first."""
+
+LEAF_NOTE = "Sub-agents are not available to you: rlm, gather_rlm and spawn are not defined in your kernel. Do this task yourself."
 
 CHILD_ROLE = """## Your role
 You were started by another agent to do one task. Its data, if any, is in the \
 variable CONTEXT in your kernel. When you are done, call FINAL(value) in the \
 python tool with the result it asked for; that value is returned to it directly. \
-Call FINAL exactly once."""
+Call FINAL exactly once. To report progress before then, await tell_parent("note")."""
 
 RESUMED_NOTICE = (
     "This session was resumed. The kernel is new: variables, imports and functions "

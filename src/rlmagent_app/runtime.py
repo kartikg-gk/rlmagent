@@ -162,6 +162,7 @@ def make_agent_tree(ns, provider, provider_name, model, sessions_dir, *, cwd):
         system_for=system_for,
         first_message_for=child_first_message,
         cell_timeout=getattr(ns, "cell_timeout", 300.0),
+        max_agents=getattr(ns, "max_agents", 50),
     )
     return tree
 
