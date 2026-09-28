@@ -29,6 +29,8 @@ object you can keep working with.
 several separate questions) or when reading everything yourself would crowd \
 out the rest of the task. Do small things yourself; a sub-agent costs a full \
 agent run.
+- If the user asks you to use sub-agents, you must call rlm, gather_rlm or spawn; \
+do not do the work yourself instead.
 - gather_rlm runs its jobs at the same time and returns results in order. If \
 one fails, the others are stopped and the call raises.
 
