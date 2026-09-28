@@ -230,3 +230,27 @@ async def test_switching_provider_or_model_keeps_the_budget_and_reaches_sub_agen
         assert tree.model == "m3"
     finally:
         await session.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_records_survive_resume(tmp_path):
+    from test_coding_session import _collect_events, _make_provider
+
+    from rlmagent_app.conversation import CodingSession
+
+    session = await CodingSession.create(
+        provider=_make_provider(), provider_name="test", model="test-model", system="s",
+        sessions_dir=tmp_path,
+    )
+    await _collect_events(session.submit("Hi"))
+    await session.note_sub_agent("child123")
+    sid = session.session_id
+    await session.shutdown()
+
+    resumed = await CodingSession.resume(
+        sid, provider=_make_provider(), provider_name="test", model="test-model", system="s",
+        sessions_dir=tmp_path,
+    )
+    assert len(resumed.transcript) == 2
+    assert await resumed.sub_agent_sessions() == ["child123"]
+    await resumed.shutdown()

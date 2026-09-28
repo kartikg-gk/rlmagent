@@ -64,6 +64,7 @@ class AgentTree:
         self.kernels: dict[str, KernelSession] = {}
         self.sessions: list = []
         self._children: dict[str, list[str]] = {}
+        self._session_of: dict[str, object] = {}
         self._bridge = BridgeServer(self._handle)
         self._live = asyncio.Semaphore(max(1, allowance.max_live))
         self._ids = itertools.count(1)
@@ -77,6 +78,10 @@ class AgentTree:
         self.provider = BudgetedProvider(provider, self.allowance)
         self.provider_name = provider_name
         return self.provider
+
+    def attach(self, agent_id: str, session) -> None:
+        """Record sub-agents this agent starts in `session`'s saved file."""
+        self._session_of[agent_id] = session
 
     def root_id(self) -> str:
         if self._root_id is None:
@@ -181,6 +186,10 @@ class AgentTree:
             await session.set_name(f"sub-agent {node.id}: {task[:60]}")
             self.sessions.append(session)
             self._children.setdefault(parent_id, []).append(session.session_id)
+            self.attach(node.id, session)
+            parent_session = self._session_of.get(parent_id)
+            if parent_session is not None:
+                await parent_session.note_sub_agent(session.session_id)
             try:
                 message = self.first_message_for(node)
                 for attempt in range(2):

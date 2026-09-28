@@ -173,3 +173,30 @@ async def test_waiting_on_a_sub_agent_does_not_count_against_the_cell_timeout(tm
         assert result.output.strip() == "7 still here"
     finally:
         await tree.close()
+
+
+async def test_each_session_file_lists_the_sub_agents_it_started(tmp_path):
+    from rlmagent_app.conversation import CodingSession
+    from rlmagent_app.tools import build_tool_registry
+
+    tree = _tree(tmp_path, [
+        code_turn("x = await rlm('grandchild')\nFINAL(x)"),   # child
+        code_turn("FINAL(1)"), text_turn("ok"),               # grandchild
+        text_turn("ok"),                                      # child
+    ])
+    await tree.start()
+    root = await CodingSession.create(
+        provider=tree.provider, provider_name="replay", model="m", system="s",
+        tools=build_tool_registry(tree.root_kernel()), sessions_dir=tmp_path / "sessions",
+    )
+    await root.set_name("the root")
+    tree.attach(tree.root_id(), root)
+    try:
+        await tree.run_child(tree.root_id(), "child", None)
+        child, grandchild = tree.sessions
+        assert await root.sub_agent_sessions() == [child.session_id]
+        assert await child.sub_agent_sessions() == [grandchild.session_id]
+        assert root.title == "the root"
+    finally:
+        await root.shutdown()
+        await tree.close()
