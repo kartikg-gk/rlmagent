@@ -24,10 +24,8 @@ Usage::
 
 from __future__ import annotations
 
-import uuid
-
 import os
-
+import uuid
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
 from dataclasses import replace

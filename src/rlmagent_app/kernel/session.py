@@ -56,12 +56,7 @@ class KernelSession:
 
     @contextlib.contextmanager
     def waiting_outside(self):
-        """Mark the running cell as waiting on work done elsewhere.
-
-        The cell timeout is for code that runs too long. A cell awaiting a
-        sub-agent is idle while the sub-agent works, which is bounded by the
-        budget instead; its clock starts again once the wait ends.
-        """
+        """Pause the cell timeout while the cell awaits sub-agents."""
         self._waiting_outside += 1
         try:
             yield
@@ -124,7 +119,6 @@ class KernelSession:
                 result.error = None
                 restarted = True
             if result.error == "__kernel_died__":
-                # The cell itself killed the kernel; the next cell restarts it.
                 result.error = "The kernel process exited while running this cell."
             result.restarted = restarted
             result.output = clip(result.output, self.output_limit)
@@ -173,11 +167,7 @@ class KernelSession:
         return CellResult(output="".join(parts), error=error, timed_out=timed_out)
 
     async def kill(self) -> None:
-        """Stop the kernel process now, even while a cell holds the lock.
-
-        The running cell then ends as "kernel died", and the next cell starts
-        a fresh kernel and says so.
-        """
+        """Stop the kernel now, even mid-cell; the next cell gets a fresh one."""
         manager = self._manager
         if manager is not None:
             try:
