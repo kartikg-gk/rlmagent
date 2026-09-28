@@ -76,7 +76,11 @@ class KernelSession:
         """Start the kernel; return the setup code's error, if any."""
         manager = AsyncKernelManager(kernel_name="python3")
         try:
-            await manager.start_kernel(cwd=self.cwd, env={**os.environ, **self.env})
+            await manager.start_kernel(
+                cwd=self.cwd,
+                env={**os.environ, **self.env},
+                extra_arguments=["--IPKernelApp.log_level=ERROR"],
+            )
             client = manager.client()
             client.start_channels()
             await client.wait_for_ready(timeout=60)

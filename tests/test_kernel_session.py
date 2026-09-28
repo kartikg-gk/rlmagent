@@ -130,3 +130,12 @@ async def test_a_kernel_that_cannot_start_is_shut_down_and_reported(tmp_path, mo
     assert shut == [True]
     assert "could not start" in result.error and "kernel never answered" in result.error
     assert not k.started
+
+
+async def test_kernel_start_writes_nothing_to_the_terminal(tmp_path, capfd):
+    k = KernelSession(cwd=str(tmp_path), timeout=20)
+    try:
+        await k.run("1")
+    finally:
+        await k.shutdown()
+    assert "without encryption" not in capfd.readouterr().err
