@@ -73,6 +73,12 @@ class AgentTree:
     async def start(self) -> None:
         await self._bridge.start()
 
+    def use_provider(self, provider, provider_name: str) -> BudgetedProvider:
+        """Switch every agent, from the next call on, to `provider`, under the same budget."""
+        self.provider = BudgetedProvider(provider, self.allowance)
+        self.provider_name = provider_name
+        return self.provider
+
     def root_id(self) -> str:
         if self._root_id is None:
             self.root_kernel()

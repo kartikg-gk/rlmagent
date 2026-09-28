@@ -766,6 +766,9 @@ class CodingSession:
     async def switch_model(self, model: str) -> None:
         """Switch to a different model identifier (takes effect next turn)."""
         self._model = model
+        tree = getattr(self, "agent_tree", None)
+        if tree is not None:
+            tree.model = model
         if self._route.mode == "automatic":
             # A learned backend was learned for the previous model.
             self._route = RoutePin()
@@ -780,6 +783,9 @@ class CodingSession:
         model: str | None = None,
     ) -> None:
         """Replace the active model provider (takes effect next turn)."""
+        tree = getattr(self, "agent_tree", None)
+        if tree is not None:
+            provider = tree.use_provider(provider, provider_name)
         self._provider = provider
         self._provider_name = provider_name
         self._route = RoutePin()

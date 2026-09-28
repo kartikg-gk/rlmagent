@@ -198,3 +198,35 @@ def test_child_first_message_says_only_final_returns_the_answer():
     message = child_first_message(node)
     assert "FINAL(" in message
     assert "not returned" in message
+
+
+@pytest.mark.asyncio
+async def test_switching_provider_or_model_keeps_the_budget_and_reaches_sub_agents(tmp_path):
+    from rlmness import Allowance
+
+    from rlmagent_app.agents.budget import BudgetedProvider
+    from rlmagent_app.agents.tree import AgentTree
+    from rlmagent_app.conversation import CodingSession
+    from rlmagent_model.scripted import ReplayProvider
+
+    allowance = Allowance(max_cost=10.0)
+    tree = AgentTree(
+        provider=ReplayProvider([]), provider_name="replay", model="m", cwd=str(tmp_path),
+        allowance=allowance, sessions_dir=None,
+        system_for=lambda n, t: "s", first_message_for=lambda n: n.task,
+    )
+    await tree.start()
+    session = await CodingSession.create(
+        provider=tree.provider, provider_name="replay", model="m", system="s",
+    )
+    session.agent_tree = tree
+    try:
+        await session.switch_provider(ReplayProvider([]), "other", model="m2")
+        assert isinstance(session.harness.settings.provider, BudgetedProvider)
+        assert session.harness.settings.provider.allowance is allowance
+        assert tree.provider is session.harness.settings.provider
+        assert (tree.provider_name, tree.model) == ("other", "m2")
+        await session.switch_model("m3")
+        assert tree.model == "m3"
+    finally:
+        await session.shutdown()
