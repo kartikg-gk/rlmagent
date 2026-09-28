@@ -120,6 +120,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
         )
 
     session.agent_tree = tree
+    tree.attach(tree.root_id(), session)
 
     max_turns = getattr(ns, "max_turns", None)
     if max_turns is not None:

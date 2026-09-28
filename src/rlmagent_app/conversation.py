@@ -268,6 +268,7 @@ def _is_context_overflow(reply: ModelEntry) -> bool:
 
 
 _HISTORY_REPAIR_NAMESPACE = "rlm-agent.history-repair"
+_SUB_AGENT_NAMESPACE = "rlm-agent.sub-agent"
 
 
 def _records_after(
@@ -1888,6 +1889,21 @@ class CodingSession:
                 f"(read {s.cache_read_tokens:,}, written {s.cache_write_tokens:,})"
             )
         return report
+
+    async def note_sub_agent(self, session_id: str) -> None:
+        await self._append_record(
+            ExtensionRecord(namespace=_SUB_AGENT_NAMESPACE, data={"session_id": session_id})
+        )
+
+    async def sub_agent_sessions(self) -> list[str]:
+        """Session ids of the sub-agents this session started, in order."""
+        if self._vault is None:
+            return []
+        return [
+            str(r.data["session_id"])
+            for r in await self._vault.read_all()
+            if isinstance(r, ExtensionRecord) and r.namespace == _SUB_AGENT_NAMESPACE
+        ]
 
     async def set_name(self, title: str) -> None:
         """Give the session a fixed name, so no model call is spent on titling it."""
