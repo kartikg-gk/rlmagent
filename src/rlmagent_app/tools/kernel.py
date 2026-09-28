@@ -56,7 +56,6 @@ async def _cancel(kernel: KernelSession, task: asyncio.Task) -> str:
     done, _ = await asyncio.wait({task}, timeout=_CANCEL_GRACE)
     if done:
         return format_cell(task.result()) + "\n[Cancelled by the user.]"
-    # The cell ignored the interrupt, as a blocking call can.
     await kernel.kill()
     await asyncio.gather(task, return_exceptions=True)
     return (

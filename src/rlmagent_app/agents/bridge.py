@@ -22,9 +22,7 @@ def kernel_env(port: int, token: str, agent_id: str, *, can_delegate: bool, is_c
 
 
 class BridgeServer:
-    """Serves requests from kernels. Each agent gets its own token, and the
-    token alone says who is calling: a kernel can rewrite anything it sends,
-    so nothing else in a request is trusted for identity."""
+    """Serves kernel requests; the per-agent token alone identifies the caller."""
 
     def __init__(self, handler: Handler) -> None:
         self._handler = handler
@@ -82,12 +80,7 @@ class BridgeServer:
         return await self._answer(caller, request, reader)
 
     async def _answer(self, caller: str, request: dict, reader: asyncio.StreamReader) -> dict | None:
-        """Run the request, stopping it if the kernel hangs up first.
-
-        A kernel that was restarted or killed mid-call closes its end. The
-        sub-agent it was waiting on would otherwise run on, spending budget
-        on an answer nobody can receive.
-        """
+        """Run the request; cancel it if the kernel hangs up first."""
         work = asyncio.create_task(
             self._handler(caller, str(request["op"]), dict(request.get("args") or {}))
         )

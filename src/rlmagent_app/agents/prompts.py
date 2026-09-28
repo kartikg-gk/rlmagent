@@ -81,6 +81,4 @@ RETURN_REMINDER = (
 
 
 def child_first_message(node: AgentNode) -> str:
-    # Said in the task itself, not only in the system prompt: most sub-agents
-    # otherwise answer in prose first and need a second turn to call FINAL.
     return f"{node.task}\n\n{context_preview(node.context)}\n\n{RETURN_REMINDER}"

@@ -37,8 +37,7 @@ class BudgetedProvider:
         try:
             self.allowance.reserve()
         except AllowanceSpent as exc:
-            # No cancel(): a cancelled allowance answers every later call with
-            # "abandoned" and the limit that was reached would be lost.
+            # No allowance.cancel(): later calls would say "abandoned", not the limit.
             self.refusal = str(exc)
             entry = ModelEntry(
                 content=[TextSegment(text="")],

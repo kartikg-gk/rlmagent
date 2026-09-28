@@ -51,7 +51,6 @@ class AgentTree:
         first_message_for: Callable[[AgentNode], str],
         cell_timeout: float = 300.0,
     ) -> None:
-        # Every call in the tree, the root's included, goes through one allowance.
         self.provider = BudgetedProvider(provider, allowance)
         self.provider_name = provider_name
         self.model = model
@@ -136,21 +135,13 @@ class AgentTree:
                             group.create_task(self.run_child(agent_id, t, c)) for t, c in jobs
                         ]
                 except* Exception as failed:
-                    # One child's failure stops the rest; the caller needs its
-                    # reason, not "a task group failed".
                     raise failed.exceptions[0] from None
             return [task.result() for task in tasks]
         raise RuntimeError(f"unknown request {op!r}")
 
     @contextlib.asynccontextmanager
     async def _waiting_on_children(self, node: AgentNode):
-        """While an agent waits on its own sub-agents, pause its cell timeout
-        and give up its live slot.
-
-        A sub-agent holds a slot for its whole run. If it kept that slot while
-        awaiting children, a tree as deep as the slots are few would wait on
-        itself forever. The root never holds one.
-        """
+        """Pause the agent's cell timeout and free its live slot while it awaits sub-agents."""
         with self.kernels[node.id].waiting_outside():
             if node.parent_id is None:
                 yield
