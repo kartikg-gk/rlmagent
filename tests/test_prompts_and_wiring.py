@@ -191,3 +191,10 @@ async def test_root_kernel_from_make_agent_tree_reaches_the_bridge(tmp_path):
         assert tree.kernels["root.1"].timeout == 40.0
     finally:
         await tree.close()
+
+
+def test_child_first_message_says_only_final_returns_the_answer():
+    node = AgentNode(id="root.1", depth=1, parent_id="root", task="Say what this is for.", context="x")
+    message = child_first_message(node)
+    assert "FINAL(" in message
+    assert "not returned" in message
