@@ -55,21 +55,31 @@ class BridgeServer:
 
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
-            line = await reader.readline()
-            request = json.loads(line)
-            caller = self._caller(request.get("token", "")) if isinstance(request, dict) else None
-            if caller is None:
-                reply: dict = {"error": "refused: bad token"}
-            else:
-                reply = await self._answer(caller, request, reader)
-                if reply is None:
-                    return  # the caller hung up; nobody is left to answer
+            reply = await self._reply(reader)
+            if reply is None:
+                return  # the caller hung up; nobody is left to answer
             writer.write((json.dumps(reply, default=repr) + "\n").encode())
             await writer.drain()
-        except (json.JSONDecodeError, ConnectionError):
+        except ConnectionError:
             pass
         finally:
             writer.close()
+
+    async def _reply(self, reader: asyncio.StreamReader) -> dict | None:
+        try:
+            line = await reader.readline()
+        except (ValueError, asyncio.LimitOverrunError):
+            return {"error": "refused: request too large"}
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError:
+            return {"error": "refused: not a JSON request"}
+        if not isinstance(request, dict) or "op" not in request:
+            return {"error": "refused: malformed request"}
+        caller = self._caller(request.get("token", ""))
+        if caller is None:
+            return {"error": "refused: bad token"}
+        return await self._answer(caller, request, reader)
 
     async def _answer(self, caller: str, request: dict, reader: asyncio.StreamReader) -> dict | None:
         """Run the request, stopping it if the kernel hangs up first.

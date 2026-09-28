@@ -129,3 +129,37 @@ async def test_a_request_is_cancelled_when_its_caller_hangs_up():
         await asyncio.wait_for(stopped.wait(), timeout=5)
     finally:
         await server.close()
+
+
+async def _raw(port, data: bytes):
+    import asyncio
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    writer.write(data)
+    await writer.drain()
+    line = await reader.readline()
+    writer.close()
+    return json.loads(line) if line else None
+
+
+async def test_malformed_requests_get_an_error_reply(server):
+    assert "error" in await _raw(server.port, b"not json\n")
+    assert "error" in await _raw(server.port, b"[1, 2]\n")
+    assert server.calls == []
+
+
+async def test_an_oversized_request_gets_an_error_reply(monkeypatch):
+    import rlmagent_app.agents.bridge as module
+
+    monkeypatch.setattr(module, "LINE_LIMIT", 1024)
+
+    async def handler(agent, op, args):
+        return None
+
+    s = BridgeServer(handler)
+    await s.start()
+    try:
+        reply = await _raw(s.port, b"x" * 5000 + b"\n")
+        assert reply and "too large" in reply["error"]
+    finally:
+        await s.close()
