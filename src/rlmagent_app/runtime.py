@@ -65,7 +65,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     tree = make_agent_tree(ns, provider, provider_name, model, sessions_dir, cwd=os.getcwd())
     await tree.start()
     kernel = tree.root_kernel()
-    provider = tree.provider
+    provider = tree.provider_for("root")
 
     _load_extensions(verbose=verbose)
     tools = _load_tools(verbose=verbose, kernel=kernel)
@@ -121,6 +121,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
 
     session.agent_tree = tree
     tree.attach(tree.root_id(), session)
+    session.on_compacted = lambda: tree.tracer.compacted("root")
 
     max_turns = getattr(ns, "max_turns", None)
     if max_turns is not None:

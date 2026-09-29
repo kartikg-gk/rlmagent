@@ -786,7 +786,8 @@ class CodingSession:
         """Replace the active model provider (takes effect next turn)."""
         tree = getattr(self, "agent_tree", None)
         if tree is not None:
-            provider = tree.use_provider(provider, provider_name)
+            budgeted = tree.use_provider(provider, provider_name)
+            provider = self._provider if getattr(self._provider, "follows_tree", False) else budgeted
         self._provider = provider
         self._provider_name = provider_name
         self._route = RoutePin()
@@ -915,6 +916,9 @@ class CodingSession:
             plan, summary_text, summary_record_id=prune_record.id
         )
         self._harness.set_messages(list(result.transcript))
+        hook = getattr(self, "on_compacted", None)
+        if hook is not None:
+            hook()
         self._record_ids = list(result.record_ids)
 
         return result.summary_entry
