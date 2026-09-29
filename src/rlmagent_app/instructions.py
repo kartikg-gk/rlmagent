@@ -144,6 +144,8 @@ def prompt_sections(
     skills: Sequence[Skill] = (),
     cwd: str | None = None,
     include_date: bool = True,
+    identity: str | None = None,
+    project: bool = True,
 ) -> list[PromptSection]:
     """The system prompt as attributed sections, in the order they are sent.
 
@@ -153,13 +155,14 @@ def prompt_sections(
     resolved_cwd = cwd or os.getcwd()
     tool_text = _tool_guidelines(tools)
     skill_text = _skill_section(skills)
-    sections = [PromptSection("Identity", "built-in", _BASE_IDENTITY)]
+    sections = [PromptSection("Identity", "built-in", identity or _BASE_IDENTITY)]
     if tool_text:
         names = ", ".join(t.name for t in tools if t.prompt_snippet or t.prompt_guidelines)
         sections.append(PromptSection("Tool guidelines", f"tools: {names}", tool_text))
     if skill_text:
         sections.append(PromptSection("Skills", f"{len(skills)} loaded skill(s)", skill_text))
-    sections += _project_sections(resolved_cwd)
+    if project:
+        sections += _project_sections(resolved_cwd)
     sections.append(PromptSection(
         "Environment",
         "working directory" + (" and date" if include_date else ""),
@@ -174,9 +177,14 @@ def system_prompt(
     skills: Sequence[Skill] = (),
     cwd: str | None = None,
     include_date: bool = True,
+    identity: str | None = None,
+    project: bool = True,
 ) -> str:
     """Assemble the full system prompt: identity, tool guidance, skills, project context, env."""
-    sections = prompt_sections(tools=tools, skills=skills, cwd=cwd, include_date=include_date)
+    sections = prompt_sections(
+        tools=tools, skills=skills, cwd=cwd, include_date=include_date,
+        identity=identity, project=project,
+    )
     return "\n\n".join(section.text for section in sections)
 
 

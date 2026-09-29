@@ -152,6 +152,10 @@ def _build_run_parser() -> argparse.ArgumentParser:
         help="Limit agent turns per submission.",
     )
     p.add_argument("--verbose", "-v", action="store_true", help="Verbose diagnostics.")
+    p.add_argument(
+        "--contract", metavar="FILE", default=None,
+        help="Run with exactly the settings in this run contract (JSON); needs -p.",
+    )
     budget = p.add_argument_group("limits for the whole tree of agents")
     budget.add_argument("--max-depth", type=int, default=2,
                         help="How many levels of sub-agents may be started (default 2).")
@@ -769,6 +773,11 @@ async def _async_main(ns: argparse.Namespace) -> int:
     """Wire everything together and dispatch to the chosen run mode."""
     from rlmagent_app.runtime import build_session
 
+    if ns.contract:
+        from rlmagent_app.contract_run import run_contract
+
+        return await run_contract(ns)
+
     # Piped stdin -> one-shot print mode
     if ns.prompt is None and not sys.stdin.isatty():
         ns.prompt = sys.stdin.read().strip()
@@ -827,7 +836,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # A bare interactive `rlm-agent` opens the Textual UI. It needs no provider or
     # session, so this runs before any credential resolution.
-    if _should_launch_tui(ns):
+    if not ns.contract and _should_launch_tui(ns):
         return _handle_tui(ns)
 
     try:

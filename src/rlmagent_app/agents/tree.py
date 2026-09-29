@@ -87,6 +87,7 @@ class AgentTree:
         self.cell_timeout = cell_timeout
         self.max_agents = max_agents
         self.tracer = tracer or Tracer(None)
+        self.tool_filter = None
         self._finished = False
         self.records: dict[str, ChildRecord] = {}
         self._kids: dict[str, list[str]] = {}
@@ -317,7 +318,7 @@ class AgentTree:
             await self._acquire(rec)
             rec.set("running")
             kernel = self._kernel_for(node)
-            tools = build_tool_registry(kernel)
+            tools = (self.tool_filter or build_tool_registry)(kernel)
             session = await CodingSession.create(
                 provider=self.provider_for(node.id),
                 provider_name=self.provider_name,
