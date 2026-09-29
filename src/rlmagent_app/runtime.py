@@ -73,6 +73,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     system = root_system(
         _resolve_system(getattr(ns, "system_prompt", None), tools=tools, skills=skills),
         can_delegate=tree.allowance.max_depth > 0,
+        playbook=True,
     )
 
     def _tools_loader():
@@ -121,6 +122,14 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
 
     session.agent_tree = tree
     tree.attach(tree.root_id(), session)
+    from rlmagent_app.playbook.improver import Improver
+    from rlmagent_app.plugins import rlm_agent_home
+
+    local = sessions_dir / f"{session.session_id}.playbook.json" if sessions_dir else None
+    session.improver = tree.improver = Improver(
+        session, local_path=local, shared_path=rlm_agent_home() / "playbook.json"
+    )
+    session.improver.show_digest()
     session.on_compacted = lambda: tree.tracer.compacted("root")
 
     max_turns = getattr(ns, "max_turns", None)

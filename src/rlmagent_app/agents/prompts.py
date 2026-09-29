@@ -68,8 +68,19 @@ RESUMED_NOTICE = (
 COMPACTION_NOTE = "The kernel is still running: variables defined before this summary are still available."
 
 
-def root_system(base: str, can_delegate: bool) -> str:
+PLAYBOOK_GUIDE = """## Playbook
+You keep a playbook of rules, memories, skills and sub-agent roles across \
+sessions. When something is worth keeping (a correction from the user, a \
+mistake you repeated, a procedure you did twice, a lasting fact), call \
+`await improve("what to keep")` in the python tool; the playbook is updated \
+when the turn ends. Use `shared=True` only for what every future project \
+should know. `await playbook()` lists entries."""
+
+
+def root_system(base: str, can_delegate: bool, playbook: bool = False) -> str:
     parts = [base, KERNEL_GUIDE, DELEGATION_GUIDE if can_delegate else LEAF_NOTE]
+    if playbook:
+        parts.append(PLAYBOOK_GUIDE)
     return "\n\n".join(parts)
 
 

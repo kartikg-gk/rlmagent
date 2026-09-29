@@ -1099,6 +1099,7 @@ class CodingSession:
             "think": self._cmd_think,
             "plan": self._cmd_plan,
             "compact": self._cmd_compact,
+            "improve": self._cmd_improve,
             "stats": self._cmd_stats,
             "name": self._cmd_name,
             "export": self._cmd_export,
@@ -1712,6 +1713,13 @@ class CodingSession:
 
     async def _post_run(self) -> None:
         """Housekeeping after a completed agent run."""
+        improver = getattr(self, "improver", None)
+        if improver is not None:
+            try:
+                await improver.run_pending()
+                improver.show_digest()
+            except Exception:  # noqa: BLE001
+                pass
         if self._tip_id:
             await self._append_record(
                 TipRecord(entry_id=self._tip_id), advance_tip=False
@@ -1867,6 +1875,12 @@ class CodingSession:
                 "Use /plan off to resume editing."
             )
         return "Plan mode off — editing tools restored."
+
+    async def _cmd_improve(self, arg: str) -> str:
+        improver = getattr(self, "improver", None)
+        if improver is None:
+            return "The playbook is not available in this run."
+        return await improver.command(arg)
 
     async def _cmd_compact(self, _arg: str) -> str:
         try:
