@@ -24,6 +24,9 @@ def to_spend(usage: UsageStats) -> Spend:
     )
 
 
+REFUSED = "budget reached"
+
+
 class BudgetedProvider:
     def __init__(self, inner, allowance: Allowance) -> None:
         self.inner = inner
@@ -42,7 +45,7 @@ class BudgetedProvider:
             entry = ModelEntry(
                 content=[TextSegment(text="")],
                 stop_reason="error",
-                error_message=f"budget reached: {exc}",
+                error_message=f"{REFUSED}: {exc}",
             )
             yield StreamFaultEvent(reason="error", error=entry)
             return

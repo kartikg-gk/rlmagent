@@ -12,6 +12,7 @@ from pathlib import Path
 from rlmness import Allowance, AllowanceSpent
 
 from rlmagent_app.agents.budget import BudgetedProvider
+from rlmagent_app.agents.trace import TracedProvider, Tracer
 from rlmagent_app.agents.bridge import BridgeServer, kernel_env
 from rlmagent_app.agents.kernel_api import KERNEL_API
 from rlmagent_app.kernel import KernelSession
@@ -73,6 +74,7 @@ class AgentTree:
         first_message_for: Callable[[AgentNode], str],
         cell_timeout: float = 300.0,
         max_agents: int = 50,
+        tracer: Tracer | None = None,
     ) -> None:
         self.provider = BudgetedProvider(provider, allowance)
         self.provider_name = provider_name
@@ -84,6 +86,8 @@ class AgentTree:
         self.first_message_for = first_message_for
         self.cell_timeout = cell_timeout
         self.max_agents = max_agents
+        self.tracer = tracer or Tracer(None)
+        self._finished = False
         self.records: dict[str, ChildRecord] = {}
         self._kids: dict[str, list[str]] = {}
         self._agents_started = 0
@@ -99,6 +103,9 @@ class AgentTree:
 
     async def start(self) -> None:
         await self._bridge.start()
+
+    def provider_for(self, agent_id: str) -> TracedProvider:
+        return TracedProvider(self, agent_id)
 
     def use_provider(self, provider, provider_name: str) -> BudgetedProvider:
         """Switch every agent, from the next call on, to `provider`, under the same budget."""
@@ -257,6 +264,7 @@ class AgentTree:
         rec = ChildRecord(node=node, keep=keep)
         self.records[node.id] = rec
         self._kids.setdefault(parent_id, []).append(node.id)
+        self.tracer.spawned(parent_id, node.id)
         rec.task = asyncio.get_running_loop().create_task(self._run(rec))
         return node.id
 
@@ -271,6 +279,7 @@ class AgentTree:
                 raise RuntimeError(rec.error)
             if rec.status == "cancelled":
                 raise RuntimeError(f"{rec.node.id} was cancelled")
+            self.tracer.returned(rec.node.parent_id, rec.node.id)
             return rec.value
 
         if timeout is None:
@@ -310,7 +319,7 @@ class AgentTree:
             kernel = self._kernel_for(node)
             tools = build_tool_registry(kernel)
             session = await CodingSession.create(
-                provider=self.provider,
+                provider=self.provider_for(node.id),
                 provider_name=self.provider_name,
                 model=self.model,
                 system=self.system_for(node, tools),
@@ -319,6 +328,7 @@ class AgentTree:
                 cwd=self.cwd,
             )
             rec.session = session
+            session.on_compacted = lambda: self.tracer.compacted(node.id)
             await session.set_name(f"sub-agent {node.id}: {node.task[:60]}")
             self.sessions.append(session)
             self._children.setdefault(node.parent_id, []).append(session.session_id)
@@ -374,6 +384,21 @@ class AgentTree:
         for kernel in list(self.kernels.values()):
             await kernel.shutdown()
         await self._bridge.close()
+        self.finish_trace()
+
+    def finish_trace(self, complete: bool = True) -> dict | None:
+        if self._finished:
+            return None
+        self._finished = True
+        root = self._session_of.get(self._root_id or "root")
+        agents = [{"agent": "root", "parent": None, "task": None, "status": "done",
+                   "session": getattr(root, "session_id", None)}]
+        agents += [
+            {"agent": r.node.id, "parent": r.node.parent_id, "task": r.node.task,
+             "status": r.status, "session": getattr(r.session, "session_id", None)}
+            for r in self.records.values()
+        ]
+        return self.tracer.finish(agents, self.provider.refusal, complete)
 
 
 def _last_text(session) -> str:
