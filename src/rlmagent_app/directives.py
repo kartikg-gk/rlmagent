@@ -646,7 +646,7 @@ def build_default_registry() -> CommandRegistry:
             description="Update the playbook from this conversation",
             handler=_cmd_improve,
             usage="/improve [--shared] [instructions] | list | undo <id>",
-            search_terms=("playbook", "learn", "remember", "refine"),
+            search_terms=("playbook", "learn", "remember", "lessons"),
         ),
         SlashCommand(
             name="compact",
