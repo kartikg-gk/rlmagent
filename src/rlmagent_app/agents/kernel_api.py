@@ -99,6 +99,24 @@ if _rlmagent_os.environ.get("RLM_AGENT_CAN_DELEGATE") == "1":
         """Every sub-agent you started, in order."""
         return [_SubAgent(i) for i in await _rlmagent_call("children", {})]
 
+if _rlmagent_os.environ.get("RLM_AGENT_IS_CHILD") != "1":
+    async def improve(instructions=None, shared=False):
+        """Ask for the playbook to be updated from this conversation when the turn ends."""
+        return await _rlmagent_call("improve", {"instructions": instructions, "shared": bool(shared)})
+
+    async def playbook(id=None):
+        """One playbook entry in full, or a list of all of them."""
+        return await _rlmagent_call("playbook", {"id": id})
+
+    async def skill(id):
+        """Load a playbook skill and return its function."""
+        entry = await playbook(id)
+        if entry["kind"] != "skill":
+            raise ValueError(f"{id} is a {entry['kind']}, not a skill")
+        namespace = {}
+        exec(compile(entry["content"], f"<skill {id}>", "exec"), namespace)
+        return namespace[entry["callable"]]
+
 if _rlmagent_os.environ.get("RLM_AGENT_IS_CHILD") == "1":
     async def tell_parent(text):
         """Leave a note the agent that started you can read with messages()."""

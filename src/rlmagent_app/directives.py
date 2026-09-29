@@ -423,6 +423,11 @@ def _cmd_plan(ctx: CommandContext) -> CommandResult:
     return _ok(plan_requested=True, plan_value=ctx.args.strip().lower())
 
 
+def _cmd_improve(ctx: CommandContext) -> CommandResult:
+    """Handled by the session."""
+    return _ok()
+
+
 def _cmd_compact(ctx: CommandContext) -> CommandResult:
     """Request context compaction."""
     return _ok(compact_requested=True)
@@ -635,6 +640,13 @@ def build_default_registry() -> CommandRegistry:
             handler=_cmd_plan,
             usage="/plan [on|off]",
             search_terms=("planning", "readonly", "research", "propose"),
+        ),
+        SlashCommand(
+            name="improve",
+            description="Update the playbook from this conversation",
+            handler=_cmd_improve,
+            usage="/improve [--shared] [instructions] | list | undo <id>",
+            search_terms=("playbook", "learn", "remember", "refine"),
         ),
         SlashCommand(
             name="compact",

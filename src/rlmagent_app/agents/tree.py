@@ -88,6 +88,7 @@ class AgentTree:
         self.max_agents = max_agents
         self.tracer = tracer or Tracer(None)
         self.tool_filter = None
+        self.improver = None
         self._finished = False
         self.records: dict[str, ChildRecord] = {}
         self._kids: dict[str, list[str]] = {}
@@ -161,6 +162,15 @@ class AgentTree:
             node.final_note = str(args.get("note") or "")
             node.final_given = True
             return None
+        if op in ("improve", "playbook"):
+            if self.improver is None or node.parent_id is not None:
+                raise RuntimeError("the playbook is only available to the main agent")
+            if op == "playbook":
+                if args.get("id"):
+                    return self.improver.entry(str(args["id"]))
+                return [{"id": e.id, "kind": e.kind, "title": e.title} for e in self.improver.entries()]
+            self.improver.request(args.get("instructions"), bool(args.get("shared")))
+            return "Noted: the playbook will be updated when this turn ends."
         if op == "tell_parent":
             rec = self.records.get(agent_id)
             if rec is None:
