@@ -40,6 +40,30 @@ SCOPES = {
 }
 
 
+CHECK_CHARS = 30_000
+
+CHECK_SYSTEM = """You decide whether an agent's recent conversation holds anything worth \
+keeping in its playbook: a correction from the user, a mistake made more than once, a \
+procedure done twice, a lasting fact or preference. Routine work, one-off details and \
+guesses are not worth keeping. Answer with one JSON object and nothing else:
+{"worth_it": true or false, "why": "one sentence", "focus": "what to keep, if anything"}"""
+
+AUTO_NOTE = (
+    "This update was started automatically. No change is a good answer. Keep only what "
+    "the conversation clearly shows. Nothing goes to the shared playbook unless the user "
+    "asked for it."
+)
+
+
+def parse_check(text: str) -> tuple[bool, str]:
+    match = re.search(r"\{.*\}", text or "", re.S)
+    try:
+        answer = json.loads(match.group(0)) if match else {}
+    except json.JSONDecodeError:
+        answer = {}
+    return bool(answer.get("worth_it")), str(answer.get("focus") or "")
+
+
 def build_request(entries: list[Entry], history: list[dict], conversation: str, *,
                   scope: str, instructions: str | None) -> str:
     if len(conversation) > CONVERSATION_CHARS:

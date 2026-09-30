@@ -152,6 +152,12 @@ def _build_run_parser() -> argparse.ArgumentParser:
         help="Limit agent turns per submission.",
     )
     p.add_argument("--verbose", "-v", action="store_true", help="Verbose diagnostics.")
+    p.add_argument("--no-auto-improve", dest="auto_improve", action="store_false",
+                   help="Do not update the playbook automatically.")
+    p.add_argument("--improve-every", type=int, default=20,
+                   help="Check whether to update the playbook every N assistant turns (default 20).")
+    p.add_argument("--improve-cooldown", type=float, default=900.0,
+                   help="Seconds between automatic playbook checks (default 900).")
     p.add_argument(
         "--contract", metavar="FILE", default=None,
         help="Run with exactly the settings in this run contract (JSON); needs -p.",

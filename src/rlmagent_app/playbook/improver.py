@@ -7,7 +7,17 @@ from pathlib import Path
 
 from rlmagent_app.playbook.apply import apply_edits, reverse_edits
 from rlmagent_app.playbook.digest import fingerprint, render
-from rlmagent_app.playbook.plan import SYSTEM, build_request, parse_proposal
+import time
+
+from rlmagent_app.playbook.plan import (
+    AUTO_NOTE,
+    CHECK_CHARS,
+    CHECK_SYSTEM,
+    SYSTEM,
+    build_request,
+    parse_check,
+    parse_proposal,
+)
 from rlmagent_app.playbook.store import Playbook, load, merged, save
 
 
@@ -19,6 +29,11 @@ class Improver:
         self.shared = load(shared_path)
         self._pending: list[tuple[str | None, bool, str]] = []
         self._shown: str | None = None
+        self.auto = True
+        self.every = 20
+        self.cooldown = 900.0
+        self._counted = 0
+        self._last_check = float("-inf")
 
     def _store(self, scope: str) -> Playbook:
         if self.paths[scope] is not None:
@@ -44,6 +59,28 @@ class Improver:
             instructions, shared, trigger = self._pending.pop(0)
             notes.append(await self.improve(instructions, shared=shared, trigger=trigger))
         return notes
+
+    async def after_turn(self) -> None:
+        """Every `every` assistant turns (at most once per `cooldown` seconds), check."""
+        if not self.auto:
+            return
+        turns = sum(1 for m in self.session.transcript if getattr(m, "role", "") == "assistant")
+        if turns - self._counted < self.every or time.monotonic() - self._last_check < self.cooldown:
+            return
+        self._counted = turns
+        await self._auto("auto:turns")
+
+    async def before_compaction(self) -> None:
+        if self.auto:
+            await self._auto("auto:compaction")
+
+    async def _auto(self, trigger: str) -> None:
+        self._last_check = time.monotonic()
+        tail = self._conversation()[-CHECK_CHARS:]
+        worth_it, focus = parse_check(await self.session._utility_completion(tail, CHECK_SYSTEM))
+        if worth_it:
+            instructions = f"{AUTO_NOTE}\nFocus: {focus}" if focus else AUTO_NOTE
+            await self.improve(instructions, trigger=trigger)
 
     async def improve(self, instructions: str | None, *, shared: bool = False,
                       trigger: str = "user") -> str:

@@ -885,6 +885,12 @@ class CodingSession:
 
         Raises ``ValueError`` if the transcript is too short to compact.
         """
+        before = getattr(self, "before_compact", None)
+        if before is not None:
+            try:
+                await before()
+            except Exception:  # noqa: BLE001
+                pass
         transcript = list(self._harness.transcript)
         plan = plan_compaction(transcript, self._record_ids, limits=_CONTEXT_LIMITS)
         if plan is None:
@@ -1717,6 +1723,7 @@ class CodingSession:
         if improver is not None:
             try:
                 await improver.run_pending()
+                await improver.after_turn()
                 improver.show_digest()
             except Exception:  # noqa: BLE001
                 pass
