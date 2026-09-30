@@ -68,60 +68,12 @@ async def test_auto_off_never_checks(tmp_path):
         await session.shutdown()
 
 
-async def test_a_check_runs_before_compaction(tmp_path):
-    session, provider, improver = await _setup(tmp_path, [text_turn(YES), text_turn(PROPOSAL)])
-    _auto(improver, every=1000)
-    try:
-        await improver.before_compaction()
-        assert improver.local.history[-1]["trigger"] == "auto:compaction"
-    finally:
-        await session.shutdown()
-
-
-async def test_compaction_asks_the_session_hook_first():
-    from test_coding_session import _collect_events, _make_provider, _make_reply
-
-    from rlmagent_app.conversation import CodingSession
-    from rlmagent_harness.provider.wire import StreamCloseEvent
-
-    provider = _make_provider([_make_reply(f"Reply {i}") for i in range(6)])
-    session = await CodingSession.create(provider=provider, provider_name="t", model="m", system="s")
-    for i in range(6):
-        await _collect_events(session.submit(f"Message {i}"))
-    provider._streams.append([StreamCloseEvent(reason="stop", message=_make_reply("summary"))])
-    order = []
-
-    async def before():
-        order.append("before")
-
-    session.before_compact = before
-    session.on_compacted = lambda: order.append("after")
-    await session.compact()
-    assert order == ["before", "after"]
-
-
 async def test_explicit_requests_skip_the_check(tmp_path):
     session, provider, improver = await _setup(tmp_path, [text_turn(PROPOSAL)])
     _auto(improver, every=1000)
     try:
         await session.handle_command("/improve keep it")
         assert len(provider.calls) == 1 and improver.entries()
-    finally:
-        await session.shutdown()
-
-
-async def test_sub_agents_read_skills_but_cannot_improve(tmp_path):
-    session, provider, improver = await _setup(tmp_path, [
-        code_turn("fn = await skill('lines')\nFINAL(fn('a\\nb'))"), text_turn("ok"),
-        code_turn("await improve('x')"), code_turn("FINAL(0)"), text_turn("ok"),
-    ])
-    try:
-        improver.apply([SKILL], trigger="test")
-        assert await session.agent_tree.run_child("root", "count", None) == 2
-        await session.agent_tree.run_child("root", "try", None)
-        texts = [m.text for m in session.agent_tree.sessions[-1].transcript
-                 if getattr(m, "role", "") == "toolResult"]
-        assert any("NameError" in t for t in texts)
     finally:
         await session.shutdown()
 

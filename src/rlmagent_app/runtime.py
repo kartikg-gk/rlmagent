@@ -132,9 +132,8 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     session.improver.auto = getattr(ns, "auto_improve", True)
     session.improver.every = getattr(ns, "improve_every", 20)
     session.improver.cooldown = getattr(ns, "improve_cooldown", 900.0)
-    session.before_compact = session.improver.before_compaction
+    session.on_compacted = lambda: (tree.tracer.compacted("root"), session.improver.compacted())
     session.improver.show_digest()
-    session.on_compacted = lambda: tree.tracer.compacted("root")
 
     max_turns = getattr(ns, "max_turns", None)
     if max_turns is not None:
