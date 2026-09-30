@@ -99,10 +99,9 @@ if _rlmagent_os.environ.get("RLM_AGENT_CAN_DELEGATE") == "1":
         """Every sub-agent you started, in order."""
         return [_SubAgent(i) for i in await _rlmagent_call("children", {})]
 
-if _rlmagent_os.environ.get("RLM_AGENT_IS_CHILD") != "1":
-    async def improve(instructions=None, shared=False):
-        """Ask for the playbook to be updated from this conversation when the turn ends."""
-        return await _rlmagent_call("improve", {"instructions": instructions, "shared": bool(shared)})
+async def improve(instructions=None, shared=False):
+    """Ask for the playbook to be updated from this conversation when the turn ends."""
+    return await _rlmagent_call("improve", {"instructions": instructions, "shared": bool(shared)})
 
 
 async def playbook(id=None):

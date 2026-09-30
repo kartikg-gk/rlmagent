@@ -106,17 +106,6 @@ async def test_kernel_reads_entries_and_loads_skills(tmp_path):
         await session.shutdown()
 
 
-async def test_sub_agents_cannot_ask_for_improvement(tmp_path):
-    session, provider, improver = await _setup(tmp_path, [code_turn("improve"), code_turn("FINAL(1)")])
-    try:
-        await session.agent_tree.run_child("root", "x", None)
-        texts = [m.text for m in session.agent_tree.sessions[-1].transcript
-                 if getattr(m, "role", "") == "toolResult"]
-        assert any("NameError" in t for t in texts)
-    finally:
-        await session.shutdown()
-
-
 def test_root_prompt_mentions_improve_only_when_the_playbook_is_on():
     from rlmagent_app.agents.prompts import root_system
 

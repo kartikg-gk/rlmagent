@@ -269,6 +269,7 @@ def _is_context_overflow(reply: ModelEntry) -> bool:
 
 _HISTORY_REPAIR_NAMESPACE = "rlm-agent.history-repair"
 _SUB_AGENT_NAMESPACE = "rlm-agent.sub-agent"
+_PLAYBOOK_NAMESPACE = "rlm-agent.playbook"
 
 
 def _records_after(
@@ -728,6 +729,9 @@ class CodingSession:
 
     def abort(self) -> None:
         """Cancel the currently running agent loop."""
+        improver = getattr(self, "improver", None)
+        if improver is not None:
+            improver.drop_pending()
         self._harness.abort()
 
     async def shutdown(self) -> None:
@@ -885,12 +889,6 @@ class CodingSession:
 
         Raises ``ValueError`` if the transcript is too short to compact.
         """
-        before = getattr(self, "before_compact", None)
-        if before is not None:
-            try:
-                await before()
-            except Exception:  # noqa: BLE001
-                pass
         transcript = list(self._harness.transcript)
         plan = plan_compaction(transcript, self._record_ids, limits=_CONTEXT_LIMITS)
         if plan is None:
@@ -1722,8 +1720,7 @@ class CodingSession:
         improver = getattr(self, "improver", None)
         if improver is not None:
             try:
-                await improver.run_pending()
-                await improver.after_turn()
+                await improver.at_boundary()
                 improver.show_digest()
             except Exception:  # noqa: BLE001
                 pass
@@ -1914,6 +1911,18 @@ class CodingSession:
                 f"(read {s.cache_read_tokens:,}, written {s.cache_write_tokens:,})"
             )
         return report
+
+    async def note_playbook_change(self, change: dict) -> None:
+        self.__dict__.setdefault("_playbook_log", []).append(change)
+        await self._append_record(ExtensionRecord(namespace=_PLAYBOOK_NAMESPACE, data=change))
+
+    async def playbook_changes(self) -> list[dict]:
+        if self._vault is None:
+            return list(self.__dict__.get("_playbook_log", []))
+        return [
+            dict(r.data) for r in await self._vault.read_all()
+            if isinstance(r, ExtensionRecord) and r.namespace == _PLAYBOOK_NAMESPACE
+        ]
 
     async def note_sub_agent(self, session_id: str) -> None:
         await self._append_record(

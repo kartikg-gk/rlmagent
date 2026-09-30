@@ -164,15 +164,14 @@ class AgentTree:
             node.final_given = True
             return None
         if op in ("improve", "playbook"):
-            if self.improver is None:
+            improver = self._improver_of(node)
+            if improver is None:
                 raise RuntimeError("the playbook is not available in this run")
-            if op == "improve" and node.parent_id is not None:
-                raise RuntimeError("only the main agent can change the playbook")
             if op == "playbook":
                 if args.get("id"):
-                    return self.improver.entry(str(args["id"]))
-                return [{"id": e.id, "kind": e.kind, "title": e.title} for e in self.improver.entries()]
-            self.improver.request(args.get("instructions"), bool(args.get("shared")))
+                    return improver.entry(str(args["id"]))
+                return [{"id": e.id, "kind": e.kind, "title": e.title} for e in improver.entries()]
+            improver.request(args.get("instructions"), bool(args.get("shared")))
             return "Noted: the playbook will be updated when this turn ends."
         if op == "tell_parent":
             rec = self.records.get(agent_id)
@@ -224,6 +223,12 @@ class AgentTree:
             async with self._waiting_on_children(node):
                 return await self._result(rec, args.get("timeout"))
         raise RuntimeError(f"unknown request {op!r}")
+
+    def _improver_of(self, node: AgentNode):
+        if node.parent_id is None:
+            return self.improver
+        rec = self.records.get(node.id)
+        return getattr(rec.session, "improver", None) if rec else None
 
     def _role(self, role: str) -> str:
         try:
@@ -356,6 +361,13 @@ class AgentTree:
                 cwd=self.cwd,
             )
             rec.session = session
+            if self.improver is not None:
+                from rlmagent_app.playbook.improver import Improver
+
+                own = self.sessions_dir / f"{session.session_id}.playbook.json" if self.sessions_dir else None
+                session.improver = Improver(session, local_path=own,
+                                            shared_path=self.improver.paths["global"])
+                session.improver.auto = False
             session.on_compacted = lambda: self.tracer.compacted(node.id)
             await session.set_name(f"sub-agent {node.id}: {node.task[:60]}")
             self.sessions.append(session)

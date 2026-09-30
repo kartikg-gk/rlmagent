@@ -114,10 +114,10 @@ def test_request_carries_state_history_and_the_end_of_the_conversation():
 def test_digest_is_short_ranked_and_fingerprinted():
     entries = [Entry(id=f"m{i}", kind="memory", title=f"note {i}", content=f"about topic{i} " * 50,
                      scope="local") for i in range(10)]
-    text = render(entries, query="topic7")
+    text = render(entries, goal="topic7")
     assert text.count("\n- ") <= 5 and "m7" in text
     assert max(len(line) for line in text.splitlines() if line.startswith("- ")) <= 260
     fp = fingerprint(entries)
     entries[0].version += 1
     assert fingerprint(entries) != fp
-    assert json.dumps(render([], query="x"))  # empty playbook renders without error
+    assert json.dumps(render([], goal="x"))  # empty playbook renders without error
