@@ -38,6 +38,7 @@ class AgentNode:
     final_value: object = None
     final_given: bool = False
     final_note: str = ""
+    role_text: str = ""
 
 
 @dataclass
@@ -163,8 +164,10 @@ class AgentTree:
             node.final_given = True
             return None
         if op in ("improve", "playbook"):
-            if self.improver is None or node.parent_id is not None:
-                raise RuntimeError("the playbook is only available to the main agent")
+            if self.improver is None:
+                raise RuntimeError("the playbook is not available in this run")
+            if op == "improve" and node.parent_id is not None:
+                raise RuntimeError("only the main agent can change the playbook")
             if op == "playbook":
                 if args.get("id"):
                     return self.improver.entry(str(args["id"]))
@@ -179,12 +182,14 @@ class AgentTree:
             return None
         if op == "spawn":
             return self.spawn(
-                agent_id, str(args.get("task", "")), args.get("context"), bool(args.get("keep"))
+                agent_id, str(args.get("task", "")), args.get("context"), bool(args.get("keep")),
+                role=args.get("role"),
             )
         if op == "children":
             return list(self._kids.get(agent_id, []))
         if op == "rlm":
-            child = self.records[self.spawn(agent_id, str(args.get("task", "")), args.get("context"))]
+            child = self.records[self.spawn(agent_id, str(args.get("task", "")), args.get("context"),
+                                            role=args.get("role"))]
             async with self._waiting_on_children(node):
                 try:
                     return await self._result(child, None)
@@ -219,6 +224,15 @@ class AgentTree:
             async with self._waiting_on_children(node):
                 return await self._result(rec, args.get("timeout"))
         raise RuntimeError(f"unknown request {op!r}")
+
+    def _role(self, role: str) -> str:
+        try:
+            entry = self.improver.entry(role) if self.improver else None
+        except KeyError:
+            entry = None
+        if entry is None or entry["kind"] != "role":
+            raise RuntimeError(f"no playbook role named {role!r}")
+        return f"## Your role: {entry['title']}\n{entry['content']}"
 
     def _own(self, agent_id: str, child_id: str) -> ChildRecord:
         rec = self.records.get(child_id)
@@ -257,8 +271,10 @@ class AgentTree:
             rec.holds_slot = False
             self._live.release()
 
-    def spawn(self, parent_id: str, task: str, context: object, keep: bool = False) -> str:
+    def spawn(self, parent_id: str, task: str, context: object, keep: bool = False,
+              role: str | None = None) -> str:
         parent = self.nodes[parent_id]
+        role_text = self._role(role) if role else ""
         if not self._can_delegate(parent):
             raise RuntimeError("sub-agents are not available at this depth")
         if self._agents_started >= self.max_agents:
@@ -270,6 +286,7 @@ class AgentTree:
             parent_id=parent_id,
             task=task,
             context=context,
+            role_text=role_text,
         )
         self.nodes[node.id] = node
         rec = ChildRecord(node=node, keep=keep)
@@ -333,7 +350,7 @@ class AgentTree:
                 provider=self.provider_for(node.id),
                 provider_name=self.provider_name,
                 model=self.model,
-                system=self.system_for(node, tools),
+                system=self.system_for(node, tools) + (f"\n\n{node.role_text}" if node.role_text else ""),
                 tools=tools,
                 sessions_dir=self.sessions_dir,
                 cwd=self.cwd,

@@ -50,9 +50,9 @@ async def _rlmagent_call(op, args):
 
 
 if _rlmagent_os.environ.get("RLM_AGENT_CAN_DELEGATE") == "1":
-    async def rlm(task, context=None):
+    async def rlm(task, context=None, role=None):
         """Hand `task` to a sub-agent; `context` arrives in its kernel as CONTEXT. Returns its FINAL value."""
-        return await _rlmagent_call("rlm", {"task": str(task), "context": context})
+        return await _rlmagent_call("rlm", {"task": str(task), "context": context, "role": role})
 
     async def gather_rlm(jobs):
         """Run several sub-agents at once. `jobs` is a list of (task, context) pairs or tasks. Results keep order."""
@@ -90,10 +90,10 @@ class _SubAgent:
 
 
 if _rlmagent_os.environ.get("RLM_AGENT_CAN_DELEGATE") == "1":
-    async def spawn(task, data=None, keep=False):
+    async def spawn(task, data=None, keep=False, role=None):
         """Start a sub-agent and return at once. keep=True: it stays idle after FINAL, ready for send()."""
         return _SubAgent(await _rlmagent_call(
-            "spawn", {"task": str(task), "context": data, "keep": bool(keep)}))
+            "spawn", {"task": str(task), "context": data, "keep": bool(keep), "role": role}))
 
     async def children():
         """Every sub-agent you started, in order."""
@@ -104,18 +104,20 @@ if _rlmagent_os.environ.get("RLM_AGENT_IS_CHILD") != "1":
         """Ask for the playbook to be updated from this conversation when the turn ends."""
         return await _rlmagent_call("improve", {"instructions": instructions, "shared": bool(shared)})
 
-    async def playbook(id=None):
-        """One playbook entry in full, or a list of all of them."""
-        return await _rlmagent_call("playbook", {"id": id})
 
-    async def skill(id):
-        """Load a playbook skill and return its function."""
-        entry = await playbook(id)
-        if entry["kind"] != "skill":
-            raise ValueError(f"{id} is a {entry['kind']}, not a skill")
-        namespace = {}
-        exec(compile(entry["content"], f"<skill {id}>", "exec"), namespace)
-        return namespace[entry["callable"]]
+async def playbook(id=None):
+    """One playbook entry in full, or a list of all of them."""
+    return await _rlmagent_call("playbook", {"id": id})
+
+async def skill(id):
+    """Load a playbook skill and return its function."""
+    entry = await playbook(id)
+    if entry["kind"] != "skill":
+        raise ValueError(f"{id} is a {entry['kind']}, not a skill")
+    namespace = {}
+    exec(compile(entry["content"], f"<skill {id}>", "exec"), namespace)
+    return namespace[entry["callable"]]
+
 
 if _rlmagent_os.environ.get("RLM_AGENT_IS_CHILD") == "1":
     async def tell_parent(text):
