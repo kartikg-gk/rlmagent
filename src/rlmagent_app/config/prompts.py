@@ -1,10 +1,4 @@
-"""Interactive prompts for ``rlm-agent config``.
-
-Plain stdin/stdout only — no curses, no third-party TUI dependency.  All
-prompts write to stderr so the flow stays usable when stdout is redirected.
-API keys are read via :mod:`rlmagent_app.config.secure_input`, which disables
-terminal echo without taking over line editing.
-"""
+"""Interactive prompts for ``rlm-agent config``."""
 
 from __future__ import annotations
 

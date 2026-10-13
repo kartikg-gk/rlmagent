@@ -1,21 +1,4 @@
-"""Markdown prompt template system: discovery, loading, rendering, and slash-command expansion.
-
-A *prompt template* is a ``.md`` file that lives in a resource directory.
-Templates support ``{{ variable }}`` placeholder syntax and are invoked via
-``/<template-name> arguments…`` slash commands.
-
-Templates are loaded from one or more *resource directories* in precedence
-order (highest first).  A template in a higher-precedence directory shadows
-any template with the same name from a lower-precedence directory.
-
-Public surface
---------------
-Types:   ``PromptTemplate``, ``TemplateDiagnostic``, ``Severity``
-Load:    ``load_prompt_templates``, ``load_prompt_templates_with_diagnostics``
-Render:  ``render_template``
-Expand:  ``expand_slash_command``
-Errors:  ``TemplateLoadError``, ``TemplateRenderError``
-"""
+"""Markdown prompt template system: discovery, loading, rendering, and slash-command expansion."""
 
 from __future__ import annotations
 
@@ -81,11 +64,7 @@ class TemplateRenderError(Exception):
 
 
 def _parse_front_matter(text: str) -> tuple[dict[str, str], str]:
-    """Split optional YAML front matter from the markdown body.
-
-    Returns ``(metadata, body)``.  Only simple ``key: value`` lines are
-    recognised — no nested YAML.
-    """
+    """Split optional YAML front matter from the markdown body."""
     match = _FRONT_MATTER_RE.match(text)
     if match is None:
         return {}, text
@@ -131,10 +110,7 @@ def _template_name_from_path(path: Path) -> str:
 
 
 def _load_template_file(path: Path) -> PromptTemplate:
-    """Read a single markdown file and return a ``PromptTemplate``.
-
-    Raises ``TemplateLoadError`` on I/O or encoding problems.
-    """
+    """Read a single markdown file and return a ``PromptTemplate``."""
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -160,11 +136,7 @@ def _load_template_file(path: Path) -> PromptTemplate:
 def _discover_in_directory(
     root: Path,
 ) -> tuple[list[PromptTemplate], list[TemplateDiagnostic]]:
-    """Scan *root* for ``.md`` files and load them as templates.
-
-    Returns ``(templates, diagnostics)``.  Duplicates within the same
-    directory are reported as warnings.
-    """
+    """Scan *root* for ``.md`` files and load them as templates."""
     templates: list[PromptTemplate] = []
     diagnostics: list[TemplateDiagnostic] = []
     seen: dict[str, Path] = {}
@@ -211,14 +183,7 @@ def _discover_in_directory(
 def load_prompt_templates_with_diagnostics(
     resource_dirs: Sequence[Path],
 ) -> tuple[list[PromptTemplate], list[TemplateDiagnostic]]:
-    """Load templates from multiple resource directories with diagnostics.
-
-    *resource_dirs* is ordered highest-precedence first.  A template in a
-    higher-precedence directory shadows any template with the same name
-    from a lower-precedence directory.
-
-    Returns ``(templates, diagnostics)``.
-    """
+    """Load templates from multiple resource directories with diagnostics."""
     combined: dict[str, PromptTemplate] = {}
     all_diagnostics: list[TemplateDiagnostic] = []
 
@@ -261,21 +226,7 @@ def render_template(
     strict: bool = True,
     missing_value: str = "",
 ) -> str:
-    """Render a template by replacing ``{{ var }}`` placeholders.
-
-    Parameters
-    ----------
-    template:
-        The template to render.
-    variables:
-        Mapping of variable names to replacement strings.
-    strict:
-        When ``True`` (the default), raise ``TemplateRenderError`` for any
-        placeholder whose name is not in *variables*.  When ``False``,
-        missing placeholders are replaced with *missing_value*.
-    missing_value:
-        Fallback string used for missing variables when *strict* is ``False``.
-    """
+    """Render a template by replacing ``{{ var }}`` placeholders."""
     vars_ = variables or {}
 
     def _replace(match: re.Match[str]) -> str:
@@ -300,11 +251,7 @@ def _is_reserved_command(name: str) -> bool:
 
 
 def _parse_slash_command(text: str) -> tuple[str, str] | None:
-    """Parse ``/<name> args…`` into ``(name, args)`` or return ``None``.
-
-    Returns ``None`` for non-slash input, ``//`` comments, and commands
-    reserved by other systems (e.g. ``/skill:…``).
-    """
+    """Parse ``/<name> args…`` into ``(name, args)`` or return ``None``."""
     if not text.startswith("/"):
         return None
     if text.startswith("//"):
@@ -354,22 +301,7 @@ def expand_slash_command(
     *,
     extra_variables: Mapping[str, str] | None = None,
 ) -> str | None:
-    """Expand a ``/<template-name> args…`` slash command.
-
-    Returns the rendered template string, or ``None`` if *text* is not a
-    recognised template command.  Raises ``KeyError`` if the parsed command
-    name does not match any loaded template.
-
-    Parameters
-    ----------
-    text:
-        Raw user input (e.g. ``"/summarize the login module"``).
-    registry:
-        Mapping of template name → ``PromptTemplate``.
-    extra_variables:
-        Additional variables merged into the rendering context (the built-in
-        ``arguments`` / ``args`` bindings take precedence over these).
-    """
+    """Expand a ``/<template-name> args…`` slash command."""
     parsed = _parse_slash_command(text)
     if parsed is None:
         return None

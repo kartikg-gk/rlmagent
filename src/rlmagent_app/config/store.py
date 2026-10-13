@@ -1,9 +1,4 @@
-"""Persisted user configuration: schema, file location, and TOML read/write.
-
-The file lives outside the repository (``~/.rlm-agent/config.toml`` by default) and
-is written with owner-only permissions because it holds API keys.  This module
-knows nothing about provider implementations — it only stores strings.
-"""
+"""Persisted user configuration: schema, file location, and TOML read/write."""
 
 from __future__ import annotations
 

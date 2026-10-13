@@ -1,11 +1,4 @@
-"""Pure portable agent loop.
-
-``run_agent_loop`` drives one run to completion: it asks the provider for a
-response, translates the raw ``WireEvent`` stream into the harness's public
-``AgentEvent`` stream, runs any tools the assistant requested, and loops until
-the assistant replies with no tool calls (or a limit / cancellation / error
-stops it).
-"""
+"""Pure portable agent loop."""
 
 from __future__ import annotations
 
@@ -79,11 +72,7 @@ def _accepts_cache_key(provider: ModelProvider) -> bool:
 
 
 def _is_empty_failure(entry: TranscriptEntry) -> bool:
-    """A reply that failed before producing anything.
-
-    It stays in the transcript as a record of what happened, but providers
-    reject an assistant turn with no content, so it is not sent back.
-    """
+    """A reply that failed before producing anything."""
     return (
         isinstance(entry, ModelEntry)
         and entry.stop_reason in ("error", "aborted")

@@ -1,17 +1,4 @@
-"""Plan mode: a read-only stance for the agent.
-
-While plan mode is active the session hands the model a restricted tool set
-and an extra system-prompt block telling it to research and propose rather
-than act.  Two things change:
-
-* Mutating tools (``Write``, ``Edit``, ``python``) are removed from the tool list, so the
-  model cannot call them at all.
-* ``Bash`` is wrapped so only commands ``safety.is_safe_command`` recognises
-  as read-only are executed; anything else is refused without running.
-
-Nothing here is stateful — ``restrict_tools`` returns a new list and the
-caller decides when to apply it.
-"""
+"""Plan mode: a read-only stance for the agent."""
 
 from __future__ import annotations
 

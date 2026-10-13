@@ -1,16 +1,4 @@
-"""Provider resolution, catalog, and environment-based auto-detection.
-
-This module bridges ``rlmagent_model.settings`` (immutable configuration types)
-with ``rlmagent_harness.provider.base`` (the ``ModelProvider`` protocol) so that
-the CLI can obtain a ready-to-use provider from a name or from the environment
-without knowing any provider implementation details.
-
-Responsibilities:
-
-1. **Detection** — infer which provider to use from env vars.
-2. **Resolution** — load a typed profile, instantiate the matching adapter.
-3. **Catalog** — list available providers, print setup guidance.
-"""
+"""Provider resolution, catalog, and environment-based auto-detection."""
 
 from __future__ import annotations
 
@@ -43,12 +31,7 @@ _OPENAI_COMPATIBLE = ("openai", "openrouter", "ollama", "huggingface")
 
 
 def _detect_provider_name() -> str | None:
-    """Infer the provider name from environment variables, then saved config.
-
-    Checks ``RLM_AGENT_PROVIDER`` first, then the user's ``config.toml``, then
-    falls back to whichever API key is present.  Returns ``None`` when nothing
-    is detectable.
-    """
+    """Infer the provider name from environment variables, then saved config."""
     explicit = os.environ.get("RLM_AGENT_PROVIDER")
     if explicit:
         return explicit.strip().lower()
@@ -102,12 +85,7 @@ def _build_openai(profile: OpenAIProfile) -> ModelProvider:
 
 
 def resolve_provider(name: str | None = None) -> ModelProvider:
-    """Return a ready-to-use ``ModelProvider`` for *name*.
-
-    When *name* is ``None`` the provider is auto-detected from the
-    environment.  Raises ``ConfigError`` for missing configuration or
-    unknown provider names.
-    """
+    """Return a ready-to-use ``ModelProvider`` for *name*."""
     resolved = name or _detect_provider_name()
     if resolved is None:
         raise ConfigError(
@@ -214,12 +192,7 @@ def setup_provider() -> None:
 
 
 def select_provider(name: str) -> None:
-    """Validate a provider name for selection.
-
-    Raises ``ConfigError`` if the name is not recognized.  The actual
-    persistence of the selection is left to the caller (env var, dotfile,
-    etc.).
-    """
+    """Validate a provider name for selection."""
     normalized = name.strip().lower()
     if normalized not in _KNOWN_PROVIDERS:
         raise ConfigError(

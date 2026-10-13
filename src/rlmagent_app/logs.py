@@ -1,16 +1,4 @@
-"""Run logging: trajectory, raw events, and stdout captured under ``.logs/``.
-
-Written per session so external tooling can read a run without
-touching rlm-agent's internals.  Three artefacts:
-
-- ``trajectory.json`` — ordered, human-readable steps: prompts, replies,
-  tool calls and their results, plus final usage totals.
-- ``events.jsonl`` — every ``AgentEvent``, one JSON object per line.
-- ``stdout.log`` — plain-text log lines with timestamps.
-
-Every value is scrubbed of anything resembling a credential before it is
-written.
-"""
+"""Run logging: trajectory, raw events, and stdout captured under ``.logs/``."""
 
 from __future__ import annotations
 
@@ -131,11 +119,7 @@ class RunLogger:
         self._track(event)
 
     def finish(self, stats: Any = None) -> None:
-        """Write ``trajectory.json``.
-
-        Rewritten after every run rather than only at shutdown, so a crashed
-        or killed session still leaves a complete file behind.
-        """
+        """Write ``trajectory.json``."""
         if stats is None and self.stats_source is not None:
             try:
                 stats = self.stats_source()

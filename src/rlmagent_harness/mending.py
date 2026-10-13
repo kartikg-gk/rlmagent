@@ -1,21 +1,4 @@
-"""Deterministic repair of malformed tool-call history.
-
-Providers require that every tool call in an assistant turn is answered by
-exactly one tool result, placed right after that turn. Interrupted runs and
-older persistence paths can break this in several ways: a call with no
-result, a result with no call, a result stranded after unrelated messages,
-duplicate results for one call, or parallel results saved out of order.
-
-``mend_tool_history`` restores the invariant without guessing:
-
-1. existing results move directly after their calls, in call order;
-2. an unanswered call receives an interruption error result;
-3. a result whose call is gone is dropped (its arguments cannot be rebuilt);
-4. duplicates collapse to one, and a real result beats a synthetic one.
-
-Running it on already-valid history is a no-op, so it is safe to apply on
-every load and as a last check before each provider request.
-"""
+"""Deterministic repair of malformed tool-call history."""
 
 from __future__ import annotations
 

@@ -1,11 +1,4 @@
-"""Event rendering layer — pure consumers of the harness event stream.
-
-Three renderers share a common protocol and differ only in presentation:
-
-- **JsonRenderer**: serialises every event as one JSON object per line.
-- **FinalTextRenderer**: prints only the final assistant response.
-- **TranscriptRenderer**: streams text deltas and tool activity in real time.
-"""
+"""Event rendering layer — pure consumers of the harness event stream."""
 
 from __future__ import annotations
 

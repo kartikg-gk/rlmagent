@@ -1,17 +1,4 @@
-"""Streaming response decoders for Chat Completions and Responses APIs.
-
-Each decoder processes pre-parsed SSE payloads (an event name and a JSON
-dict) and produces a sequence of provider-neutral ``ParsedSignal`` values.
-These signals carry only the semantic content of each chunk — text deltas,
-reasoning deltas, incremental tool-call fragments, metadata, and completion
-markers — with no dependency on rlm-agent's wire-event model.  The
-normalisation layer (``normalize.py``) is responsible for converting these
-signals into ``WireEvent`` instances.
-
-Tool-call arguments arrive as incremental JSON fragments.  Both decoders
-accumulate these fragments internally and emit a ``CallResolved`` signal only
-when the complete argument string is available.
-"""
+"""Streaming response decoders for Chat Completions and Responses APIs."""
 
 from __future__ import annotations
 
@@ -148,13 +135,7 @@ def _failure_text(code: str | None, message: str | None) -> str:
 
 
 class ChatDecoder:
-    """Decodes Chat Completions streaming chunks into parsed signals.
-
-    Each SSE ``data:`` line is a JSON object with a ``choices`` array
-    containing a single ``rlm-agent`` object.  Tool-call arguments are
-    accumulated across multiple chunks and emitted as a ``CallResolved``
-    signal when the ``finish_reason`` arrives.
-    """
+    """Decodes Chat Completions streaming chunks into parsed signals."""
 
     def __init__(self) -> None:
         self._tools: dict[int, _ToolBuffer] = {}
@@ -241,20 +222,14 @@ class ChatDecoder:
 
 
 class ResponsesDecoder:
-    """Decodes Responses API streaming events into parsed signals.
-
-    The Responses API uses named SSE event types (``response.created``,
-    ``response.output_text.rlm-agent``, etc.) rather than the unnamed ``data:``
-    chunks of Chat Completions.
-    """
+    """Decodes Responses API streaming events into parsed signals."""
 
     def __init__(self) -> None:
         self._tools: dict[int, _ToolBuffer] = {}
         self._reasoned = False
 
     def _resolve(self, idx: int, final: object) -> list[ParsedSignal]:
-        """Close the call at *idx*. A non-empty final string is authoritative;
-        an empty one (sent by some servers) keeps what was streamed."""
+        """Close the call at *idx*. A non-empty final string is authoritative;"""
         buf = self._tools.pop(idx, None)
         if buf is None:
             return []

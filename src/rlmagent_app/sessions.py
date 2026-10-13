@@ -1,19 +1,4 @@
-"""Session lifecycle management: create, list, resume, and index.
-
-``SessionManager`` is the application-level coordinator between
-``CodingSession`` (runtime) and ``SessionCatalog`` (persistent index).
-It provides the high-level API that the CLI and TUI call to manage
-sessions without touching persistence details directly.
-
-Responsibilities:
-
-* **Create** — mint a new session, persist vault + index entry.
-* **Resume** — reload an existing session, touch the index timestamp.
-* **List** — enumerate sessions from the catalog (fast) or fall back
-  to scanning vault files when no index exists.
-* **Latest** — find the most recently used session for a working directory.
-* **Export** — delegate transcript export to ``CodingSession``.
-"""
+"""Session lifecycle management: create, list, resume, and index."""
 
 from __future__ import annotations
 
@@ -53,12 +38,7 @@ class SessionSummary:
 
 
 class SessionManager:
-    """Application-level coordinator for session lifecycle and indexing.
-
-    Wraps ``SessionCatalog`` for metadata persistence and delegates runtime
-    construction to ``CodingSession.create`` / ``CodingSession.resume``.
-    The manager itself is stateless beyond the sessions directory path.
-    """
+    """Application-level coordinator for session lifecycle and indexing."""
 
     def __init__(self, sessions_dir: str | Path) -> None:
         self._dir = Path(sessions_dir)
@@ -90,11 +70,7 @@ class SessionManager:
         cwd: str | None = None,
         tools_loader: Callable[[], list[ToolSpec]] | None = None,
     ) -> CodingSession:
-        """Create a new persistent coding session and index it.
-
-        Delegates to ``CodingSession.create`` (which writes the vault and
-        catalog entry) and returns the ready-to-use session.
-        """
+        """Create a new persistent coding session and index it."""
         return await CodingSession.create(
             provider=provider,
             provider_name=provider_name,
@@ -120,11 +96,7 @@ class SessionManager:
         tools: list[ToolSpec] | None = None,
         tools_loader: Callable[[], list[ToolSpec]] | None = None,
     ) -> CodingSession:
-        """Resume an existing session and touch its index timestamp.
-
-        Delegates to ``CodingSession.resume`` (which reloads the vault and
-        touches the catalog) and returns the restored session.
-        """
+        """Resume an existing session and touch its index timestamp."""
         return await CodingSession.resume(
             session_id,
             provider=provider,
@@ -149,10 +121,7 @@ class SessionManager:
         tools: list[ToolSpec] | None = None,
         tools_loader: Callable[[], list[ToolSpec]] | None = None,
     ) -> CodingSession | None:
-        """Resume the most recently used session for *cwd*, or ``None``.
-
-        Returns ``None`` if no session has been indexed for that directory.
-        """
+        """Resume the most recently used session for *cwd*, or ``None``."""
         meta = self._catalog.latest_for_cwd(cwd)
         if meta is None:
             return None
@@ -169,11 +138,7 @@ class SessionManager:
     # ── list ──────────────────────────────────────────────────────────
 
     def list_sessions(self) -> list[SessionSummary]:
-        """Return all indexed sessions, newest first.
-
-        Uses the catalog when available.  Falls back to scanning vault
-        files so pre-index sessions are still discoverable.
-        """
+        """Return all indexed sessions, newest first."""
         indexed = self._catalog.list_all()
         if indexed:
             return [
@@ -247,10 +212,7 @@ class SessionManager:
     # ── export ────────────────────────────────────────────────────────
 
     async def export(self, session_id: str, fmt: str = "jsonl") -> str:
-        """Export a session's vault contents in the given format.
-
-        Supported formats: ``jsonl``, ``json``, ``text``.
-        """
+        """Export a session's vault contents in the given format."""
         vault_path = self._dir / f"{session_id}.jsonl"
         if not vault_path.exists():
             raise FileNotFoundError(f"Session vault not found: {session_id}")

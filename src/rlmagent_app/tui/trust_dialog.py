@@ -1,10 +1,4 @@
-"""Startup question: may this folder's project inputs load?
-
-Runs as its own short-lived app before the main UI exists, because the answer
-decides what the session is built from. The choices and their meaning come
-from ``rlmagent_app.trust``; this module only presents them. Escape dismisses
-without an answer, which ends startup.
-"""
+"""Startup question: may this folder's project inputs load?"""
 
 from __future__ import annotations
 

@@ -1,10 +1,4 @@
-"""Streaming HTTP transport for OpenAI-compatible API endpoints.
-
-Responsibilities are deliberately narrow: execute one streaming POST request,
-parse the response body as a Server-Sent Events stream, and surface HTTP
-failures as a typed exception.  Retry logic and credential management live in
-the provider adapter which composes this module.
-"""
+"""Streaming HTTP transport for OpenAI-compatible API endpoints."""
 
 from __future__ import annotations
 
@@ -66,11 +60,7 @@ class HttpStreamError(Exception):
 
 
 async def _read_sse(response: httpx.Response) -> AsyncIterator[ServerSentEvent]:
-    """Parse an HTTP response body as a Server-Sent Events stream.
-
-    Yields one ``ServerSentEvent`` per dispatched event.  The OpenAI-specific
-    ``[DONE]`` sentinel is consumed silently and terminates the iterator.
-    """
+    """Parse an HTTP response body as a Server-Sent Events stream."""
     event_type = ""
     data_lines: list[str] = []
 
@@ -111,12 +101,7 @@ async def open_event_stream(
     signal: CancelToken | None = None,
     on_accept: Callable[[httpx.Response], None] | None = None,
 ) -> AsyncIterator[ServerSentEvent]:
-    """Execute a streaming POST and yield parsed SSE events.
-
-    Raises ``HttpStreamError`` on any non-200 status code.  The caller is
-    responsible for retry orchestration.  ``on_accept`` sees the response once
-    its status is known good, before any event is read (e.g. for headers).
-    """
+    """Execute a streaming POST and yield parsed SSE events."""
     async with client.stream(
         "POST",
         url,

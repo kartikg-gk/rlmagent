@@ -1,22 +1,4 @@
-"""Markdown-based skill system: discovery, loading, expansion, and indexing.
-
-A *skill* is a directory containing a ``SKILL.md`` file.  The markdown may
-begin with a YAML front-matter block delimited by ``---`` lines; recognised
-keys are ``name`` and ``description``.  When ``name`` is absent the directory
-name is used; when ``description`` is absent the first non-heading paragraph
-is extracted.
-
-Skills are loaded from one or more *resource directories* in precedence order
-(highest first).  A skill that appears in a higher-precedence directory
-shadows any skill with the same name in lower-precedence directories.
-
-Public surface
---------------
-Types:  ``Skill``, ``SkillInvocation``, ``SkillDiagnostic``
-Load:   ``load_skills``, ``load_skills_with_diagnostics``
-Use:    ``expand_command``, ``parse_invocation``, ``format_invocation``
-Index:  ``build_skill_index``
-"""
+"""Markdown-based skill system: discovery, loading, expansion, and indexing."""
 
 from __future__ import annotations
 
@@ -94,11 +76,7 @@ _FRONT_MATTER_RE = re.compile(
 
 
 def _parse_front_matter(text: str) -> tuple[dict[str, str], str]:
-    """Split optional YAML front matter from the markdown body.
-
-    Returns ``(metadata_dict, body_without_front_matter)``.  Only simple
-    ``key: value`` lines are recognised — no nested YAML.
-    """
+    """Split optional YAML front matter from the markdown body."""
     match = _FRONT_MATTER_RE.match(text)
     if match is None:
         return {}, text
@@ -141,10 +119,7 @@ def _derive_description(body: str) -> str:
 
 
 def _load_skill_from_dir(skill_dir: Path) -> Skill:
-    """Read ``SKILL.md`` from *skill_dir* and return a ``Skill``.
-
-    Raises ``SkillLoadError`` on I/O or encoding problems.
-    """
+    """Read ``SKILL.md`` from *skill_dir* and return a ``Skill``."""
     md_path = skill_dir / _SKILL_FILE
     try:
         raw = md_path.read_text(encoding="utf-8")
@@ -173,11 +148,7 @@ def _load_skill_from_dir(skill_dir: Path) -> Skill:
 def _discover_in_directory(
     root: Path,
 ) -> tuple[list[Skill], list[SkillDiagnostic]]:
-    """Scan a single resource directory for skills.
-
-    Returns ``(skills, diagnostics)``.  Duplicates *within the same root*
-    are reported as warnings.
-    """
+    """Scan a single resource directory for skills."""
     skills: list[Skill] = []
     diagnostics: list[SkillDiagnostic] = []
     seen_names: dict[str, Path] = {}
@@ -238,15 +209,7 @@ def _discover_in_directory(
 def load_skills_with_diagnostics(
     resource_dirs: Sequence[Path],
 ) -> tuple[list[Skill], list[SkillDiagnostic]]:
-    """Load skills from multiple resource directories with diagnostics.
-
-    *resource_dirs* is ordered highest-precedence first.  A skill discovered
-    in a higher-precedence directory shadows any skill with the same name
-    from a lower-precedence directory.
-
-    Returns ``(skills, diagnostics)`` where ``skills`` is deduplicated and
-    ``diagnostics`` collects all non-fatal issues from every directory.
-    """
+    """Load skills from multiple resource directories with diagnostics."""
     combined: dict[str, Skill] = {}
     all_diagnostics: list[SkillDiagnostic] = []
 
@@ -261,10 +224,7 @@ def load_skills_with_diagnostics(
 
 
 def load_skills(resource_dirs: Sequence[Path]) -> list[Skill]:
-    """Load skills from resource directories, discarding diagnostics.
-
-    Convenience wrapper around ``load_skills_with_diagnostics``.
-    """
+    """Load skills from resource directories, discarding diagnostics."""
     skills, _ = load_skills_with_diagnostics(resource_dirs)
     return skills
 
@@ -276,11 +236,7 @@ def expand_command(
     text: str,
     skills: dict[str, Skill],
 ) -> str | None:
-    """Expand a ``/skill:<name>`` command into an XML invocation block.
-
-    Returns the expanded text, or ``None`` if *text* is not a skill command.
-    Raises ``KeyError`` if the skill name is not found.
-    """
+    """Expand a ``/skill:<name>`` command into an XML invocation block."""
     if not text.startswith(_COMMAND_PREFIX):
         return None
 
@@ -323,10 +279,7 @@ def format_invocation(invocation: SkillInvocation) -> str:
 
 
 def parse_invocation(text: str) -> SkillInvocation | None:
-    """Parse an XML-like skill invocation block back into a ``SkillInvocation``.
-
-    Returns ``None`` if *text* does not contain a valid invocation block.
-    """
+    """Parse an XML-like skill invocation block back into a ``SkillInvocation``."""
     match = _INVOCATION_RE.search(text)
     if match is None:
         return None
@@ -341,10 +294,7 @@ def parse_invocation(text: str) -> SkillInvocation | None:
 
 
 def build_skill_index(skills: Sequence[Skill]) -> str:
-    """Build a concise skill listing suitable for inclusion in a system prompt.
-
-    Each skill is rendered as one line: ``/skill:<name> — <description>``
-    """
+    """Build a concise skill listing suitable for inclusion in a system prompt."""
     if not skills:
         return ""
     lines = [

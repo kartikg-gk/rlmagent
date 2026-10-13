@@ -1,27 +1,4 @@
-"""OpenAI-compatible provider adapter for the rlm-agent agent harness.
-
-``OpenAIProvider`` implements the ``ModelProvider`` protocol by composing the
-internal sub-modules for payload construction, SSE-based stream decoding, event
-normalisation, and HTTP transport with retry.  It supports both the Chat
-Completions and Responses APIs, selecting the appropriate endpoint automatically
-based on model name and base URL.
-
-Usage::
-
-    from rlmagent_model.settings import ReasoningPolicy, load_openai_profile
-    from rlmagent_model.oai_compatible import OpenAIProvider
-
-    profile = load_openai_profile()
-    provider = OpenAIProvider(profile)
-
-    async for event in provider.stream_response(
-        model="gpt-4o",
-        system="You are a helpful assistant.",
-        messages=transcript,
-        tools=tool_specs,
-    ):
-        handle(event)
-"""
+"""OpenAI-compatible provider adapter for the rlm-agent agent harness."""
 
 from __future__ import annotations
 
@@ -59,14 +36,7 @@ _ROUTING_KEY_LIMIT = 64
 
 
 class OpenAIProvider:
-    """Streaming model adapter for OpenAI-compatible API endpoints.
-
-    The provider owns an ``httpx.AsyncClient`` and delegates each streaming
-    request through the transport layer.  Transient HTTP failures are retried
-    with exponential backoff according to the profile's ``RetryPolicy``.
-    An optional ``CredentialResolver`` on the profile is called before each
-    attempt to support token rotation or secrets-manager integration.
-    """
+    """Streaming model adapter for OpenAI-compatible API endpoints."""
 
     def __init__(self, profile: OpenAIProfile) -> None:
         self._profile = profile
@@ -79,12 +49,7 @@ class OpenAIProvider:
         self.last_failure_status: int | None = None
 
     def set_reasoning(self, policy: ReasoningPolicy) -> None:
-        """Swap the reasoning-effort policy for subsequent requests.
-
-        The profile is frozen, so a replacement is built rather than mutated.
-        This lets a session change thinking depth mid-conversation without
-        tearing down the HTTP client.
-        """
+        """Swap the reasoning-effort policy for subsequent requests."""
         self._profile = replace(self._profile, reasoning=policy)
 
     async def close(self) -> None:

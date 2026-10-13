@@ -1,30 +1,4 @@
-"""Slash-command registry: parsing, dispatch, and structured result actions.
-
-This module is the thin command-routing layer between the CLI/TUI and the
-rest of the rlm-agent architecture.  It parses user intent from ``/command args``
-input and returns structured ``CommandResult`` objects describing what
-the application should do — it never executes business logic itself.
-
-Responsibilities:
-
-* Register slash commands with metadata (name, description, aliases).
-* Parse ``/command args`` input into a ``CommandContext``.
-* Dispatch to the matching handler.
-* Return a ``CommandResult`` the caller can act on.
-
-Non-responsibilities (belong to the surrounding application):
-
-* Executing provider operations, file edits, exports, or UI actions.
-* Session creation, model switching, or any async work.
-* Directly manipulating the conversation transcript.
-
-Usage::
-
-    registry = build_default_registry()
-    result = registry.dispatch(session, "/model claude-sonnet-4-20250514")
-    if result.handled:
-        ...  # act on result flags
-"""
+"""Slash-command registry: parsing, dispatch, and structured result actions."""
 
 from __future__ import annotations
 
@@ -39,11 +13,7 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class CommandSession(Protocol):
-    """Read-only view of session state consumed by command handlers.
-
-    Defined as a ``Protocol`` so ``commands.py`` never imports the
-    concrete ``CodingSession`` class, avoiding circular dependencies.
-    """
+    """Read-only view of session state consumed by command handlers."""
 
     @property
     def session_id(self) -> str: ...
@@ -77,14 +47,7 @@ class CommandSession(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class CommandResult:
-    """Describes what the application should do in response to a slash command.
-
-    Handlers return this instead of performing side effects.  The caller
-    inspects the flags and executes the corresponding business logic.
-
-    The ``extras`` dict provides an escape hatch for future commands that
-    need to communicate additional data without adding new fields.
-    """
+    """Describes what the application should do in response to a slash command."""
 
     handled: bool = False
     message: str = ""
@@ -158,11 +121,7 @@ def _ok(message: str = "", **kwargs: object) -> CommandResult:
 
 @dataclass(frozen=True, slots=True)
 class CommandContext:
-    """Bundle passed to every command handler.
-
-    Provides access to the session, the registry, and the parsed input
-    so handlers don't need many individual parameters.
-    """
+    """Bundle passed to every command handler."""
 
     session: CommandSession
     registry: CommandRegistry
@@ -202,11 +161,7 @@ class SlashCommand:
 
 
 def parse_command(text: str) -> tuple[str, str] | None:
-    """Parse ``/command args`` into ``(name, args)`` or ``None``.
-
-    Returns ``None`` when *text* is not a slash command (no leading ``/``,
-    empty after the slash, or a ``//`` comment).
-    """
+    """Parse ``/command args`` into ``(name, args)`` or ``None``."""
     if not text.startswith("/"):
         return None
     if text.startswith("//"):
@@ -226,12 +181,7 @@ def parse_command(text: str) -> tuple[str, str] | None:
 
 
 class CommandRegistry:
-    """Dictionary-based slash command registry with alias support.
-
-    Commands are registered once and looked up by primary name or alias.
-    Dispatch returns a ``CommandResult`` — the registry never executes
-    business logic.
-    """
+    """Dictionary-based slash command registry with alias support."""
 
     def __init__(self) -> None:
         self._commands: dict[str, SlashCommand] = {}
@@ -240,11 +190,7 @@ class CommandRegistry:
     # ── registration ──────────────────────────────────────────────────
 
     def register(self, command: SlashCommand) -> None:
-        """Add a command to the registry.
-
-        Raises ``ValueError`` if the name or any alias collides with an
-        existing registration.
-        """
+        """Add a command to the registry."""
         if command.name in self._commands or command.name in self._aliases:
             raise ValueError(f"Duplicate command name: /{command.name}")
         for alias in command.aliases:
@@ -280,11 +226,7 @@ class CommandRegistry:
     # ── dispatch ──────────────────────────────────────────────────────
 
     def dispatch(self, session: CommandSession, text: str) -> CommandResult:
-        """Parse *text* and dispatch to the matching handler.
-
-        Returns an unhandled ``CommandResult`` when *text* is not a slash
-        command or when no matching command is registered.
-        """
+        """Parse *text* and dispatch to the matching handler."""
         parsed = parse_command(text)
         if parsed is None:
             return _NOT_HANDLED

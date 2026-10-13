@@ -1,8 +1,4 @@
-"""Main transcript area — scrollable conversation view.
-
-Owns the mounted message blocks and autoscrolls as content streams in.
-Holds no runtime references; the app drives it.
-"""
+"""Main transcript area — scrollable conversation view."""
 
 from __future__ import annotations
 

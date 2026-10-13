@@ -1,8 +1,4 @@
-"""Shared utilities for the OpenAI-compatible provider layer.
-
-Contains pure functions for finish-reason mapping, token-usage extraction,
-endpoint selection, JSON parsing, and reasoning parameter construction.
-"""
+"""Shared utilities for the OpenAI-compatible provider layer."""
 
 from __future__ import annotations
 
@@ -28,10 +24,7 @@ class ServerSentEvent:
 
 
 def map_halt_reason(reason: str | None) -> str:
-    """Translate an OpenAI finish reason to rlm-agent's HaltReason vocabulary.
-
-    Returns one of ``"stop"``, ``"length"``, or ``"toolUse"``.
-    """
+    """Translate an OpenAI finish reason to rlm-agent's HaltReason vocabulary."""
     match reason:
         case "stop" | None:
             return "stop"
@@ -105,12 +98,7 @@ _DEFAULT_OPENAI_BASE = "https://api.openai.com/v1"
 
 
 def pick_endpoint(model: str, base_url: str) -> str:
-    """Return ``"responses"`` or ``"chat"`` for the given model and base URL.
-
-    The Responses API is preferred for reasoning-family models when the base
-    URL is the official OpenAI endpoint.  All other configurations default to
-    Chat Completions for maximum compatibility with third-party hosts.
-    """
+    """Return ``"responses"`` or ``"chat"`` for the given model and base URL."""
     if base_url.rstrip("/") != _DEFAULT_OPENAI_BASE:
         return "chat"
     lower = model.lower()
@@ -167,12 +155,7 @@ def reasons(model: str) -> bool:
 def build_reasoning_extra(
     policy: ReasoningPolicy, *, model: str, endpoint: str,
 ) -> dict[str, Any]:
-    """Reasoning parameters for one request, shaped for its endpoint.
-
-    Chat Completions takes a flat ``reasoning_effort``; the Responses API takes
-    ``reasoning: {effort}``. Nothing is sent when reasoning is off or the model
-    does not reason.
-    """
+    """Reasoning parameters for one request, shaped for its endpoint."""
     if not policy.enabled or not reasons(model):
         return {}
     effort = policy.effort or ("high" if policy.budget_tokens else "medium")
@@ -229,14 +212,7 @@ _EXHAUSTED_QUOTA_HINTS = (
 
 
 def stream_failure(event: str, data: dict[str, Any]) -> tuple[str | None, str | None] | None:
-    """Return ``(code, message)`` if this SSE event reports a failure, else ``None``.
-
-    Failures arrive in three shapes: a top-level ``error`` object (Chat
-    Completions), an ``error`` event whose details may sit at the top level or
-    under a nested ``error`` (Responses), and ``response.failed`` with details
-    under ``response.error``. All three are read so the real reason surfaces
-    instead of a generic fallback.
-    """
+    """Return ``(code, message)`` if this SSE event reports a failure, else ``None``."""
     nested = data.get("error")
     response = data.get("response")
     is_failure = (

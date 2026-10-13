@@ -1,24 +1,4 @@
-"""CodingSession — the single stateful runtime object for a persistent coding session.
-
-``CodingSession`` is the integration layer between rlm-agent's pure agent runtime
-(``RuntimeHarness`` → ``run_agent_loop``) and the rest of the application.  The
-harness stays focused on inference and tool execution; CodingSession owns every
-application-level concern:
-
-* Persistence — durable append-only JSONL via ``JsonlVault``
-* Branching / rewinding — session-tree navigation via lineage + projection
-* Compaction — manual and automatic context summarisation
-* Model / provider switching — live, mid-session
-* Thinking mode management
-* Token-budget tracking and context-limit enforcement
-* Mid-run steering and follow-up queues (delegated to the harness)
-* Automatic session naming
-* Slash-command dispatch
-* Terminal command execution with optional context injection
-* Multi-session lifecycle (create / resume / replace / shutdown)
-* Extension / plugin discovery and hot reload
-* Diagnostics, exports, and a clean read-only API
-"""
+"""CodingSession — the single stateful runtime object for a persistent coding session."""
 
 from __future__ import annotations
 
@@ -135,16 +115,7 @@ _EXPORT_SUFFIX = {"text": "txt", "json": "json", "jsonl": "jsonl"}
 
 
 def parse_export_arg(arg: str) -> tuple[str, str | None]:
-    """Split ``/export`` arguments into ``(format, destination)``.
-
-    Accepts a format, a path, or both in either order::
-
-        ""                     -> ("text", None)
-        "json"                 -> ("json",  None)
-        "out.json"             -> ("json",  "out.json")     # inferred
-        "json ~/notes/a.json"  -> ("json",  "~/notes/a.json")
-        "./exports/"           -> ("text",  "./exports/")
-    """
+    """Split ``/export`` arguments into ``(format, destination)``."""
     parts = arg.split()
     if not parts:
         return "text", None
@@ -179,11 +150,7 @@ _SKILL_DESC_MAX = 100
 
 
 def parse_create_skill_arg(arg: str) -> tuple[str, str]:
-    """Split ``/create-skill`` arguments into ``(name, body)``.
-
-    The first whitespace-delimited token is the skill name; everything after
-    it — including newlines — is the body.
-    """
+    """Split ``/create-skill`` arguments into ``(name, body)``."""
     stripped = arg.strip()
     if not stripped:
         return "", ""
@@ -212,11 +179,7 @@ def render_skill_file(name: str, description: str, body: str) -> str:
 _TITLE_MAX_CHARS = 48
 
 def summarize_prompt(text: str, *, limit: int = _TITLE_MAX_CHARS) -> str:
-    """Condense a prompt into a one-line session title.
-
-    Collapses whitespace, strips a leading slash-command marker, and clips on
-    a word boundary. Returns ``""`` when *text* has no usable content.
-    """
+    """Condense a prompt into a one-line session title."""
     flat = " ".join(text.split())
     if flat.startswith("/"):
         flat = flat.lstrip("/")
@@ -336,12 +299,7 @@ def _is_tool_call_record(record: SessionRecord) -> bool:
 
 
 def _ordered_tree_records(records: list[SessionRecord]) -> tuple[SessionRecord, ...]:
-    """Depth-first ordering of the record tree, roots first.
-
-    Pointer (``leaf``) records are skipped — they mark the head rather than
-    forming part of the conversation. Orphans whose parent is missing are
-    appended after the connected tree so nothing is silently dropped.
-    """
+    """Depth-first ordering of the record tree, roots first."""
     children: dict[str | None, list[SessionRecord]] = {}
     for record in records:
         if record.type != "leaf":
@@ -424,11 +382,7 @@ class SessionStats:
 
     @property
     def cache_hit_rate(self) -> float | None:
-        """Share of all prompt tokens this session served from the cache.
-
-        ``None`` while no provider has reported any cache activity, so a
-        backend without prompt caching never shows a misleading 0%.
-        """
+        """Share of all prompt tokens this session served from the cache."""
         if not self._cache_active or self.total_input_tokens <= 0:
             return None
         return self.cache_read_tokens / self.total_input_tokens
@@ -449,12 +403,7 @@ class SessionStats:
 
 
 class CodingSession:
-    """Single stateful runtime object for a persistent, resumable coding session.
-
-    Wraps ``RuntimeHarness`` and adds persistence, branching, compaction,
-    model/provider switching, thinking-mode management, extensions, diagnostics,
-    and session lifecycle management.
-    """
+    """Single stateful runtime object for a persistent, resumable coding session."""
 
     def __init__(
         self,
@@ -615,11 +564,7 @@ class CodingSession:
         templates_loader: Callable[[], list[Any]] | None = None,
         keep_model: bool = False,
     ) -> CodingSession:
-        """Load an existing session from persistent storage.
-
-        *keep_model* uses *model* even when the session recorded another,
-        for a model the caller chose explicitly.
-        """
+        """Load an existing session from persistent storage."""
         vault = JsonlVault(sessions_dir / f"{session_id}.jsonl")
         if not vault.path.exists():
             raise FileNotFoundError(f"Session not found: {session_id}")
@@ -675,12 +620,7 @@ class CodingSession:
     # ── run lifecycle ──────────────────────────────────────────────────
 
     def submit(self, text: str) -> AsyncIterator[AgentEvent]:
-        """Submit a user prompt and stream agent events.
-
-        Persistence, stats tracking, and auto-compaction are
-        handled automatically by the internal event subscriber and the
-        post-run hook.
-        """
+        """Submit a user prompt and stream agent events."""
         # Name the session from its first prompt straight away, so listings
         # never show a bare id while waiting on the model-generated title.
         if not self._title:
@@ -693,9 +633,7 @@ class CodingSession:
         return self._run_wrapped(self._harness.submit(prompt))
 
     def set_provisional_title(self, text: str) -> None:
-        """Derive a placeholder title from *text* and publish it immediately.
-
-        """
+        """Derive a placeholder title from *text* and publish it immediately."""
         title = summarize_prompt(text)
         if not title:
             return
@@ -798,13 +736,7 @@ class CodingSession:
         await self._append_record(ReasoningLevelRecord(thinking_level=level))
 
     def _apply_thinking_level(self) -> None:
-        """Push the active thinking level onto the provider.
-
-        Providers hold a frozen reasoning policy chosen when they were built,
-        so without this the level would be recorded and replayed but never
-        actually change a request. Providers that expose no ``set_reasoning``
-        simply keep their configured policy.
-        """
+        """Push the active thinking level onto the provider."""
         setter = getattr(self._provider, "set_reasoning", None)
         if setter is None:
             return
@@ -838,11 +770,7 @@ class CodingSession:
         return self._plan_mode
 
     def set_plan_mode(self, enabled: bool) -> None:
-        """Enter or leave plan mode (takes effect on the next turn).
-
-        Not persisted: plan mode is a stance for the current sitting, so a
-        resumed session always starts able to make changes.
-        """
+        """Enter or leave plan mode (takes effect on the next turn)."""
         self._plan_mode = enabled
         self._apply_plan_mode()
 
@@ -860,14 +788,7 @@ class CodingSession:
     # ── context compaction ─────────────────────────────────────────────
 
     async def compact(self) -> PruneSummaryEntry:
-        """Compact the transcript by summarising older entries.
-
-        Keeps the most recent entries intact and replaces everything before
-        them with a single ``PruneSummaryEntry``.  The compaction is persisted
-        as a ``PruneRecord`` so that resumption reconstructs the same state.
-
-        Raises ``ValueError`` if the transcript is too short to compact.
-        """
+        """Compact the transcript by summarising older entries."""
         transcript = list(self._harness.transcript)
         plan = plan_compaction(transcript, self._record_ids, limits=_CONTEXT_LIMITS)
         if plan is None:
@@ -911,11 +832,7 @@ class CodingSession:
         return exceeds_threshold(self.context_estimate())
 
     def context_estimate(self) -> ContextEstimate:
-        """Full context accounting for the session as it stands.
-
-        Counts the system prompt and tool schemas alongside the transcript, so
-        the utilisation figure reflects everything actually sent to the model.
-        """
+        """Full context accounting for the session as it stands."""
         return estimate_context(
             self._harness.transcript,
             system=self._system,
@@ -986,12 +903,7 @@ class CodingSession:
             self._sync_route_to_catalog()
 
     def _should_reroute(self, reply: ModelEntry) -> bool:
-        """Whether a failed reply should retry on the router's own choice.
-
-        Only a learned pin is abandoned, only for a status that points at
-        that backend being unhealthy, and only when the failure produced no
-        output — replaying partial text or tool calls would duplicate them.
-        """
+        """Whether a failed reply should retry on the router's own choice."""
         return (
             self._provider_name == ROUTED_PROVIDER
             and self._route.mode == "automatic"
@@ -1013,12 +925,7 @@ class CodingSession:
     COMMANDS: tuple[tuple[str, str], ...] = _RUNNABLE_COMMAND_TABLE
 
     async def handle_command(self, text: str) -> str | None:
-        """Handle a ``/``-prefixed command.
-
-        Returns a human-readable response string if the input was a recognised
-        command, or ``None`` if it was not (so the caller can treat it as a
-        normal prompt).
-        """
+        """Handle a ``/``-prefixed command."""
         parsed = parse_command(text)
         if parsed is None:
             return None
@@ -1068,11 +975,7 @@ class CodingSession:
         }
 
     def _cmd_help(self, _arg: str) -> str:
-        """List every command available here, with usage and aliases.
-
-        Covers frontend-owned commands (``/quit``, ``/version``, ``/continue``)
-        as well as the session's own, so this is the one help text a user sees.
-        """
+        """List every command available here, with usage and aliases."""
         lines = ["Commands:"]
         for command in COMMAND_REGISTRY.all_commands():
             if command.name not in _RUNNABLE_COMMANDS:
@@ -1132,12 +1035,7 @@ class CodingSession:
     # ── session tree: branching and rewinding ───────────────────────────
 
     async def tree_choices(self) -> tuple[SessionTreeChoice, ...]:
-        """Return branchable session entries for a tree picker.
-
-        Rows are depth-first over the record tree, indented where a branch
-        diverged, so a caller can render a selectable list instead of asking
-        the user for a raw record id.
-        """
+        """Return branchable session entries for a tree picker."""
         if self._vault is None:
             return ()
         records = await self._vault.read_all()
@@ -1156,11 +1054,7 @@ class CodingSession:
         )
 
     async def branch(self, summary: str | None = None) -> str:
-        """Create a conversation branch from the current point.
-
-        Persists a ``ForkSummaryRecord`` and returns its ID.  Subsequent
-        entries will descend from the fork.
-        """
+        """Create a conversation branch from the current point."""
         if summary is None:
             context = "\n".join(
                 f"[{e.role}] {surface_text(e)}"
@@ -1179,11 +1073,7 @@ class CodingSession:
         return record.id
 
     async def rewind(self, entry_id: str) -> None:
-        """Rewind the session to a previous point in the conversation tree.
-
-        Loads the lineage from root to *entry_id*, projects it into a
-        transcript, and replaces the live state.
-        """
+        """Rewind the session to a previous point in the conversation tree."""
         if self._vault is None:
             raise RuntimeError("Rewind requires a persistent session.")
 
@@ -1207,14 +1097,7 @@ class CodingSession:
         await self._mend_stored_history()
 
     async def _mend_stored_history(self) -> HistoryMend | None:
-        """Repair malformed tool-call pairing in the active branch, durably.
-
-        The log is append-only, so nothing is rewritten: a diagnostic record
-        and the repaired messages are appended as a new branch, and the tip
-        moves there. Model, reasoning level, and title are snapshotted onto
-        the branch so it projects to the same session state. Valid history is
-        left alone, so repeated loads never stack up repair branches.
-        """
+        """Repair malformed tool-call pairing in the active branch, durably."""
         transcript = list(self._harness.transcript)
         mend = mend_tool_history(transcript)
         if not mend.changed:
@@ -1262,14 +1145,7 @@ class CodingSession:
         original: list[TranscriptEntry],
         repaired: tuple[TranscriptEntry, ...],
     ) -> tuple[str | None, list[TranscriptEntry]]:
-        """Where the repair branch attaches, and which messages it must carry.
-
-        It attaches after the longest unchanged prefix when the log up to that
-        record projects to exactly that prefix. Compaction can break that
-        (messages it kept may precede the compaction record itself), so the
-        fallback re-roots at the session header and carries the whole
-        repaired history.
-        """
+        """Where the repair branch attaches, and which messages it must carry."""
         prefix = 0
         for before, after in zip(original, repaired, strict=False):
             if before is not after:
@@ -1313,10 +1189,7 @@ class CodingSession:
         )
 
     async def replace_session(self, session_id: str) -> CodingSession:
-        """Switch to a different existing session.
-
-        Shuts down the current session and loads the target.
-        """
+        """Switch to a different existing session."""
         if self._vault is None:
             raise RuntimeError("Replace requires a persistent session.")
         await self.shutdown()
@@ -1384,10 +1257,7 @@ class CodingSession:
         return len(self._skills)
 
     def expand_skill(self, text: str) -> str | None:
-        """Expand ``/skill:<name> [args]`` into an injectable prompt block.
-
-        Returns ``None`` when *text* is not a skill invocation.
-        """
+        """Expand ``/skill:<name> [args]`` into an injectable prompt block."""
         from rlmagent_app.skillset import expand_command
 
         index = {s.name: s for s in self._skills}
@@ -1410,11 +1280,7 @@ class CodingSession:
         return len(self._templates)
 
     def expand_template(self, text: str) -> str | None:
-        """Expand ``/<template-name> [args]`` into its rendered body.
-
-        Returns ``None`` when *text* names no loaded template, so a genuine
-        slash command is never swallowed by a same-named template.
-        """
+        """Expand ``/<template-name> [args]`` into its rendered body."""
         from rlmagent_app.prompts import expand_slash_command
 
         index = {t.name: t for t in self._templates}
@@ -1578,19 +1444,7 @@ class CodingSession:
     async def _run_wrapped(
         self, stream: AsyncIterator[AgentEvent]
     ) -> AsyncIterator[AgentEvent]:
-        """Wrap a harness event stream with post-run processing.
-
-        Two failures get one automatic continuation of the same run, with no
-        extra user message, and the intermediate run end is swallowed so the
-        caller sees a single run:
-
-        - the request overflowed the model's context window: older history
-          is compacted first (if that fails, the original error stands);
-        - a routed provider's learned backend failed before answering: the
-          pin is dropped so the router picks again.
-
-        Each recovery is tried at most once per run.
-        """
+        """Wrap a harness event stream with post-run processing."""
         completed = False
         used: set[str] = set()
         try:
@@ -1693,13 +1547,7 @@ class CodingSession:
         *,
         advance_tip: bool = True,
     ) -> str | None:
-        """Chain *record* onto the active branch and persist it.
-
-        Every durable record is linked to the current tip via ``parent_id`` so
-        that resuming can walk the parent chain and replay only the active
-        branch.  ``advance_tip=False`` is for pointer records (``TipRecord``)
-        that mark the head without becoming it.
-        """
+        """Chain *record* onto the active branch and persist it."""
         if self._vault is None:
             return None
         if self._pending_header is not None:
@@ -1906,11 +1754,7 @@ class CodingSession:
         return f"Exported {fmt} to {path}"
 
     def export_to_path(self, content: str, destination: str, fmt: str) -> Path:
-        """Write *content* to *destination*, resolving directories and ``~``.
-
-        A destination that is (or ends like) a directory receives a file named
-        after the session; parent directories are created as needed.
-        """
+        """Write *content* to *destination*, resolving directories and ``~``."""
         target = Path(destination).expanduser()
         if not target.is_absolute():
             target = Path(self.cwd) / target
@@ -2010,10 +1854,7 @@ class CodingSession:
         )
 
     def write_skill(self, name: str, body: str) -> tuple[Path, bool]:
-        """Write ``<cwd>/.rlm-agent/skills/<name>/SKILL.md``.
-
-        Returns the path and whether it already existed.
-        """
+        """Write ``<cwd>/.rlm-agent/skills/<name>/SKILL.md``."""
         target = Path(self._cwd) / ".rlm-agent" / "skills" / name / "SKILL.md"
         existed = target.exists()
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -2059,15 +1900,7 @@ class CodingSession:
         return "\n".join(lines)
 
     def system_sections(self) -> list[PromptSection]:
-        """The live system prompt split into attributed sections.
-
-        Sections are rebuilt from the same inputs the prompt was assembled
-        from and trusted only if they join back to the exact live text; if
-        anything drifted (an override, a changed date, an edited file) the
-        whole prompt is shown as one unattributed section rather than with
-        provenance that might be wrong. Display only: nothing here is sent to
-        the model or persisted.
-        """
+        """The live system prompt split into attributed sections."""
         from rlmagent_app.instructions import prompt_sections
 
         attributed: list[PromptSection] | None = None

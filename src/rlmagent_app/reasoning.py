@@ -1,11 +1,4 @@
-"""Provider-neutral thinking mode primitives.
-
-Defines canonical *thinking levels* that the UI and configuration layer
-expose to users, plus pure conversion helpers that translate those levels
-into the parameters each model provider actually needs.
-
-No provider classes, network calls, session state, or UI logic lives here.
-"""
+"""Provider-neutral thinking mode primitives."""
 
 from __future__ import annotations
 
@@ -43,11 +36,7 @@ _LEVEL_SET: frozenset[str] = frozenset(THINKING_LEVELS)
 
 
 def normalize_thinking_level(value: str | None) -> ThinkingLevel:
-    """Resolve *value* to a canonical thinking level.
-
-    Returns the default level when *value* is ``None``.  Strips whitespace,
-    lower-cases, and raises a friendly ``ValueError`` for unknown values.
-    """
+    """Resolve *value* to a canonical thinking level."""
     if value is None:
         return DEFAULT_THINKING_LEVEL
 
@@ -62,10 +51,7 @@ def normalize_thinking_level(value: str | None) -> ThinkingLevel:
 
 
 def normalize_thinking_levels(values: Sequence[str]) -> tuple[ThinkingLevel, ...]:
-    """Normalize a sequence of thinking-level strings.
-
-    Rejects empty input and duplicate levels.
-    """
+    """Normalize a sequence of thinking-level strings."""
     if not values:
         raise ValueError("At least one thinking level is required")
 
@@ -107,20 +93,12 @@ _BUDGET_MAP: dict[ThinkingLevel, int | None] = {
 
 
 def thinking_to_effort(level: ThinkingLevel) -> str:
-    """Map a thinking level to an effort-style parameter value.
-
-    Returns a string such as ``"none"``, ``"low"``, or ``"high"``
-    suitable for providers that accept a reasoning-effort field.
-    """
+    """Map a thinking level to an effort-style parameter value."""
     return _EFFORT_MAP[level]
 
 
 def thinking_to_budget(level: ThinkingLevel) -> int | None:
-    """Map a thinking level to a token-budget parameter value.
-
-    Returns ``None`` when thinking is off (the provider should omit
-    the parameter entirely) or an integer token cap otherwise.
-    """
+    """Map a thinking level to a token-budget parameter value."""
     return _BUDGET_MAP[level]
 
 
@@ -132,11 +110,7 @@ def next_thinking_level(
     *,
     available: Sequence[ThinkingLevel] = THINKING_LEVELS,
 ) -> ThinkingLevel:
-    """Return the level that follows *current* in *available*.
-
-    Wraps around at the end.  Falls back to the first available level
-    when *current* is not recognised.
-    """
+    """Return the level that follows *current* in *available*."""
     if not available:
         return DEFAULT_THINKING_LEVEL
 

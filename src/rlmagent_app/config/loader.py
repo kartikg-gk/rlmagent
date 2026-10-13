@@ -1,11 +1,4 @@
-"""Resolve provider, model, and credentials from environment then saved config.
-
-Environment variables always win; the config file is the fallback.  The
-existing ``rlmagent_model.settings`` loaders read credentials from the
-environment, so :func:`apply_config` exports resolved values into
-``os.environ`` for this process only when they are not already set — which is
-exactly the precedence rule, and keeps the provider layer untouched.
-"""
+"""Resolve provider, model, and credentials from environment then saved config."""
 
 from __future__ import annotations
 
@@ -59,12 +52,7 @@ def load_api_key(provider: str, config: RlmAgentConfig | None = None) -> str | N
 
 
 def apply_config(provider: str, config: RlmAgentConfig | None = None) -> None:
-    """Export saved credentials for *provider* into this process's environment.
-
-    Only fills variables that are unset, so real environment variables keep
-    precedence.  OpenAI-compatible backends (OpenRouter, Ollama) are mapped
-    onto the ``OPENAI_*`` variables the existing loader already reads.
-    """
+    """Export saved credentials for *provider* into this process's environment."""
     try:
         info = provider_info(provider)
     except KeyError:

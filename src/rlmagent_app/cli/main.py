@@ -1,16 +1,4 @@
-"""CLI entry point for rlm-agent: argument parsing, mode dispatch, and lifecycle management.
-
-The CLI is a pure orchestrator — all business logic lives in ``rlmagent_harness``,
-``rlmagent_model``, and the sibling ``rlmagent_app`` modules.  This file owns only:
-
-- argument parsing with implicit ``run`` subcommand
-- provider / model resolution
-- session creation, resumption, listing, and export
-- extension discovery via file-based loading (``rlmagent_app.plugins``)
-- startup banner and notices
-- signal handling for graceful shutdown
-- dispatch to interactive or one-shot run mode
-"""
+"""CLI entry point for rlm-agent: argument parsing, mode dispatch, and lifecycle management."""
 
 from __future__ import annotations
 
@@ -101,11 +89,7 @@ def _die(msg: str) -> NoReturn:
 
 
 def _sessions_dir(override: str | None = None) -> Path:
-    """Resolve the session directory from flag, env, or default.
-
-    Delegates to ``RlmAgentPaths`` for the canonical default location
-    (``~/.rlm-agent/sessions``), with flag and env-var overrides.
-    """
+    """Resolve the session directory from flag, env, or default."""
     if override:
         return Path(override)
     from rlmagent_app.discovery import default_paths
@@ -300,12 +284,7 @@ def _load_tools(verbose: bool = False, kernel=None) -> list[ToolSpec]:
 
 
 def _load_skills(cwd: str, verbose: bool = False) -> list[object]:
-    """Load skills from all resource directories with full precedence.
-
-    Search order (highest-precedence first):
-    ``<cwd>/.agents/skills``, ``<cwd>/.rlm-agent/skills``,
-    ``~/.agents/skills``, ``~/.rlm-agent/skills``.
-    """
+    """Load skills from all resource directories with full precedence."""
     try:
         from rlmagent_app.discovery import default_paths, skill_search_paths
         from rlmagent_app.skillset import load_skills
@@ -324,11 +303,7 @@ def _load_skills(cwd: str, verbose: bool = False) -> list[object]:
 
 
 def _load_prompt_templates(cwd: str, verbose: bool = False) -> list[object]:
-    """Load markdown prompt templates from all resource directories.
-
-    Same four-level precedence as skills: ``<cwd>/.agents/prompts``,
-    ``<cwd>/.rlm-agent/prompts``, ``~/.agents/prompts``, ``~/.rlm-agent/prompts``.
-    """
+    """Load markdown prompt templates from all resource directories."""
     try:
         from rlmagent_app.discovery import default_paths, prompt_search_paths
         from rlmagent_app.prompts import load_prompt_templates
@@ -402,12 +377,7 @@ def _install_safety(harness: RuntimeHarness, policy: ApprovalPolicy) -> None:
 
 
 def _load_extensions(verbose: bool = False) -> list[object]:
-    """Discover and activate extensions from the extension directories.
-
-    Uses file-based discovery (``rlmagent_app.plugins``) rather than installed
-    entry points, so files written after install — including ones the agent
-    authors itself — are picked up on the next load or ``/reload``.
-    """
+    """Discover and activate extensions from the extension directories."""
     from rlmagent_app.plugins import load_extensions
 
     result = load_extensions()
@@ -571,12 +541,7 @@ def _handle_tui(ns: argparse.Namespace | None = None) -> int:
 
 
 def _should_launch_tui(ns: argparse.Namespace) -> bool:
-    """Whether a bare ``rlm-agent`` invocation should open the Textual UI.
-
-    Only plain interactive startup qualifies: a one-shot prompt, print mode,
-    a resumed session, ``--repl``, or a non-terminal stdio all stay on the
-    line-based REPL.
-    """
+    """Whether a bare ``rlm-agent`` invocation should open the Textual UI."""
     if ns.repl or ns.print_mode or ns.prompt is not None or ns.resume:
         return False
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -614,11 +579,7 @@ async def _consume_events(
     *,
     print_mode: bool,
 ) -> bool:
-    """Consume the event stream and render output, returning overall success.
-
-    Persistence, stats, auto-naming, and compaction are handled inside
-    ``CodingSession`` (via its harness event subscriber), so this only renders.
-    """
+    """Consume the event stream and render output, returning overall success."""
     mode = OutputMode.TEXT if print_mode else OutputMode.TRANSCRIPT
     renderer = make_renderer(mode)
     async for event in events:
@@ -736,8 +697,7 @@ def _prompt_user() -> str | None:
 
 
 def _wire_signals(session: CodingSession) -> None:
-    """Install a SIGINT handler: first press aborts the active run, idle press
-    raises ``KeyboardInterrupt`` for the normal exit path."""
+    """Install a SIGINT handler: first press aborts the active run, idle press"""
 
     def _handler(_signum: int, _frame: object) -> None:
         if session.active:

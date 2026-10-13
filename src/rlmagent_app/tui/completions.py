@@ -1,9 +1,4 @@
-"""Slash-command autocomplete bar shown above the composer.
-
-Pure presentation: it is given candidates, renders them, and reports the
-chosen one. Filtering lives in :func:`match_commands` so it stays testable
-without a running app.
-"""
+"""Slash-command autocomplete bar shown above the composer."""
 
 from __future__ import annotations
 
@@ -34,11 +29,7 @@ class Completion:
 def match_commands(
     text: str, commands: tuple[tuple[str, str], ...],
 ) -> list[Completion]:
-    """Return commands matching *text*, or ``[]`` when not completing.
-
-    Only a leading ``/`` with no whitespace yet is a completion context —
-    once the user types an argument the bar goes away.
-    """
+    """Return commands matching *text*, or ``[]`` when not completing."""
     if not text.startswith("/") or " " in text:
         return []
     fragment = text[1:].lower()

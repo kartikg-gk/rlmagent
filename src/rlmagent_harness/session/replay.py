@@ -1,13 +1,4 @@
-"""Reconstruct live conversation state from the session record tree.
-
-Three steps of one pipeline:
-
-1. **lineage** — walk parent pointers from a leaf back to the root, yielding the
-   active-leaf path in root-first order.
-2. **projection** — fold that ordered record path into a live transcript, applying
-   compaction summaries and extracting runtime settings.
-3. **find_tip** — locate the latest ``TipRecord`` leaf in a record list.
-"""
+"""Reconstruct live conversation state from the session record tree."""
 
 from __future__ import annotations
 
@@ -90,12 +81,7 @@ def _apply_prune(
     rows: list[tuple[str, TranscriptEntry]],
     record: PruneRecord,
 ) -> list[tuple[str, TranscriptEntry]]:
-    """Replace the rows superseded by *record* with a single summary row.
-
-    The summary takes the **position of the first row it replaces**, so the
-    condensed history stays where it happened chronologically rather than
-    surfacing after the messages that outlived it.
-    """
+    """Replace the rows superseded by *record* with a single summary row."""
     superseded = set(record.replaces_entry_ids)
     summary = PruneSummaryEntry(summary=record.summary, tokens_before=0)
 
@@ -116,16 +102,7 @@ def _apply_prune(
 
 
 def project_records(records: list[SessionRecord]) -> ProjectedState:
-    """Fold an ordered list of session records into live conversation state.
-
-    Handles ``TranscriptRecord`` entries, ``PruneRecord`` compaction summaries,
-    ``ModelSwapRecord`` / ``ReasoningLevelRecord`` runtime switches, and
-    ``TagRecord`` / ``SessionMetaRecord`` metadata.
-
-    Compactions are applied **in order, as they are encountered**, so a later
-    compaction can supersede an earlier summary just as it supersedes ordinary
-    messages.
-    """
+    """Fold an ordered list of session records into live conversation state."""
     rows: list[tuple[str, TranscriptEntry]] = []
     model: str | None = None
     thinking_level: str | None = None
@@ -178,16 +155,7 @@ def find_tip(records: list[SessionRecord]) -> str | None:
 
 
 def project_active_branch(records: list[SessionRecord]) -> ProjectedState:
-    """Project only the active branch of the record tree.
-
-    Locates the newest ``TipRecord``, walks parent pointers back to the root,
-    and projects that path.  Records abandoned by a ``rewind`` are therefore
-    excluded, which a flat replay of the file would wrongly resurrect.
-
-    Falls back to a flat projection when there is no tip (a session that never
-    completed a run) or when the parent chain is unusable, so a damaged log
-    still loads rather than failing outright.
-    """
+    """Project only the active branch of the record tree."""
     tip = find_tip(records)
     if tip is None:
         return project_records(records)

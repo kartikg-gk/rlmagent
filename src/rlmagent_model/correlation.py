@@ -1,10 +1,4 @@
-"""Wire-safe tool-call identifiers.
-
-A transcript may carry tool-call ids minted by any provider. Some vendors
-accept only a narrow id alphabet, so replaying one vendor's ids to another can
-fail validation. Every payload builder routes ids through ``wire_call_id`` at
-the provider boundary; the stored transcript is never rewritten.
-"""
+"""Wire-safe tool-call identifiers."""
 
 from __future__ import annotations
 
@@ -18,12 +12,7 @@ _DIGEST_CHARS = 40
 
 
 def wire_call_id(raw: str) -> str:
-    """Map ``raw`` to a deterministic id every provider accepts.
-
-    Unsafe ids are hashed rather than character-substituted, so two distinct
-    ids (``a|b`` versus ``a_b``) can never collide. Because the mapping is
-    pure, a call and its later result translate independently yet still match.
-    """
+    """Map ``raw`` to a deterministic id every provider accepts."""
     if _SAFE_ID.fullmatch(raw):
         return raw
     return "tc_" + sha256(raw.encode("utf-8")).hexdigest()[:_DIGEST_CHARS]

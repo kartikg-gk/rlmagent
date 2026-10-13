@@ -1,26 +1,4 @@
-"""Reload diagnostics: structured JSONL logging for hot-reload operations.
-
-Provides the types and utilities the reload manager needs to record what
-happened during a reload — expected failures, unexpected exceptions, and
-the metadata that ties log lines together — without performing any reload
-logic itself.
-
-All logged data is scrubbed of secrets before it touches disk.  Log
-entries never contain resource content, prompt text, API keys, request
-payloads, or credentials.
-
-Usage::
-
-    ctx = ReloadDiagnosticContext.create()
-    logger = ReloadDiagnosticLogger(log_dir)
-
-    try:
-        load_skill(path)
-    except SkillLoadError as exc:
-        logger.log_failure(ctx, "skills", "bad-skill", str(exc))
-    except Exception as exc:
-        logger.log_exception(ctx, "skills", "bad-skill", exc)
-"""
+"""Reload diagnostics: structured JSONL logging for hot-reload operations."""
 
 from __future__ import annotations
 
@@ -68,11 +46,7 @@ def _scrub_error(message: str) -> str:
 
 
 def _scrub_traceback(exc: BaseException) -> list[str]:
-    """Format an exception traceback and scrub each line of secrets.
-
-    Flattens the output of ``traceback.format_exception`` into individual
-    lines, scrubs each one, and caps the result at ``_MAX_TRACEBACK_LINES``.
-    """
+    """Format an exception traceback and scrub each line of secrets."""
     raw = traceback.format_exception(type(exc), exc, exc.__traceback__)
     flat: list[str] = []
     for chunk in raw:
@@ -108,12 +82,7 @@ def new_run_id() -> str:
 
 @dataclass(frozen=True, slots=True)
 class ReloadDiagnosticContext:
-    """Immutable metadata stamp for one reload operation.
-
-    Every diagnostic log line emitted during the same reload shares this
-    context's ``run_id`` and ``started_at``, making it trivial to
-    correlate entries.  Carries no mutable state.
-    """
+    """Immutable metadata stamp for one reload operation."""
 
     run_id: str
     started_at: str
@@ -131,10 +100,7 @@ class ReloadDiagnosticContext:
 
 
 def build_base_entry(ctx: ReloadDiagnosticContext) -> dict[str, Any]:
-    """Return the fields common to every diagnostic log line.
-
-    Contains only the run correlation ID and a per-entry UTC timestamp.
-    """
+    """Return the fields common to every diagnostic log line."""
     return {
         "run_id": ctx.run_id,
         "ts": _iso_utc(_utc_now()),
@@ -149,10 +115,7 @@ def build_failure_entry(
     *,
     path: str = "",
 ) -> dict[str, Any]:
-    """Build a log entry for an expected reload failure.
-
-    The *error* message is scrubbed before inclusion.
-    """
+    """Build a log entry for an expected reload failure."""
     entry = build_base_entry(ctx)
     entry.update(level="failure", category=category, name=name,
                  error=_scrub_error(error))
@@ -169,10 +132,7 @@ def build_exception_entry(
     *,
     path: str = "",
 ) -> dict[str, Any]:
-    """Build a log entry for an unexpected exception.
-
-    Both the error message and the traceback are scrubbed of secrets.
-    """
+    """Build a log entry for an unexpected exception."""
     entry = build_base_entry(ctx)
     entry.update(level="error", category=category, name=name,
                  error=_scrub_error(str(exc)),
@@ -186,15 +146,7 @@ def build_exception_entry(
 
 
 class ReloadDiagnosticLogger:
-    """Appends structured JSONL diagnostic entries for reload operations.
-
-    Each call to ``log_failure`` or ``log_exception`` writes one compact
-    JSON line.  The log directory is created automatically on first write.
-
-    The logger only writes — it never performs reload logic, builds
-    summaries, or tracks state.  All error messages and tracebacks are
-    scrubbed of secrets before being written.
-    """
+    """Appends structured JSONL diagnostic entries for reload operations."""
 
     def __init__(self, log_dir: Path, *, filename: str = _LOG_FILENAME) -> None:
         self._log_dir = log_dir

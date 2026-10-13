@@ -1,2 +1,1 @@
-"""rlmagent_app: the coding application — tools, safety, prompts, skills,
-context, hooks, config, cli, ui."""
+"""rlmagent_app: the coding application — tools, safety, prompts, skills,"""

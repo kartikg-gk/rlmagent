@@ -1,16 +1,4 @@
-"""State-machine parser that converts Anthropic SSE events into rlm-agent wire events.
-
-``ResponseMachine`` processes the typed events produced by the Messages API
-streaming endpoint (``message_start``, ``content_block_start``,
-``content_block_delta``, ``content_block_stop``, ``message_delta``,
-``message_stop``) and emits the corresponding ``WireEvent`` instances that
-the harness loop consumes.
-
-The machine maintains a running ``ModelEntry`` snapshot and tracks one
-in-progress content block at a time.  Completed blocks are folded into
-the snapshot immediately, so every emitted event carries an up-to-date
-partial view of the assistant response.
-"""
+"""State-machine parser that converts Anthropic SSE events into rlm-agent wire events."""
 
 from __future__ import annotations
 
@@ -134,12 +122,7 @@ def _tally_usage(
 
 
 class ResponseMachine:
-    """Stateful parser that ingests Anthropic SSE events and emits wire events.
-
-    Call ``ingest`` for each ``(event_type, payload)`` pair received from the
-    streaming endpoint.  Call ``seal`` after the stream closes to ensure a
-    terminal event is emitted even if ``message_stop`` was never received.
-    """
+    """Stateful parser that ingests Anthropic SSE events and emits wire events."""
 
     def __init__(self, *, model: str, provider: str) -> None:
         self._model = model

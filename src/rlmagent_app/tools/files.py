@@ -1,12 +1,4 @@
-"""File tools: Read, Write, and Edit.
-
-Three ToolSpec factories that produce the core filesystem tools for the agent.
-Each tool is async, uses per-path locking where needed, and returns ToolOutcome.
-
-- **Read**: read text files (with line numbers) or images (as base64).
-- **Write**: create or overwrite a file, auto-creating parent directories.
-- **Edit**: exact-match string replacement with a uniqueness invariant.
-"""
+"""File tools: Read, Write, and Edit."""
 
 from __future__ import annotations
 

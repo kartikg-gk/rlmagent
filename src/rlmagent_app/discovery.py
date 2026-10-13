@@ -1,54 +1,4 @@
-"""Canonical filesystem layout and automatic resource discovery.
-
-Two layers, kept independent:
-
-1. **Path utility** — ``RlmAgentPaths`` computes canonical filesystem locations
-   for rlm-agent's home directory, session storage, logs, and per-resource-type
-   subdirectories.  It never touches the filesystem; it only returns ``Path``
-   objects.
-
-2. **Resource search paths** — ``skill_search_paths``, ``prompt_search_paths``,
-   ``theme_search_paths``, and the general ``resource_search_paths`` assemble
-   precedence-ordered directory lists from a ``RlmAgentPaths`` instance.
-
-3. **Markdown resource helpers** — ``MarkdownResource`` and ``parse_markdown``
-   provide shared frontmatter parsing, metadata extraction, and description
-   derivation for any ``.md``-based resource (skills, prompts, etc.).
-
-Directory layout
-----------------
-
-User home (durable, cross-project)::
-
-    ~/.rlm-agent/
-        sessions/
-        logs/
-        skills/
-        prompts/
-        themes/
-
-    ~/.agents/
-        skills/
-        prompts/
-
-Project-local (checked into repo, project-specific)::
-
-    <project>/.rlm-agent/
-        skills/
-        prompts/
-        themes/
-
-    <project>/.agents/
-        skills/
-        prompts/
-
-Precedence (lowest → highest)::
-
-    ~/.rlm-agent/<type>  →  ~/.agents/<type>  →  <project>/.rlm-agent/<type>  →  <project>/.agents/<type>
-
-Later locations override earlier ones when resources share the same name.
-Themes are specific to rlm-agent and skip the ``.agents`` directories.
-"""
+"""Canonical filesystem layout and automatic resource discovery."""
 
 from __future__ import annotations
 
@@ -104,15 +54,7 @@ def _dedupe_paths(paths: list[Path]) -> list[Path]:
 
 @dataclass(frozen=True, slots=True)
 class RlmAgentPaths:
-    """Canonical filesystem locations for rlm-agent.
-
-    Computes paths only — never reads from or writes to the filesystem.
-    All directories are derived from two roots: the rlm-agent home directory
-    (``~/.rlm-agent`` by default) and the project working directory.
-
-    Override the roots via constructor arguments or the ``RLM_AGENT_HOME`` /
-    ``RLM_AGENT_SESSIONS_DIR`` environment variables.
-    """
+    """Canonical filesystem locations for rlm-agent."""
 
     home: Path = field(default_factory=_resolve_home)
     project: Path = field(default_factory=Path.cwd)
@@ -209,11 +151,7 @@ def default_paths(
     home: Path | None = None,
     project: Path | None = None,
 ) -> RlmAgentPaths:
-    """Build a ``RlmAgentPaths`` with optional overrides for home and project.
-
-    Falls back to environment variables and ``Path.cwd()`` when not
-    specified.
-    """
+    """Build a ``RlmAgentPaths`` with optional overrides for home and project."""
     from rlmagent_app.trust import project_inputs_allowed
 
     root = project or Path.cwd()
@@ -235,15 +173,7 @@ def _project_only(paths: RlmAgentPaths, *locations: Path) -> tuple[Path, ...]:
 
 
 def skill_search_paths(paths: RlmAgentPaths) -> list[Path]:
-    """Return skill directories in highest-precedence-first order.
-
-    Precedence (highest → lowest):
-    ``<project>/.agents/skills`` > ``<project>/.rlm-agent/skills`` >
-    ``~/.agents/skills`` > ``~/.rlm-agent/skills``
-
-    Consumers iterate this list and keep the first occurrence of each
-    named resource, so the first directory wins on name collisions.
-    """
+    """Return skill directories in highest-precedence-first order."""
     return _dedupe_paths([
         *_project_only(paths, paths.project_agents_skills, paths.project_skills),
         paths.agents_skills,
@@ -252,10 +182,7 @@ def skill_search_paths(paths: RlmAgentPaths) -> list[Path]:
 
 
 def prompt_search_paths(paths: RlmAgentPaths) -> list[Path]:
-    """Return prompt directories in highest-precedence-first order.
-
-    Same four-level precedence as skills.
-    """
+    """Return prompt directories in highest-precedence-first order."""
     return _dedupe_paths([
         *_project_only(paths, paths.project_agents_prompts, paths.project_prompts),
         paths.agents_prompts,
@@ -264,10 +191,7 @@ def prompt_search_paths(paths: RlmAgentPaths) -> list[Path]:
 
 
 def theme_search_paths(paths: RlmAgentPaths) -> list[Path]:
-    """Return theme directories in highest-precedence-first order.
-
-    Themes are specific to rlm-agent — only ``.rlm-agent`` directories are searched.
-    """
+    """Return theme directories in highest-precedence-first order."""
     return _dedupe_paths([
         *_project_only(paths, paths.project_themes),
         paths.user_themes,
@@ -280,17 +204,7 @@ def resource_search_paths(
     *,
     rlm_agent_only: bool = False,
 ) -> list[Path]:
-    """Return search directories for an arbitrary resource type.
-
-    Parameters
-    ----------
-    paths:
-        The canonical paths instance.
-    resource_type:
-        Subdirectory name (e.g. ``"skills"``, ``"prompts"``, ``"themes"``).
-    rlm_agent_only:
-        When ``True``, skip ``.agents`` directories (used for themes).
-    """
+    """Return search directories for an arbitrary resource type."""
     dirs: list[Path] = []
     if paths.project_enabled:
         if not rlm_agent_only:
@@ -323,10 +237,7 @@ def collect_override_diagnostics(
     source_dir: Path,
 ) -> list[ResourceDiagnostic]:
     """Produce diagnostics when resources in *new_resources* would be
-    overridden by existing entries in *discovered*.
-
-    Called during multi-directory scanning to explain which copy won.
-    """
+    overridden by existing entries in *discovered*."""
     diagnostics: list[ResourceDiagnostic] = []
     for name, new_path in new_resources.items():
         if name in discovered:
@@ -349,10 +260,7 @@ def collect_override_diagnostics(
 
 @dataclass(frozen=True, slots=True)
 class MarkdownResource:
-    """A parsed markdown file with optional frontmatter metadata.
-
-    Suitable for skills, prompt templates, or any ``.md``-based resource.
-    """
+    """A parsed markdown file with optional frontmatter metadata."""
 
     path: Path
     body: str
@@ -372,21 +280,12 @@ class MarkdownResource:
         return derive_description(self.body)
 
     def metadata_json(self) -> dict[str, JValue]:
-        """Return metadata as a JSON-compatible dictionary.
-
-        All frontmatter values are strings; this method preserves them
-        as-is since YAML-free parsing cannot infer types.
-        """
+        """Return metadata as a JSON-compatible dictionary."""
         return dict(self.metadata)
 
 
 def parse_front_matter(text: str) -> tuple[dict[str, str], str]:
-    """Split optional YAML-like frontmatter from the markdown body.
-
-    Returns ``(metadata, body)``.  Only simple ``key: value`` lines are
-    recognised — no nested YAML, no dependency on a YAML library.
-    Surrounding quotes on values are stripped.
-    """
+    """Split optional YAML-like frontmatter from the markdown body."""
     match = _FRONT_MATTER_RE.match(text)
     if match is None:
         return {}, text
@@ -424,11 +323,7 @@ def derive_description(body: str) -> str:
 
 
 def parse_markdown(path: Path) -> MarkdownResource:
-    """Read and parse a markdown file into a ``MarkdownResource``.
-
-    Raises ``OSError`` on I/O failures and ``UnicodeDecodeError`` on
-    encoding problems — callers should handle these at the boundary.
-    """
+    """Read and parse a markdown file into a ``MarkdownResource``."""
     raw = path.read_text(encoding="utf-8")
     metadata, body = parse_front_matter(raw)
     return MarkdownResource(path=path, body=body, metadata=metadata)

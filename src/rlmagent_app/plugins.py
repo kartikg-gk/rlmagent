@@ -1,27 +1,4 @@
-"""Local extensions: file-based discovery, dynamic import, and hot reload.
-
-Extensions are plain Python files the user (or the agent) drops into an
-extensions directory — no packaging or reinstall step. Each file exposes a
-callable named ``register`` which is invoked once at load time.
-
-Discovery order (later entries win on name collision):
-
-1. ``<rlm_agent_home>/extensions``       — user-level, e.g. ``~/.rlm-agent/extensions``
-2. ``<project>/.rlm-agent/extensions``   — project-level
-3. any explicit ``extra`` paths
-
-Within a directory, an extension is either:
-
-- a loose ``*.py`` file (``my_tool.py`` -> name ``my_tool``), or
-- a subdirectory containing ``extension.py`` (``my_pkg/extension.py`` -> ``my_pkg``)
-
-Files and directories whose names start with ``_`` or ``.`` are skipped.
-
-**Why file-based rather than entry points:** ``importlib.metadata.entry_points``
-resolves what was registered at *install* time, so a newly written file can never
-be picked up. File discovery + :func:`unload_extensions` is what makes runtime
-reload — and therefore agent-authored extensions — possible at all.
-"""
+"""Local extensions: file-based discovery, dynamic import, and hot reload."""
 
 from __future__ import annotations
 
@@ -90,10 +67,7 @@ class LoadResult:
 
 
 def rlm_agent_home() -> Path:
-    """Return the rlm-agent home directory (``$RLM_AGENT_HOME`` or ``~/.rlm-agent``).
-
-    Delegates to ``resources.default_paths().home`` for canonical resolution.
-    """
+    """Return the rlm-agent home directory (``$RLM_AGENT_HOME`` or ``~/.rlm-agent``)."""
     from rlmagent_app.discovery import default_paths
 
     return default_paths().home
@@ -105,10 +79,7 @@ def extension_dirs(
     include_project: bool = True,
     extra: tuple[Path | str, ...] = (),
 ) -> tuple[Path, ...]:
-    """Return the extension search directories, in precedence order.
-
-    ``$RLM_AGENT_EXTENSIONS_DIR`` overrides the user-level directory when set.
-    """
+    """Return the extension search directories, in precedence order."""
     dirs: list[Path] = []
 
     override = os.environ.get(EXTENSIONS_DIR_ENV)
@@ -136,10 +107,7 @@ def _is_hidden(name: str) -> bool:
 
 
 def discover_extension_files(dirs: tuple[Path, ...]) -> tuple[tuple[str, Path], ...]:
-    """Find ``(name, path)`` pairs for every extension in *dirs*.
-
-    Later directories override earlier ones when names collide.
-    """
+    """Find ``(name, path)`` pairs for every extension in *dirs*."""
     found: dict[str, Path] = {}
 
     for directory in dirs:
@@ -164,15 +132,7 @@ def discover_extension_files(dirs: tuple[Path, ...]) -> tuple[tuple[str, Path], 
 
 
 def _import_module(name: str, path: Path) -> ModuleType:
-    """Import *path* as a module under a synthetic, collision-free name.
-
-    The source is compiled directly rather than run through the spec's loader,
-    which deliberately bypasses Python's bytecode cache. ``SourceFileLoader``
-    validates a cached ``.pyc`` on *(mtime, size)* alone, so an edit that keeps
-    the file the same length within the same second is treated as unchanged and
-    the stale bytecode runs instead — a reload that silently does nothing. Agent
-    -authored extensions hit that case easily, so always execute fresh source.
-    """
+    """Import *path* as a module under a synthetic, collision-free name."""
     module_name = f"{_MODULE_PREFIX}{name}"
 
     # A package-style extension (dir/extension.py) needs its directory on the
@@ -203,11 +163,7 @@ def load_extensions(
     include_project: bool = True,
     extra: tuple[Path | str, ...] = (),
 ) -> LoadResult:
-    """Discover, import, and register every extension found on disk.
-
-    A failing extension is collected in :attr:`LoadResult.failures` and never
-    propagates — one bad file must not stop the session from starting.
-    """
+    """Discover, import, and register every extension found on disk."""
     dirs = extension_dirs(
         project_dir=project_dir, include_project=include_project, extra=extra
     )
@@ -264,11 +220,7 @@ def load_extensions(
 
 
 def unload_extensions() -> int:
-    """Drop every previously imported extension from ``sys.modules``.
-
-    Without this, re-importing a changed file silently yields the cached old
-    module and a reload appears to do nothing. Returns how many were removed.
-    """
+    """Drop every previously imported extension from ``sys.modules``."""
     removed = 0
     for module_name in tuple(_imported):
         if sys.modules.pop(module_name, None) is not None:

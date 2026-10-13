@@ -1,21 +1,4 @@
-"""System-prompt assembly.
-
-Composes the model-facing system prompt from whatever pieces are actually
-available at run time: a fixed identity block, per-tool prompt guidance
-(``ToolSpec.prompt_snippet`` / ``prompt_guidelines``), the skill index
-(``skills.build_skill_index``), project instructions from ``AGENTS.md``
-files discovered across the resource precedence hierarchy, and a
-working-directory/date suffix. Sections with nothing to contribute are
-omitted entirely rather than left as empty headers.
-
-``AGENTS.md`` is searched in precedence order::
-
-    ~/.rlm-agent/AGENTS.md  →  ~/.agents/AGENTS.md  →
-    <project>/.rlm-agent/AGENTS.md  →  <project>/.agents/AGENTS.md  →
-    <project>/AGENTS.md
-
-Later files take priority.  All discovered files are concatenated.
-"""
+"""System-prompt assembly."""
 
 from __future__ import annotations
 
@@ -36,11 +19,7 @@ Work carefully: read a file before editing it, make minimal focused changes, and
 
 
 def _tool_guidelines(tools: Sequence[ToolSpec]) -> str:
-    """Render each tool's ``prompt_snippet``/``prompt_guidelines``, skipping tools with neither.
-
-    A guideline repeated by several tools is printed once: duplicated
-    instructions waste context and read as emphasis the author did not intend.
-    """
+    """Render each tool's ``prompt_snippet``/``prompt_guidelines``, skipping tools with neither."""
     seen: set[str] = set()
     sections: list[str] = []
     for tool in tools:
@@ -64,12 +43,7 @@ def _skill_section(skills: Sequence[Skill]) -> str:
 
 
 def _agents_md_search_paths(cwd: str) -> list[Path]:
-    """Return ``AGENTS.md`` search paths in lowest-to-highest precedence order.
-
-    Files later in the list take priority.  All discovered files are
-    concatenated into the system prompt so that project-level context
-    augments (not replaces) user-level context.
-    """
+    """Return ``AGENTS.md`` search paths in lowest-to-highest precedence order."""
     from rlmagent_app.discovery import default_paths
 
     paths = default_paths(project=Path(cwd))
@@ -98,11 +72,7 @@ def _read_agents_file(path: Path) -> str:
 
 
 def _project_sections(cwd: str) -> list[PromptSection]:
-    """One section per ``AGENTS.md`` found, in precedence order.
-
-    The shared heading rides on the first file's section so that joining
-    every section reproduces the prompt exactly.
-    """
+    """One section per ``AGENTS.md`` found, in precedence order."""
     found = [
         (path, content)
         for path in _agents_md_search_paths(cwd)
@@ -147,11 +117,7 @@ def prompt_sections(
     identity: str | None = None,
     project: bool = True,
 ) -> list[PromptSection]:
-    """The system prompt as attributed sections, in the order they are sent.
-
-    Joining the section texts with a blank line reproduces ``system_prompt``
-    exactly; empty sections are omitted rather than shown as blank.
-    """
+    """The system prompt as attributed sections, in the order they are sent."""
     resolved_cwd = cwd or os.getcwd()
     tool_text = _tool_guidelines(tools)
     skill_text = _skill_section(skills)

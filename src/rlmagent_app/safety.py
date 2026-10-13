@@ -1,12 +1,4 @@
-"""Safety layer: approval gating, untrusted-content wrapping, output hygiene, circuit breaking.
-
-Four independent concerns, none of which perform I/O or own global state:
-
-- **Approval** — decide whether a tool invocation may proceed.
-- **Injection guard** — mark tool output as data, not instructions.
-- **Hygiene** — strip ANSI/control characters and cap output size.
-- **Circuit breaker** — stop hammering a provider that keeps failing.
-"""
+"""Safety layer: approval gating, untrusted-content wrapping, output hygiene, circuit breaking."""
 
 from __future__ import annotations
 

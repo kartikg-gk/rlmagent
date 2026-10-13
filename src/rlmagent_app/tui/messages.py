@@ -1,8 +1,4 @@
-"""Transcript block widgets: user turns, assistant turns, and tool lines.
-
-Pure presentation — every widget renders state handed to it and holds no
-runtime references.
-"""
+"""Transcript block widgets: user turns, assistant turns, and tool lines."""
 
 from __future__ import annotations
 

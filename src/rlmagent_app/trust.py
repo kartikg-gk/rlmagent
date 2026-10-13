@@ -1,24 +1,4 @@
-"""Project trust: whether a folder's own instructions and resources may load.
-
-A repository can ship files that steer the agent: ``AGENTS.md`` instructions,
-skills, prompt templates, themes, and plugins that run as code. Opening an
-unfamiliar checkout should not silently hand those files control, so every
-such *project input* waits for an explicit decision about the working folder.
-User-level resources under the rlm-agent home are always loaded; they are the
-user's own.
-
-Decisions are resolved once per canonical folder, in this order:
-
-1. an explicit ``--approve`` / ``--no-approve`` for this invocation;
-2. no project inputs present, so there is nothing to protect;
-3. the nearest saved decision for the folder or one of its ancestors;
-4. the user-wide default (``always`` / ``never``; ``ask`` when unset);
-5. an interactive choice, when a frontend can ask;
-6. otherwise, decline.
-
-This controls which inputs load. It is not a sandbox: tools still run with
-the user's permissions whatever the decision.
-"""
+"""Project trust: whether a folder's own instructions and resources may load."""
 
 from __future__ import annotations
 
@@ -108,11 +88,7 @@ def _entries(directory: Path) -> list[Path]:
 
 
 def scan_project_inputs(folder: Path) -> ProjectInputs:
-    """Count protected inputs by name and type alone.
-
-    An entry that exists but cannot be inspected still counts: failing to
-    look is not evidence that nothing is there.
-    """
+    """Count protected inputs by name and type alone."""
     counts = {
         "instruction file": sum(
             1 for p in (folder / "AGENTS.md", folder / ".rlm-agent" / "AGENTS.md",
@@ -148,12 +124,7 @@ def scan_project_inputs(folder: Path) -> ProjectInputs:
 
 
 class TrustStore:
-    """Saved per-folder decisions in ``<rlm-agent home>/trust.json``.
-
-    The file is strict: unknown versions or fields, relative or duplicated
-    paths, and unknown verdicts make it unusable rather than partly read,
-    and an unusable file is never repaired or reset behind the user's back.
-    """
+    """Saved per-folder decisions in ``<rlm-agent home>/trust.json``."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -205,12 +176,7 @@ class TrustStore:
         return None
 
     def save(self, folder: Path, verdict: Verdict, *, replacing: Path | None = None) -> None:
-        """Record a decision atomically, optionally dropping one other entry.
-
-        The new file is fully written and flushed beside the old one, then
-        swapped in with a single replace, so a crash leaves either the old
-        decisions or the new ones — never a truncated file.
-        """
+        """Record a decision atomically, optionally dropping one other entry."""
         current = self.decisions()  # refuses to build on an unusable file
         updated = {_key(p): (p, v) for p, v in current.items()}
         if replacing is not None:
@@ -375,12 +341,7 @@ def _apply(choice: Choice, folder: Path, inputs: ProjectInputs, store: TrustStor
 
 
 def project_inputs_allowed(project: str | os.PathLike[str]) -> bool:
-    """Whether loaders may read ``project``'s own inputs right now.
-
-    Code that never engages trust (a library caller, most tests) keeps the
-    unrestricted behaviour. Once a frontend resolves trust, a folder without
-    a completed decision loads project inputs only if it has none.
-    """
+    """Whether loaders may read ``project``'s own inputs right now."""
     if not _engaged:
         return True
     try:

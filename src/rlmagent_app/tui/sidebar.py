@@ -1,8 +1,4 @@
-"""Left sidebar — the session switcher.
-
-Renders the session list and emits selection intents.  Holds no runtime
-references; the app performs the actual switch through the adapter.
-"""
+"""Left sidebar — the session switcher."""
 
 from __future__ import annotations
 
@@ -15,11 +11,7 @@ from rlmagent_app.tui.adapter import SessionEntry
 
 
 class SessionItem(ListItem):
-    """A session row. Identity is carried as an attribute, not a widget id.
-
-    Widget ids must be unique across the whole DOM, which collides with the
-    deferred removal ``ListView.clear()`` performs; an attribute sidesteps it.
-    """
+    """A session row. Identity is carried as an attribute, not a widget id."""
 
     def __init__(self, label: str, session_id: str | None) -> None:
         super().__init__(Label(label))
@@ -65,12 +57,7 @@ class Sidebar(Vertical):
         yield SessionList()
 
     async def show(self, entries: list[SessionEntry]) -> None:
-        """Repaint the list, highlighting the active session.
-
-        Rows are updated in place whenever the set of sessions is unchanged.
-        Rebuilding on every refresh made the list visibly flicker and yanked
-        the cursor away from wherever the user had left it.
-        """
+        """Repaint the list, highlighting the active session."""
         listing = self.query_one(SessionList)
         ids = [e.session_id for e in entries]
         active = next((e.session_id for e in entries if e.is_active), None)

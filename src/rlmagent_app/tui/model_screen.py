@@ -1,9 +1,4 @@
-"""Modal picker for switching provider and model.
-
-A three-step dialog — provider, then model, then an API key if one is not
-already stored. It gathers a selection and dismisses with the result; the
-app performs the actual switch through the runtime.
-"""
+"""Modal picker for switching provider and model."""
 
 from __future__ import annotations
 

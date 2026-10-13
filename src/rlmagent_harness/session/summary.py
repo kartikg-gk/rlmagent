@@ -1,9 +1,4 @@
-"""Aggregate a stored session into token and cost totals.
-
-The summary is derived from persisted records rather than a live harness, so a
-finished session file can be summarized by tooling that never ran the agent.
-This is the stable shape exported by ``rlm-agent session stats``.
-"""
+"""Aggregate a stored session into token and cost totals."""
 
 from __future__ import annotations
 
@@ -30,12 +25,7 @@ class RunSummary:
 
 
 def summarize_records(session_id: str, records: list[SessionRecord]) -> RunSummary:
-    """Sum the usage of every assistant turn in *records*.
-
-    ``model`` and ``provider`` are taken from the last assistant turn, so a
-    session that switched models reports the one that finished it.  A session
-    with no assistant turns yields zeroed totals and ``None`` identifiers.
-    """
+    """Sum the usage of every assistant turn in *records*."""
     replies = [
         record.message
         for record in records

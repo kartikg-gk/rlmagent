@@ -1,8 +1,4 @@
-"""Public widget surface for rlm-agent's TUI.
-
-Each widget lives in its own module; this re-exports them so callers can
-import from one place.
-"""
+"""Public widget surface for rlm-agent's TUI."""
 
 from rlmagent_app.tui.messages import (
     AssistantBlock,

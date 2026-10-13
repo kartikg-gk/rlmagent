@@ -1,11 +1,4 @@
-"""Provider-neutral content and transcript message models.
-
-Split by concern: `_base` (StrictModel + timestamp), `segments` (content blocks),
-`diagnostics` (usage/cost/faults), `entries` (transcript entry types). Import from
-here — the public surface is unchanged:
-
-    from rlmagent_harness.contracts.transcript import HumanEntry, ModelEntry, TextSegment
-"""
+"""Provider-neutral content and transcript message models."""
 
 from __future__ import annotations
 

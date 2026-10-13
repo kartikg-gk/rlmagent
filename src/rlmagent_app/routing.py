@@ -1,16 +1,4 @@
-"""Inference-route pinning for the Hugging Face router.
-
-The router serves one model id from several backends. A plain id lets it
-pick; ``model:backend`` forces one. Each response names the backend that
-served it, so a session can stay on that backend for later requests
-(predictable latency, warm prompt caches).
-
-Two modes, stored with the session:
-
-- ``automatic``: the pin was learned from a response, so it may be dropped
-  when that backend fails and relearned from the next success.
-- ``fixed``: the user chose the backend; it is never silently replaced.
-"""
+"""Inference-route pinning for the Hugging Face router."""
 
 from __future__ import annotations
 
@@ -42,11 +30,7 @@ class RoutePin:
 
 
 def pin_from_storage(backend: str | None, mode: str | None) -> RoutePin:
-    """Rebuild a pin from saved metadata.
-
-    Older records carry a backend but no mode; treating those as ``fixed``
-    means an upgrade never overrides a backend the user may have picked.
-    """
+    """Rebuild a pin from saved metadata."""
     if mode in ("automatic", "fixed"):
         return RoutePin(mode, backend)  # type: ignore[arg-type]
     return RoutePin("fixed", backend) if backend else RoutePin()

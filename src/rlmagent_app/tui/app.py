@@ -1,9 +1,4 @@
-"""Textual application for rlm-agent.
-
-Presentation layer only.  All conversation work goes through
-``SessionBridge`` -> ``CodingSession``; the app runs no agent loop, calls no
-provider, and executes no tools.
-"""
+"""Textual application for rlm-agent."""
 
 from __future__ import annotations
 
@@ -38,11 +33,7 @@ _CSS_PATH = Path(__file__).with_name("rlm_agent.tcss")
 
 
 def build_id() -> str:
-    """Short fingerprint of the UI source actually loaded.
-
-    Shown in the header so a stale binary or a second install is visible at a
-    glance rather than guessed at.
-    """
+    """Short fingerprint of the UI source actually loaded."""
     import hashlib
 
     digest = hashlib.sha256()
@@ -55,11 +46,7 @@ def build_id() -> str:
 
 
 def _is_registered_command(text: str) -> bool:
-    """Whether *text* names a slash command rather than being a prompt.
-
-    Skills, prompt templates, unknown names, and absolute paths such as
-    ``/tmp/shot.png`` are prompts: the session expands the first two.
-    """
+    """Whether *text* names a slash command rather than being a prompt."""
     from rlmagent_app.conversation import COMMAND_REGISTRY
     from rlmagent_app.directives import parse_command
 

@@ -1,10 +1,4 @@
-"""Adapter boundary: ``AgentEvent`` stream -> TUI state.
-
-The only place the TUI touches the runtime.  ``SessionBridge`` owns a
-``CodingSession`` and translates its provider-neutral event stream into
-view-model updates.  It runs no agent loop, calls no provider, and executes
-no tools — it delegates entirely to ``CodingSession.submit``.
-"""
+"""Adapter boundary: ``AgentEvent`` stream -> TUI state."""
 
 from __future__ import annotations
 
@@ -88,11 +82,7 @@ class SessionEntry:
 
     @property
     def label(self) -> str:
-        """Display name — the title, or a neutral placeholder when unnamed.
-
-        A session only stays untitled until its first prompt, so this shows
-        for empty sessions rather than exposing a raw id.
-        """
+        """Display name — the title, or a neutral placeholder when unnamed."""
         return self.title or "Untitled session"
 
 
@@ -179,12 +169,7 @@ class SessionBridge:
         )
 
     def sessions(self) -> list[SessionEntry]:
-        """List every known session in a stable order, newest first.
-
-        Ordered by creation time, not last use: sorting by ``updated_at``
-        made the selected session jump to the top of the sidebar every time
-        it was used.
-        """
+        """List every known session in a stable order, newest first."""
         catalog = self._session.catalog
         if catalog is None:
             return []
@@ -229,10 +214,7 @@ class SessionBridge:
     async def apply_model_choice(
         self, provider: str, model: str, api_key: str | None,
     ) -> str:
-        """Persist credentials, rebuild the provider, and switch the session.
-
-        Returns a one-line summary for the transcript.
-        """
+        """Persist credentials, rebuild the provider, and switch the session."""
         from rlmagent_app.config.config import resolve_provider
         from rlmagent_app.config.loader import apply_config
         from rlmagent_app.config.store import load_config, provider_info, save_config
@@ -293,11 +275,7 @@ class SessionBridge:
             yield update
 
     async def resume(self) -> AsyncIterator[Update]:
-        """Continue the agent loop without adding a new user message.
-
-        Used after a stop: the runtime heals any dangling tool calls and
-        picks the turn back up.
-        """
+        """Continue the agent loop without adding a new user message."""
         async for update in self._relay(self._session.resume_run()):
             yield update
 

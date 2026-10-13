@@ -1,11 +1,4 @@
-"""rlmagent_harness: the core.
-
-Data contracts (`values`, `transcript`, `tooling`, `stream`), the agent loop
-(`engine`), the stateful harness (`driver`), session persistence (`session/`),
-and the coding conversation (`conversation`). Import the vocabulary from here:
-
-    from rlmagent_harness import AgentEvent, ToolSpec, HumanEntry
-"""
+"""rlmagent_harness: the core."""
 
 from __future__ import annotations
 

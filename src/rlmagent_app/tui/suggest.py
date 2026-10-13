@@ -1,21 +1,4 @@
-"""Autocomplete engine for rlm-agent's CLI/TUI prompt input.
-
-Computes structured completion candidates for slash commands, command
-arguments, file references, shell paths, prompt templates, and skills.
-This module is entirely UI-independent — it returns ``CompletionState``
-objects that the caller renders however it wants.
-
-Completion contexts are detected automatically from the cursor position
-and current input text.  The engine never executes commands, accesses
-providers, or modifies session state.
-
-Public surface
---------------
-Types:   ``CompletionOption``, ``CompletionItem``, ``CompletionState``
-Entry:   ``build_completion_state``
-Helpers: ``complete_commands``, ``complete_arguments``, ``complete_skills``,
-         ``complete_prompts``, ``complete_file_refs``, ``complete_shell_paths``
-"""
+"""Autocomplete engine for rlm-agent's CLI/TUI prompt input."""
 
 from __future__ import annotations
 
@@ -69,13 +52,7 @@ class CompletionOption:
 
 @dataclass(frozen=True, slots=True)
 class CompletionItem:
-    """One selectable autocomplete suggestion.
-
-    ``start`` and ``end`` delimit the substring of the original input that
-    this item would replace.  ``replacement`` is the text to substitute.
-    ``display`` is the string shown in the completion menu (may differ
-    from ``replacement`` for readability).
-    """
+    """One selectable autocomplete suggestion."""
 
     display: str
     replacement: str
@@ -94,11 +71,7 @@ class CompletionItem:
 
 @dataclass(slots=True)
 class CompletionState:
-    """Mutable selection state over a tuple of ``CompletionItem`` values.
-
-    The selected index wraps around in both directions so keyboard
-    navigation never goes out of bounds.
-    """
+    """Mutable selection state over a tuple of ``CompletionItem`` values."""
 
     items: tuple[CompletionItem, ...] = ()
     selected_index: int = -1
@@ -143,12 +116,7 @@ def is_ignored_dir(name: str, ignored: frozenset[str] = _IGNORED_DIRS_DEFAULT) -
 
 
 def _active_token(text: str, cursor: int) -> tuple[str, int, int]:
-    """Extract the token under the cursor and its span.
-
-    Returns ``(token, start, end)`` where *start* and *end* are byte
-    offsets into *text*.  A "token" is the contiguous non-whitespace run
-    that the cursor sits in or immediately follows.
-    """
+    """Extract the token under the cursor and its span."""
     if cursor > len(text):
         cursor = len(text)
 
@@ -208,11 +176,7 @@ def complete_commands(
     end: int,
     max_results: int = _MAX_RESULTS_DEFAULT,
 ) -> list[CompletionItem]:
-    """Generate completions for a partial slash command.
-
-    *prefix* should include the leading ``/`` (e.g. ``"/mo"``).
-    Matches against command names, aliases, and search terms.
-    """
+    """Generate completions for a partial slash command."""
     if not prefix.startswith("/"):
         return []
 
@@ -260,10 +224,7 @@ def complete_arguments(
     end: int,
     max_results: int = _MAX_RESULTS_DEFAULT,
 ) -> list[CompletionItem]:
-    """Generate argument completions for a known command.
-
-    *options* is the list of valid argument values for the command.
-    """
+    """Generate argument completions for a known command."""
     low = arg_prefix.lower()
     items: list[CompletionItem] = []
 
@@ -294,12 +255,7 @@ def complete_skills(
     end: int,
     max_results: int = _MAX_RESULTS_DEFAULT,
 ) -> list[CompletionItem]:
-    """Generate completions for ``/skill:<partial>``.
-
-    *prefix* should include the ``/skill:`` leader (e.g. ``"/skill:ref"``).
-    Once a valid skill name is fully typed and the user is entering arguments,
-    no further skill-name suggestions are returned.
-    """
+    """Generate completions for ``/skill:<partial>``."""
     if not prefix.lower().startswith(_SKILL_PREFIX):
         return []
 
@@ -341,11 +297,7 @@ def complete_prompts(
     end: int,
     max_results: int = _MAX_RESULTS_DEFAULT,
 ) -> list[CompletionItem]:
-    """Generate completions for prompt template names.
-
-    *prefix* should include the leading ``/`` (e.g. ``"/summ"``).
-    Templates are offered alongside regular commands but in their own category.
-    """
+    """Generate completions for prompt template names."""
     if not prefix.startswith("/"):
         return []
 
@@ -380,11 +332,7 @@ def complete_file_refs(
     ignored: frozenset[str] = _IGNORED_DIRS_DEFAULT,
     max_results: int = _MAX_RESULTS_DEFAULT,
 ) -> list[CompletionItem]:
-    """Generate completions for ``@path/to/file`` references.
-
-    Searches recursively under *cwd*, ignoring hidden directories and
-    common build/cache directories.
-    """
+    """Generate completions for ``@path/to/file`` references."""
     if not prefix.startswith(_FILE_REF_PREFIX):
         return []
 
@@ -523,11 +471,7 @@ def complete_shell_paths(
     ignored: frozenset[str] = _IGNORED_DIRS_DEFAULT,
     max_results: int = _MAX_RESULTS_DEFAULT,
 ) -> list[CompletionItem]:
-    """Generate path completions for shell-mode input (``!`` or ``!!``).
-
-    Only completes relative paths.  Rejects absolute paths, home-directory
-    expansion, shell variables, and wildcard expressions.
-    """
+    """Generate path completions for shell-mode input (``!`` or ``!!``)."""
     shell_prefix, body = _parse_shell_prefix(text)
     if shell_prefix is None:
         return []
@@ -553,11 +497,7 @@ def complete_shell_paths(
 
 
 def _parse_shell_prefix(text: str) -> tuple[str | None, str]:
-    """Split shell prefix (``"! "`` or ``"!! "``) from the body.
-
-    Returns ``(prefix, body)`` or ``(None, "")`` if *text* is not a
-    shell command.
-    """
+    """Split shell prefix (``"! "`` or ``"!! "``) from the body."""
     for prefix in _SHELL_PREFIXES:
         if text.startswith(prefix):
             return prefix, text[len(prefix):]
@@ -652,11 +592,7 @@ def _detect_command_arg_context(
     text: str,
     registry: CommandRegistry,
 ) -> tuple[str, str, int, int] | None:
-    """Detect whether *text* is a command followed by a partial argument.
-
-    Returns ``(command_name, arg_prefix, arg_start, arg_end)`` when the
-    user is typing an argument for a known command, or ``None`` otherwise.
-    """
+    """Detect whether *text* is a command followed by a partial argument."""
     if not text.startswith("/"):
         return None
 
@@ -716,10 +652,7 @@ def get_argument_options(
     command_name: str,
     extra: dict[str, list[CompletionOption]] | None = None,
 ) -> list[CompletionOption]:
-    """Return the argument options for *command_name*.
-
-    Merges built-in defaults with *extra* overrides supplied by the caller.
-    """
+    """Return the argument options for *command_name*."""
     options = list((extra or {}).get(command_name, _ARGUMENT_OPTIONS.get(command_name, [])))
     return options
 
@@ -739,32 +672,7 @@ def build_completion_state(
     ignored_dirs: frozenset[str] = _IGNORED_DIRS_DEFAULT,
     max_results: int = _MAX_RESULTS_DEFAULT,
 ) -> CompletionState:
-    """Inspect *text* and return a ``CompletionState`` with matching candidates.
-
-    This is the single entry point for the autocomplete engine.  It detects
-    the completion context and delegates to the appropriate helper.
-
-    Parameters
-    ----------
-    text:
-        The full current input line.
-    cursor:
-        Cursor position within *text*.  Defaults to end of string.
-    registry:
-        Slash-command registry used for command/argument completion.
-    skills:
-        Loaded skills used for ``/skill:`` completion.
-    templates:
-        Loaded prompt templates used for template-name completion.
-    cwd:
-        Working directory for file and shell-path completion.
-    argument_options:
-        Per-command argument option overrides.
-    ignored_dirs:
-        Directory names to skip during filesystem traversal.
-    max_results:
-        Maximum number of suggestions to return.
-    """
+    """Inspect *text* and return a ``CompletionState`` with matching candidates."""
     if cursor is None:
         cursor = len(text)
 
@@ -839,11 +747,7 @@ def _is_shell_input(text: str) -> bool:
 
 
 class CompletionProvider:
-    """Hook point for registering custom completion providers.
-
-    Subclass and override ``complete`` to inject domain-specific
-    completions into the engine.
-    """
+    """Hook point for registering custom completion providers."""
 
     def complete(
         self,
@@ -853,10 +757,7 @@ class CompletionProvider:
         start: int,
         end: int,
     ) -> list[CompletionItem]:
-        """Return completions for the given input state.
-
-        Override in subclasses.  The default returns an empty list.
-        """
+        """Return completions for the given input state."""
         return []
 
 

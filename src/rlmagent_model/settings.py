@@ -117,12 +117,7 @@ class Credential:
 
 
 class CredentialResolver(Protocol):
-    """Async callable that produces fresh authentication material.
-
-    Implementations may contact a secrets manager, rotate tokens, or
-    perform any other async operation to return an up-to-date
-    ``Credential`` snapshot.
-    """
+    """Async callable that produces fresh authentication material."""
 
     async def __call__(self) -> Credential: ...
 

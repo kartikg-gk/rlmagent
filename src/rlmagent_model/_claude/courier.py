@@ -1,10 +1,4 @@
-"""HTTP transport for the Anthropic Messages API.
-
-Executes a single streaming POST request, parses the Server-Sent Events
-response into ``(event_name, parsed_dict)`` pairs, and surfaces HTTP failures
-as a typed ``ApiRejection`` exception.  Retry orchestration is the caller's
-responsibility.
-"""
+"""HTTP transport for the Anthropic Messages API."""
 
 from __future__ import annotations
 
@@ -85,14 +79,7 @@ async def relay_sse(
     *,
     signal: CancelToken | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
-    """POST *body* as streaming JSON and yield ``(event_type, payload)`` pairs.
-
-    The response body is parsed as a Server-Sent Events stream.  Each
-    dispatched event is JSON-decoded before yielding.  Malformed data lines
-    are silently dropped.
-
-    Raises ``ApiRejection`` if the server responds with a non-200 status.
-    """
+    """POST *body* as streaming JSON and yield ``(event_type, payload)`` pairs."""
     async with client.stream("POST", url, json=body, headers=headers) as response:
         if response.status_code != 200:
             raw = (await response.aread()).decode("utf-8", errors="replace")

@@ -1,21 +1,4 @@
-"""Hidden (non-echoing) line input that works across Windows and POSIX terminals.
-
-``getpass.getpass`` is unreliable on Windows: it reads character-by-character
-via ``msvcrt.getwch()``, which bypasses stdin and the console line editor.
-Under ConPTY-based terminals (VS Code, Windows Terminal) input arrives through
-a pipe that ``getwch()`` never reads, so the prompt hangs and paste does
-nothing.
-
-This module instead keeps the terminal's own *line* input — which already
-handles typing, paste, backspace, and Ctrl+C — and only turns echo off around
-a normal ``readline()``.  Strategies are tried in order and the first one that
-applies wins:
-
-1. Windows console — clear ``ENABLE_ECHO_INPUT`` via ``SetConsoleMode``.
-2. POSIX terminal — clear ``ECHO`` via ``termios``.
-3. Non-interactive stdin — plain read (piped/scripted input).
-4. Visible input, after warning the user that the value will be shown.
-"""
+"""Hidden (non-echoing) line input that works across Windows and POSIX terminals."""
 
 from __future__ import annotations
 
@@ -163,13 +146,7 @@ _STRATEGY_NAMES = {
 def read_secret(
     write: Callable[[str], None] | None = None, *, visible: bool = False,
 ) -> str:
-    """Read one line without echoing it, falling back until a strategy works.
-
-    ``write`` receives user-facing notices (defaults to stderr).  Set
-    *visible* to skip hidden input entirely.  Raises ``EOFError`` at end of
-    input and ``KeyboardInterrupt`` on Ctrl+C — both propagate so the caller
-    can treat them as cancellation.
-    """
+    """Read one line without echoing it, falling back until a strategy works."""
     emit = write if write is not None else _default_write
     if visible:
         return _read_line()
@@ -182,10 +159,7 @@ def read_secret(
 
 
 def describe_terminal() -> list[str]:
-    """Report how this terminal handles hidden input (diagnostics only).
-
-    Probes each strategy's availability without consuming any input.
-    """
+    """Report how this terminal handles hidden input (diagnostics only)."""
     lines = [
         f"platform      : {sys.platform}",
         f"stdin.isatty(): {sys.stdin.isatty()}",

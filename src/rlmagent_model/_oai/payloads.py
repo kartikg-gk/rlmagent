@@ -1,9 +1,4 @@
-"""Request payload construction for Chat Completions and Responses APIs.
-
-Each builder produces a plain ``dict`` suitable for JSON serialisation and
-submission to the respective endpoint.  Payload assembly is deliberately
-separated from networking so it can be tested and reasoned about in isolation.
-"""
+"""Request payload construction for Chat Completions and Responses APIs."""
 
 from __future__ import annotations
 
@@ -132,12 +127,7 @@ def _to_chat_message(entry: TranscriptEntry) -> dict[str, Any] | None:
 
 
 def _to_responses_items(entry: TranscriptEntry) -> list[dict[str, Any]]:
-    """Convert a single transcript entry to Responses API input items.
-
-    A single entry may produce more than one item — for example a
-    ``ModelEntry`` with both text and tool calls emits an assistant item
-    followed by separate ``function_call`` items.
-    """
+    """Convert a single transcript entry to Responses API input items."""
     if isinstance(entry, HumanEntry):
         return [{"role": "user", "content": _user_blocks(entry)}]
 

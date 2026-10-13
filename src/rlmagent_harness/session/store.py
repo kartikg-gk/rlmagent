@@ -1,9 +1,4 @@
-"""Append-only JSONL persistence for session records.
-
-One place for the on-disk side of sessions: the vault (append/read) plus record
-(de)serialization and forward-migration of older on-disk shapes. Runtime models
-stay strict; every legacy fixup lives here at the persistence boundary.
-"""
+"""Append-only JSONL persistence for session records."""
 
 from __future__ import annotations
 
@@ -27,12 +22,7 @@ class RecordParseError(ValueError):
 
 
 def jsonl_lines(text: str) -> list[str]:
-    r"""Split JSONL text into records on ``\n`` only.
-
-    ``str.splitlines`` also breaks on U+2028, U+2029, U+0085 and other
-    separators that JSON leaves unescaped inside strings, which would cut a
-    record containing pasted text in half and make the file unreadable.
-    """
+    r"""Split JSONL text into records on ``\n`` only."""
     return [line.rstrip("\r") for line in text.split("\n")]
 
 
@@ -63,12 +53,7 @@ def deserialize_records(lines: list[str]) -> list[SessionRecord]:
 
 
 def _upgrade_entry(value: Any) -> Any:
-    """Normalize a raw dict into the current record schema.
-
-    Application-facing models evolve freely, but saved sessions must remain
-    loadable.  All shape fixups live here at the persistence boundary so the
-    runtime layer stays strict and unaware of legacy formats.
-    """
+    """Normalize a raw dict into the current record schema."""
     if not isinstance(value, dict) or value.get("type") != "message":
         return value
     migrated = dict(value)

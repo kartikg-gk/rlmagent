@@ -1,9 +1,4 @@
-"""Bottom multiline prompt input.
-
-Enter submits; Shift+Enter (and Ctrl+J, for terminals that cannot
-distinguish the two) inserts a newline.  The widget emits a ``Submitted``
-message and never talks to the runtime itself.
-"""
+"""Bottom multiline prompt input."""
 
 from __future__ import annotations
 

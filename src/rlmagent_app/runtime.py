@@ -1,10 +1,4 @@
-"""Shared session construction for every rlm-agent frontend.
-
-Both the line-based REPL and the Textual UI build their ``CodingSession``
-here, so there is exactly one setup path and one conversation engine.  The
-CLI helpers are imported lazily inside the function body because
-``rlmagent_app.cli.main`` imports this module.
-"""
+"""Shared session construction for every rlm-agent frontend."""
 
 from __future__ import annotations
 
@@ -18,11 +12,7 @@ if TYPE_CHECKING:
 
 
 async def build_session(ns: argparse.Namespace) -> CodingSession:
-    """Resolve configuration and return a ready ``CodingSession``.
-
-    Applies saved config, resolves provider/model, loads extensions, tools
-    and skills, then creates or resumes the session and installs hooks.
-    """
+    """Resolve configuration and return a ready ``CodingSession``."""
     from rlmagent_app.cli.main import (
         _die,
         _info,
@@ -192,12 +182,7 @@ def _is_interactive(ns: argparse.Namespace) -> bool:
 async def settle_project_trust(
     ns: argparse.Namespace, *, ask: Asker | None = None,
 ) -> TrustOutcome:
-    """Decide whether this folder's project inputs load, before any are read.
-
-    ``ask`` lets a frontend supply its own question; without one, an
-    interactive terminal is asked on the console and anything else declines.
-    Cancelling the question ends startup.
-    """
+    """Decide whether this folder's project inputs load, before any are read."""
     from rlmagent_app.cli.main import _die, _info, _warn
     from rlmagent_app.config.store import load_config
     from rlmagent_app.trust import StartupCancelled, resolve_project_trust
@@ -274,10 +259,7 @@ async def ask_on_console(request: TrustRequest) -> Choice | None:
 
 
 def attach_logger(session: CodingSession) -> None:
-    """Subscribe a ``RunLogger`` to the session's event stream.
-
-    Wired here so every frontend — TUI, REPL, one-shot — logs identically.
-    """
+    """Subscribe a ``RunLogger`` to the session's event stream."""
     from rlmagent_app.logs import RunLogger
 
     logger = RunLogger.create(

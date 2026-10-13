@@ -1,11 +1,4 @@
-"""Convert parsed stream signals into rlm-agent wire events.
-
-The ``EventAssembler`` maintains a running ``ModelEntry`` snapshot and emits
-the appropriate ``WireEvent`` sequence as signals arrive from the decoder.
-It is the single place that translates between the provider-neutral signal
-vocabulary (``parsers.py``) and rlm-agent's internal streaming model
-(``rlmagent_harness.provider.wire``).
-"""
+"""Convert parsed stream signals into rlm-agent wire events."""
 
 from __future__ import annotations
 
@@ -53,13 +46,7 @@ def _segment(kind: str, body: str) -> ReplyContent:
 
 
 class EventAssembler:
-    """Accumulates parsed signals and emits rlm-agent wire events.
-
-    The assembler builds a running ``ModelEntry`` from incremental deltas
-    and yields the corresponding ``WireEvent`` instances that the harness
-    loop expects.  A ``finalize`` call closes any open content blocks and
-    emits the terminal ``StreamCloseEvent`` or ``StreamFaultEvent``.
-    """
+    """Accumulates parsed signals and emits rlm-agent wire events."""
 
     def __init__(self, *, model: str, provider: str, api: str) -> None:
         self._model = model

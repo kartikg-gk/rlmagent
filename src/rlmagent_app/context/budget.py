@@ -1,27 +1,4 @@
-"""Context accounting, threshold detection, and compaction planning.
-
-Provides deterministic, provider-neutral token estimation for conversation
-transcripts and tool definitions, configurable compaction thresholds, plan
-generation for context compaction, message serialization for summarizers,
-and helpers to apply a compaction result back onto a transcript.
-
-This module is pure — it performs no I/O, no provider calls, no async work.
-Summarization itself is the caller's responsibility; this module supplies
-the plan and the prompt, the caller executes the LLM call and feeds the
-summary back in.
-
-Lifecycle (as used by ``CodingSession``)::
-
-    limits = ContextLimits(window=200_000)
-    estimate = estimate_context(transcript, system=sys, tools=tools, limits=limits)
-
-    if exceeds_threshold(estimate):
-        plan = plan_compaction(transcript, record_ids, limits=limits)
-        if plan is not None:
-            system_prompt, user_prompt = build_summary_prompts(plan)
-            summary_text = await provider.complete(system_prompt, user_prompt)
-            new_transcript, new_ids = apply_compaction(plan, summary_text)
-"""
+"""Context accounting, threshold detection, and compaction planning."""
 
 from __future__ import annotations
 
@@ -86,10 +63,7 @@ _INCREMENTAL_PREAMBLE = (
 
 @dataclass(frozen=True, slots=True)
 class ContextLimits:
-    """Configurable knobs governing context accounting and compaction policy.
-
-    All fields have production-ready defaults and can be overridden per-session.
-    """
+    """Configurable knobs governing context accounting and compaction policy."""
 
     window: int = DEFAULT_WINDOW
     """Maximum context-window size in tokens."""
@@ -115,11 +89,7 @@ class ContextLimits:
 
 @dataclass(frozen=True, slots=True)
 class ContextEstimate:
-    """Snapshot of how much context is consumed and what the limits are.
-
-    All values are approximate token counts derived deterministically from
-    transcript content and tool schemas.
-    """
+    """Snapshot of how much context is consumed and what the limits are."""
 
     used: int
     """Total estimated tokens currently in the context window."""
@@ -155,11 +125,7 @@ class ContextEstimate:
 
 
 def resolve_window(model: str, *, override: int | None = None) -> int:
-    """Return the context-window size for *model*.
-
-    An explicit *override* takes precedence, then the ``MODEL_WINDOWS``
-    lookup table, and finally ``DEFAULT_WINDOW``.
-    """
+    """Return the context-window size for *model*."""
     if override is not None:
         return override
     return MODEL_WINDOWS.get(model, DEFAULT_WINDOW)
@@ -171,15 +137,7 @@ def _chars_to_tokens(n: int) -> int:
 
 
 def estimate_entry_tokens(entry: TranscriptEntry) -> int:
-    """Approximate the token footprint of a single transcript entry.
-
-    For ``ModelEntry`` objects that carry reported usage, the provider's
-    ``usage.output`` is authoritative.  For everything else, we fall back
-    to dividing the visible text length by ``CHARS_PER_TOKEN``.
-
-    Tool-call arguments are serialized as compact JSON and counted
-    separately from the text body.
-    """
+    """Approximate the token footprint of a single transcript entry."""
     if isinstance(entry, ModelEntry):
         # Output tokens are what the model *produced*.  Input tokens
         # reflect the cumulative context at that turn, not the entry's
@@ -209,11 +167,7 @@ def estimate_entry_tokens(entry: TranscriptEntry) -> int:
 
 
 def estimate_tool_tokens(tools: Sequence[ToolSpec]) -> int:
-    """Approximate the tokens consumed by tool definitions in the system prompt.
-
-    Each tool contributes a baseline overhead plus the serialized size of
-    its JSON schema, description, and any prompt snippets.
-    """
+    """Approximate the tokens consumed by tool definitions in the system prompt."""
     total = 0
     for tool in tools:
         schema_chars = len(json.dumps(dict(tool.parameters), separators=(",", ":")))
@@ -234,13 +188,7 @@ def estimate_system_tokens(system: str, tools: Sequence[ToolSpec] = ()) -> int:
 def estimate_transcript_tokens(
     transcript: Sequence[TranscriptEntry],
 ) -> int:
-    """Sum the per-entry token estimates for the full transcript.
-
-    When the transcript contains a ``ModelEntry`` with reported usage, that
-    request's full prompt size subsumes all prior entries.  We use the most
-    recent such value as a floor and add estimates only for entries that come
-    after it.
-    """
+    """Sum the per-entry token estimates for the full transcript."""
     last_input = 0
     last_idx = -1
     for i, entry in enumerate(transcript):
@@ -258,11 +206,7 @@ def estimate_transcript_tokens(
 
 
 def _prompt_tokens(entry: ModelEntry) -> int:
-    """Full prompt size of the request that produced ``entry``.
-
-    ``usage.input`` counts only fresh input; tokens served from or written to
-    the prompt cache are reported separately but still occupy the window.
-    """
+    """Full prompt size of the request that produced ``entry``."""
     usage = entry.usage
     return usage.input + usage.cache_read + usage.cache_write
 
@@ -283,10 +227,7 @@ def estimate_context(
     model: str = "",
     window_override: int | None = None,
 ) -> ContextEstimate:
-    """Build a full ``ContextEstimate`` for the current session state.
-
-    This is the primary entry point for context accounting.
-    """
+    """Build a full ``ContextEstimate`` for the current session state."""
     cfg = limits or ContextLimits()
     window = window_override or resolve_window(
         model,
@@ -331,11 +272,7 @@ def exceeds_threshold(estimate: ContextEstimate) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class CompactionPlan:
-    """Describes exactly what a compaction operation will do.
-
-    Produced by ``plan_compaction``; consumed by ``build_summary_prompts``
-    and ``apply_compaction``.  Immutable, contains no transcript mutations.
-    """
+    """Describes exactly what a compaction operation will do."""
 
     to_summarize: tuple[TranscriptEntry, ...]
     """Older entries that will be replaced by a summary."""
@@ -360,14 +297,7 @@ class CompactionPlan:
 
 
 def _turn_boundary(transcript: Sequence[TranscriptEntry], split: int) -> int:
-    """Move *split* so the kept part starts a whole user turn.
-
-    Back to the user message that opens the turn *split* falls in, so the
-    kept part never shrinks below the floor and the newest prompt is never
-    summarised away with its reply. With a single prompt at the very start,
-    keep from the first entry that is not a tool result, so no result is
-    kept without its call.
-    """
+    """Move *split* so the kept part starts a whole user turn."""
     opening = max(
         (i for i, e in enumerate(transcript[: split + 1]) if isinstance(e, HumanEntry)),
         default=0,
@@ -386,12 +316,7 @@ def plan_compaction(
     *,
     limits: ContextLimits | None = None,
 ) -> CompactionPlan | None:
-    """Build a compaction plan, or ``None`` if the transcript is too short.
-
-    The plan partitions the transcript into *to_summarize* (older entries
-    that will be replaced by a summary) and *to_keep* (recent entries that
-    are preserved).  It never mutates the input.
-    """
+    """Build a compaction plan, or ``None`` if the transcript is too short."""
     cfg = limits or ContextLimits()
 
     if len(transcript) < cfg.min_entries:
@@ -452,12 +377,7 @@ def serialize_for_summary(
     *,
     max_chars: int = 50_000,
 ) -> str:
-    """Render transcript entries as plain text for the summarizer.
-
-    Each entry is formatted as ``[role] text``.  Tool-call arguments and
-    tool results are included so the summarizer can capture code changes
-    and decisions.  Output is capped at *max_chars*.
-    """
+    """Render transcript entries as plain text for the summarizer."""
     parts: list[str] = []
     total = 0
     for entry in entries:
@@ -496,15 +416,7 @@ def build_summary_prompts(
     system: str = DEFAULT_SUMMARY_SYSTEM,
     max_chars: int = 50_000,
 ) -> tuple[str, str]:
-    """Build the (system, user) prompts for the summarizer call.
-
-    When the compaction plan includes a prior summary (incremental
-    compaction), the user prompt incorporates it so the model can merge
-    old and new material into a single cohesive summary.
-
-    Returns a ``(system_prompt, user_prompt)`` tuple ready to pass to
-    the provider.
-    """
+    """Build the (system, user) prompts for the summarizer call."""
     serialized = serialize_for_summary(plan.to_summarize, max_chars=max_chars)
 
     if plan.has_prior_summary and plan.prior_summary_text:
@@ -522,11 +434,7 @@ def build_summary_prompts(
 
 @dataclass(frozen=True, slots=True)
 class CompactionResult:
-    """The output of applying a compaction plan with a generated summary.
-
-    Contains the new transcript and record IDs, plus the ``PruneSummaryEntry``
-    that was inserted.
-    """
+    """The output of applying a compaction plan with a generated summary."""
 
     transcript: tuple[TranscriptEntry, ...]
     """The compacted transcript: summary entry followed by kept entries."""
@@ -550,11 +458,7 @@ def apply_compaction(
     *,
     summary_record_id: str = "",
 ) -> CompactionResult:
-    """Combine a compaction plan with a generated summary into a result.
-
-    Creates a ``PruneSummaryEntry``, prepends it to the kept entries,
-    and returns the new transcript and aligned record IDs.
-    """
+    """Combine a compaction plan with a generated summary into a result."""
     summary_entry = PruneSummaryEntry(
         summary=summary,
         tokens_before=plan.tokens_before,

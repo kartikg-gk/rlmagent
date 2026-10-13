@@ -1,9 +1,4 @@
-"""Stateful reusable agent harness built on the portable loop.
-
-``RuntimeHarness`` wraps the pure agent loop with transcript ownership, event
-subscriptions, cancellation wiring, and message queuing.  It is independent
-of any coding or UI policy.
-"""
+"""Stateful reusable agent harness built on the portable loop."""
 
 from __future__ import annotations
 
@@ -118,12 +113,7 @@ class RuntimeConfig:
 
 
 class RuntimeHarness:
-    """Reusable stateful agent brain.
-
-    Owns the transcript, delegates execution to ``run_agent_loop``, and
-    remains independent of CLI, Rich, Textual, session files, and
-    coding-agent resource loading.
-    """
+    """Reusable stateful agent brain."""
 
     __slots__ = (
         "_cfg",
@@ -263,11 +253,7 @@ class RuntimeHarness:
         custom_type: str | None = None,
         details: dict[str, JValue] | None = None,
     ) -> AsyncIterator[AgentEvent]:
-        """Append a user message and start the agent loop.
-
-        ``custom_type``/``details`` are presentation metadata on the
-        ``HumanEntry``; they don't change what the model reads.
-        """
+        """Append a user message and start the agent loop."""
         self._assert_idle()
         self._heal_dangling_calls()
         self._running = True
@@ -377,12 +363,7 @@ class RuntimeHarness:
         return (q.popleft(),)
 
     def _heal_dangling_calls(self) -> None:
-        """Ensure every tool call in the transcript has a matching result.
-
-        OpenAI-compatible providers reject histories where an assistant tool
-        call has no corresponding result.  If the previous run was interrupted
-        mid-tool, synthesise error results to close the gaps.
-        """
+        """Ensure every tool call in the transcript has a matching result."""
         answered: set[str] = {
             e.tool_call_id
             for e in self._entries

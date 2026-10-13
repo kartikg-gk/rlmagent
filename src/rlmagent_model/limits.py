@@ -1,16 +1,4 @@
-"""Runtime model limits — immutable capability data and provider discovery contract.
-
-This module defines only two things:
-
-1. ``ModelLimits`` — a frozen dataclass representing a model's token-budget
-   constraints, supplied at runtime by the provider.
-2. ``LimitsProbe`` — an optional protocol that providers implement to
-   expose runtime model-limit discovery.
-
-The module contains no model registries, no hardcoded model names, no
-fallback logic, and no resolution helpers.  The provider is solely
-responsible for constructing and returning ``ModelLimits``.
-"""
+"""Runtime model limits — immutable capability data and provider discovery contract."""
 
 from __future__ import annotations
 

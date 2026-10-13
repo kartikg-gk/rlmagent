@@ -1,26 +1,4 @@
-"""Anthropic Messages API provider adapter for the rlm-agent agent harness.
-
-``AnthropicProvider`` implements the ``ModelProvider`` protocol by streaming
-responses from the ``/v1/messages`` endpoint.  It composes the courier
-(HTTP transport) and emitter (state-machine parser) sub-modules, adding
-request-body construction, credential management, and retry orchestration.
-
-Usage::
-
-    from rlmagent_model.settings import load_anthropic_profile
-    from rlmagent_model.claude import AnthropicProvider
-
-    profile = load_anthropic_profile()
-    provider = AnthropicProvider(profile)
-
-    async for event in provider.stream_response(
-        model="claude-sonnet-4-20250514",
-        system="You are a helpful assistant.",
-        messages=transcript,
-        tools=tool_specs,
-    ):
-        handle(event)
-"""
+"""Anthropic Messages API provider adapter for the rlm-agent agent harness."""
 
 from __future__ import annotations
 
@@ -147,11 +125,7 @@ def _convert_entry(entry: TranscriptEntry) -> tuple[str, list[dict[str, Any]]]:
 
 
 def _compile_messages(entries: Sequence[TranscriptEntry]) -> list[dict[str, Any]]:
-    """Build a properly alternating Anthropic message list from transcript entries.
-
-    Consecutive entries with the same role are merged into a single message
-    to satisfy the API's strict alternation requirement.
-    """
+    """Build a properly alternating Anthropic message list from transcript entries."""
     result: list[dict[str, Any]] = []
     for entry in entries:
         role, blocks = _convert_entry(entry)
@@ -241,13 +215,7 @@ def _place_message_breakpoints(
 
 
 def _previous_request_tail(messages: list[dict[str, Any]]) -> int | None:
-    """Index where the previous request's message list ended.
-
-    History is append-only and each request stops just before the assistant
-    turn it produces, so the last user message before the final assistant turn
-    is where the previous request's tail marker sat. When that turn is missing
-    the result is an older position, which only shortens the reusable prefix.
-    """
+    """Index where the previous request's message list ended."""
     last_reply = next(
         (i for i in range(len(messages) - 1, -1, -1) if messages[i]["role"] == "assistant"),
         None,
@@ -349,13 +317,7 @@ def _auth_headers(cred: Credential) -> dict[str, str]:
 
 
 class AnthropicProvider:
-    """Streaming model adapter for Anthropic's Messages API.
-
-    The provider owns an ``httpx.AsyncClient`` and drives each streaming
-    request through the courier module.  Transient HTTP failures are
-    retried with exponential backoff.  An optional ``CredentialResolver``
-    is invoked before each attempt to support dynamic token refresh.
-    """
+    """Streaming model adapter for Anthropic's Messages API."""
 
     def __init__(self, profile: AnthropicProfile) -> None:
         self._profile = profile
@@ -364,12 +326,7 @@ class AnthropicProvider:
         )
 
     def set_reasoning(self, policy: ReasoningPolicy) -> None:
-        """Swap the extended-thinking policy for subsequent requests.
-
-        The profile is frozen, so a replacement is built rather than mutated.
-        This lets a session change thinking depth mid-conversation without
-        tearing down the HTTP client.
-        """
+        """Swap the extended-thinking policy for subsequent requests."""
         self._profile = replace(self._profile, reasoning=policy)
 
     async def close(self) -> None:

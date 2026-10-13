@@ -1,14 +1,4 @@
-"""Lightweight session metadata index backed by a JSONL file.
-
-The ``SessionCatalog`` manages an ``index.jsonl`` that lives alongside the
-per-session vault files.  It stores one ``SessionMeta`` record per session,
-rewritten in place on update.  Reads still deduplicate by session id — newest
-``updated_at`` wins — so indexes written by earlier append-only builds load
-without migration.
-
-This module knows nothing about ``RuntimeHarness`` or transcript data.  It
-only tracks the metadata needed to list, find, and resume sessions.
-"""
+"""Lightweight session metadata index backed by a JSONL file."""
 
 from __future__ import annotations
 
@@ -104,14 +94,7 @@ _INDEX_FILENAME = "index.jsonl"
 
 
 class SessionCatalog:
-    """Persistent index of session metadata stored as JSONL.
-
-    :meth:`upsert` rewrites the file so it carries one line per session.
-    Reads still deduplicate by ``session_id`` — keeping the newest
-    ``updated_at`` — so an index left over from an older append-only build
-    still loads correctly.  Malformed lines are skipped, so one bad entry
-    never hides the remaining sessions.
-    """
+    """Persistent index of session metadata stored as JSONL."""
 
     def __init__(self, sessions_dir: str | Path) -> None:
         self._dir = Path(sessions_dir)
@@ -134,11 +117,7 @@ class SessionCatalog:
         provider: str,
         title: str | None = None,
     ) -> SessionMeta:
-        """Build a ``SessionMeta`` without writing it to any index.
-
-        Useful when you need to construct metadata before the catalog is
-        available or when batching multiple writes.
-        """
+        """Build a ``SessionMeta`` without writing it to any index."""
         now = time()
         return SessionMeta(
             session_id=session_id,
@@ -154,21 +133,7 @@ class SessionCatalog:
     # ── writes ────────────────────────────────────────────────────────
 
     def upsert(self, meta: SessionMeta) -> None:
-        """Insert or replace the entry for ``meta.session_id``.
-
-        The index holds exactly one line per session: it is read, updated in
-        memory, and rewritten.  Appending instead would let the file grow
-        without bound, since every resume and every rename writes an entry,
-        and each read parses the whole file.
-
-        The rewrite goes through a temporary file and an atomic replace, so an
-        interrupted write cannot truncate an index that is still needed to find
-        existing sessions.
-
-        A write carrying an older ``updated_at`` than the stored entry is
-        dropped: every caller stamps the current time, so a stale timestamp
-        means another process already recorded something newer.
-        """
+        """Insert or replace the entry for ``meta.session_id``."""
         self._dir.mkdir(parents=True, exist_ok=True)
         entries = self._load_deduped()
         current = entries.get(meta.session_id)
@@ -185,11 +150,7 @@ class SessionCatalog:
         staged.replace(self._path)
 
     def touch(self, session_id: str) -> SessionMeta | None:
-        """Update the ``updated_at`` timestamp for *session_id*.
-
-        Returns the updated metadata, or ``None`` if the session is not
-        found in the index.
-        """
+        """Update the ``updated_at`` timestamp for *session_id*."""
         existing = self.get(session_id)
         if existing is None:
             return None
@@ -200,11 +161,7 @@ class SessionCatalog:
     # ── reads ─────────────────────────────────────────────────────────
 
     def list_all(self) -> list[SessionMeta]:
-        """Return all sessions ordered by ``updated_at`` descending.
-
-        Duplicates are resolved by keeping the newest ``updated_at`` per
-        ``session_id``.
-        """
+        """Return all sessions ordered by ``updated_at`` descending."""
         entries = self._load_deduped()
         return sorted(entries.values(), key=lambda m: m.updated_at, reverse=True)
 
