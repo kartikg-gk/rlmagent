@@ -20,7 +20,6 @@ async def _begin(session) -> None:
     async def _no_title() -> str:
         return ""
 
-    session.auto_name = _no_title
     async for _ in session.submit("hello"):
         pass
 

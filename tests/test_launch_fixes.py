@@ -103,7 +103,6 @@ async def _session(tmp_path: Path, streams: list) -> tuple[CodingSession, Replay
     async def no_title() -> str:
         return ""
 
-    session.auto_name = no_title  # type: ignore[method-assign]
     return session, provider
 
 

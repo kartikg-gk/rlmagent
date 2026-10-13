@@ -47,7 +47,6 @@ async def _begin(session) -> None:
     async def _no_title() -> str:
         return ""
 
-    session.auto_name = _no_title
     async for _ in session.submit("hello"):
         pass
 
@@ -1042,7 +1041,6 @@ def test_find_tip() -> None:
 async def test_multiple_submits_accumulate() -> None:
     replies = [
         _make_reply("R1", input_tokens=100, output_tokens=50, cost=0.001),
-        _make_reply("Auto Title", input_tokens=10, output_tokens=5, cost=0.0),
         _make_reply("R2", input_tokens=200, output_tokens=80, cost=0.002),
     ]
     provider = _make_provider(replies)
@@ -1053,7 +1051,6 @@ async def test_multiple_submits_accumulate() -> None:
         system="You are helpful.",
     )
 
-    # First submit triggers auto-naming (consumes an extra stream)
     await _collect_events(session.submit("First"))
     await _collect_events(session.submit("Second"))
 

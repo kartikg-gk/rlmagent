@@ -68,7 +68,6 @@ async def _quiet(session: CodingSession) -> CodingSession:
     async def no_title() -> str:
         return ""
 
-    session.auto_name = no_title  # type: ignore[method-assign]
     return session
 
 

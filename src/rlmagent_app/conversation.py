@@ -129,10 +129,6 @@ _RUNNABLE_COMMAND_TABLE: tuple[tuple[str, str], ...] = tuple(
 
 _EXTENSION_GROUP = "rlm-agent.extensions"
 
-_NAMING_SYSTEM = (
-    "Generate a short, descriptive title (3-8 words) for this coding conversation. "
-    "Return only the title, nothing else."
-)
 
 _EXPORT_FORMATS = ("text", "json", "jsonl")
 _EXPORT_SUFFIX = {"text": "txt", "json": "json", "jsonl": "jsonl"}
@@ -214,11 +210,6 @@ def render_skill_file(name: str, description: str, body: str) -> str:
 
 
 _TITLE_MAX_CHARS = 48
-
-#: Re-summarise the session title once it has grown this many entries since
-#: the last automatic naming.
-_RENAME_EVERY_N_ENTRIES = 8
-
 
 def summarize_prompt(text: str, *, limit: int = _TITLE_MAX_CHARS) -> str:
     """Condense a prompt into a one-line session title.
@@ -506,7 +497,6 @@ class CodingSession:
         )
         self._extensions: list[object] = []
         self._named = title is not None
-        self._named_at = 0
         self._renamed_manually = False
         self._tools_loader = tools_loader
         self._skills_loader = skills_loader
@@ -687,7 +677,7 @@ class CodingSession:
     def submit(self, text: str) -> AsyncIterator[AgentEvent]:
         """Submit a user prompt and stream agent events.
 
-        Persistence, stats tracking, auto-naming, and auto-compaction are
+        Persistence, stats tracking, and auto-compaction are
         handled automatically by the internal event subscriber and the
         post-run hook.
         """
@@ -702,20 +692,9 @@ class CodingSession:
         prompt = self.expand_skill(text) or self.expand_template(text) or text
         return self._run_wrapped(self._harness.submit(prompt))
 
-    def _should_rename(self, entries: int) -> bool:
-        """Whether the title should be regenerated at *entries* messages.
-
-        The opening prompt stops describing a conversation once it has moved
-        on, so re-summarise as it grows rather than naming once forever.
-        """
-        if self._renamed_manually:
-            return False
-        return entries >= self._named_at + _RENAME_EVERY_N_ENTRIES
-
     def set_provisional_title(self, text: str) -> None:
         """Derive a placeholder title from *text* and publish it immediately.
 
-        Does not set ``_named``, so ``auto_name`` still refines it later.
         """
         title = summarize_prompt(text)
         if not title:
@@ -944,38 +923,6 @@ class CodingSession:
             limits=_CONTEXT_LIMITS,
             model=self._model,
         )
-
-    # ── automatic session naming ───────────────────────────────────────
-
-    async def auto_name(self) -> str:
-        """Generate and persist an automatic session title from the first exchange."""
-        transcript = self._harness.transcript
-        if len(transcript) < 2:
-            raise ValueError("Need at least one exchange to generate a title.")
-
-        context = "\n".join(
-            f"[{entry.role}] {surface_text(entry)}"
-            for entry in transcript[:4]
-        )
-
-        title = await self._utility_completion(
-            f"Conversation so far:\n{context}",
-            _NAMING_SYSTEM,
-        )
-        title = title.strip().strip('"').strip("'")[:80]
-        if not title:
-            # Never fall back to the raw session id — that is what surfaced as
-            # "random numbers" in session listings. Keep whatever we derived
-            # from the first prompt instead.
-            title = self._title or summarize_prompt(surface_text(transcript[0]))
-        if not title:
-            return self._session_id
-
-        self._title = title
-        self._named = True
-        await self._append_record(TagRecord(label=title))
-        self._sync_title_to_catalog(title)
-        return title
 
     # ── catalog sync ───────────────────────────────────────────────────
 
@@ -1728,18 +1675,6 @@ class CodingSession:
             await self._append_record(
                 TipRecord(entry_id=self._tip_id), advance_tip=False
             )
-
-        # Rename from the model as soon as there is an exchange to summarise,
-        # then re-summarise once the conversation has grown enough that the
-        # opening prompt no longer describes it. A provisional title (derived
-        # from the first prompt) does not count as named.
-        entries = len(self._harness.transcript)
-        if entries >= 2 and (not self._named or self._should_rename(entries)):
-            try:
-                await self.auto_name()
-                self._named_at = entries
-            except Exception:  # noqa: BLE001
-                pass
 
         if (
             self.should_compact()
