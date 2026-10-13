@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from rlmagent_app.prompts import (
+from rlmagent.prompts import (
     PromptTemplate,
     Severity,
     TemplateLoadError,
@@ -248,7 +248,7 @@ def test_unreadable_file_emits_warning(tmp_path: Path) -> None:
 
 
 def test_fatal_load_error_direct() -> None:
-    from rlmagent_app.prompts import _load_template_file
+    from rlmagent.prompts import _load_template_file
 
     with pytest.raises(TemplateLoadError):
         _load_template_file(Path("/nonexistent/template.md"))

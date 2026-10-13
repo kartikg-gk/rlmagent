@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from rlmagent_app.refresh import (
+from rlmagent.refresh import (
     ReloadDiagnosticContext,
     ReloadDiagnosticLogger,
     build_base_entry,

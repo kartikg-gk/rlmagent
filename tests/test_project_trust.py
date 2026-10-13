@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from rlmagent_app.discovery import default_paths, prompt_search_paths, skill_search_paths
-from rlmagent_app.instructions import system_prompt
-from rlmagent_app.plugins import extension_dirs
-from rlmagent_app.trust import (
+from rlmagent.discovery import default_paths, prompt_search_paths, skill_search_paths
+from rlmagent.instructions import system_prompt
+from rlmagent.plugins import extension_dirs
+from rlmagent.trust import (
     Choice,
     StartupCancelled,
     TrustRequest,
@@ -268,7 +268,7 @@ def test_trust_is_inert_until_a_frontend_engages_it(project: Path) -> None:
 
 
 async def test_dialog_returns_the_selected_choice(project: Path) -> None:
-    from rlmagent_app.tui.trust_dialog import TrustDialog
+    from rlmagent.tui.trust_dialog import TrustDialog
 
     request = TrustRequest(canonical_folder(project), scan_project_inputs(project))
     app = TrustDialog(request)
@@ -278,7 +278,7 @@ async def test_dialog_returns_the_selected_choice(project: Path) -> None:
 
 
 async def test_dialog_escape_answers_nothing(project: Path) -> None:
-    from rlmagent_app.tui.trust_dialog import TrustDialog
+    from rlmagent.tui.trust_dialog import TrustDialog
 
     request = TrustRequest(canonical_folder(project), scan_project_inputs(project))
     app = TrustDialog(request)
@@ -288,7 +288,7 @@ async def test_dialog_escape_answers_nothing(project: Path) -> None:
 
 
 def test_approve_flags_are_mutually_exclusive() -> None:
-    from rlmagent_app.cli.main import _build_run_parser
+    from rlmagent.cli.main import _build_run_parser
 
     parser = _build_run_parser()
     assert parser.parse_args(["-a"]).approve
@@ -302,7 +302,7 @@ async def test_headless_startup_skips_inputs_and_says_so(
 ) -> None:
     import argparse
 
-    from rlmagent_app.runtime import settle_project_trust
+    from rlmagent.runtime import settle_project_trust
 
     monkeypatch.chdir(project)
     ns = argparse.Namespace(print_mode=True, prompt="hi", approve=False, no_approve=False)

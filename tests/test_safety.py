@@ -1,10 +1,10 @@
-"""Tests for rlmagent_app.safety."""
+"""Tests for rlmagent.safety."""
 
 from __future__ import annotations
 
 import pytest
 
-from rlmagent_app.safety import (
+from rlmagent.safety import (
     MAX_OUTPUT_CHARS,
     ApprovalContext,
     ApprovalDecision,
@@ -19,7 +19,7 @@ from rlmagent_app.safety import (
     sanitize_text,
     wrap_untrusted_content,
 )
-from rlmagent_harness.contracts.tooling import ToolOutcome
+from rlmagent.harness.contracts.tooling import ToolOutcome
 
 
 def _ctx(**kw) -> ApprovalContext:

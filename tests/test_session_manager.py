@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from rlmagent_app.sessions import SessionManager, SessionSummary
-from rlmagent_harness.contracts.transcript import ModelEntry, TextSegment
-from rlmagent_harness.contracts.transcript.diagnostics import CostBreakdown, UsageStats
-from rlmagent_harness.provider.wire import StreamCloseEvent
-from rlmagent_harness.session.index import SessionCatalog
-from rlmagent_model.scripted import ReplayProvider
+from rlmagent.sessions import SessionManager, SessionSummary
+from rlmagent.harness.contracts.transcript import ModelEntry, TextSegment
+from rlmagent.harness.contracts.transcript.diagnostics import CostBreakdown, UsageStats
+from rlmagent.harness.provider.wire import StreamCloseEvent
+from rlmagent.harness.session.index import SessionCatalog
+from rlmagent.model.scripted import ReplayProvider
 
 # ── helpers ────────────────────────────────────────────────────────────────
 

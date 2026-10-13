@@ -3,14 +3,14 @@ import json
 from _scripted import code_turn
 from rlmness import Allowance
 
-from rlmagent_app.agents.trace import Tracer
-from rlmagent_app.agents.tree import AgentTree
-from rlmagent_app.conversation import CodingSession
-from rlmagent_app.tools import build_tool_registry
-from rlmagent_harness.contracts.transcript import ModelEntry, TextSegment
-from rlmagent_harness.contracts.transcript.diagnostics import CostBreakdown, UsageStats
-from rlmagent_harness.provider.wire import StreamCloseEvent
-from rlmagent_model.scripted import ReplayProvider
+from rlmagent.agents.trace import Tracer
+from rlmagent.agents.tree import AgentTree
+from rlmagent.conversation import CodingSession
+from rlmagent.tools import build_tool_registry
+from rlmagent.harness.contracts.transcript import ModelEntry, TextSegment
+from rlmagent.harness.contracts.transcript.diagnostics import CostBreakdown, UsageStats
+from rlmagent.harness.provider.wire import StreamCloseEvent
+from rlmagent.model.scripted import ReplayProvider
 
 
 def paid_text(text, cost=0.01):
@@ -124,7 +124,7 @@ async def test_compaction_tells_the_tracer():
 
 
 async def test_switching_provider_keeps_the_root_traced(tmp_path):
-    from rlmagent_app.agents.trace import TracedProvider
+    from rlmagent.agents.trace import TracedProvider
 
     tree = AgentTree(
         provider=ReplayProvider([]), provider_name="replay", model="m", cwd=str(tmp_path),
@@ -150,7 +150,7 @@ async def test_switching_provider_keeps_the_root_traced(tmp_path):
 def test_the_app_builds_the_root_session_on_a_traced_provider():
     import inspect
 
-    from rlmagent_app import runtime
+    from rlmagent import runtime
 
     source = inspect.getsource(runtime.build_session)
     assert 'tree.provider_for("root")' in source and "on_compacted" in source

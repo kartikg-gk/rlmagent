@@ -102,7 +102,7 @@ async def test_an_unknown_role_is_an_error(tmp_path):
 
 
 def test_cli_accepts_the_auto_improve_settings():
-    from rlmagent_app.cli.main import _build_run_parser
+    from rlmagent.cli.main import _build_run_parser
 
     ns = _build_run_parser().parse_args(["--no-auto-improve", "--improve-every", "5",
                                          "--improve-cooldown", "60"])
@@ -124,6 +124,6 @@ async def test_the_check_sees_what_the_playbook_already_holds(tmp_path):
 
 
 def test_the_guide_says_when_to_share():
-    from rlmagent_app.agents.prompts import PLAYBOOK_GUIDE
+    from rlmagent.agents.prompts import PLAYBOOK_GUIDE
 
     assert "this session only" in PLAYBOOK_GUIDE and "every future" in PLAYBOOK_GUIDE

@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from rlmagent_app.cli.main import (
+from rlmagent.cli.main import (
     _build_provider_parser,
     _build_run_parser,
     _build_session_parser,
@@ -19,9 +19,9 @@ from rlmagent_app.cli.main import (
     get_version,
     main,
 )
-from rlmagent_harness.contracts.transcript import ModelEntry, TextSegment
-from rlmagent_harness.provider.wire import StreamCloseEvent, StreamOpenEvent
-from rlmagent_model.scripted import ReplayProvider
+from rlmagent.harness.contracts.transcript import ModelEntry, TextSegment
+from rlmagent.harness.provider.wire import StreamCloseEvent, StreamOpenEvent
+from rlmagent.model.scripted import ReplayProvider
 
 # ---------------------------------------------------------------------------
 # Version
@@ -198,10 +198,10 @@ def test_one_shot_print_mode(capsys):
     provider = ReplayProvider(_make_simple_reply("Test reply."))
 
     with (
-        patch("rlmagent_app.cli.main._resolve_provider", return_value=provider),
-        patch("rlmagent_app.cli.main._load_tools", return_value=[]),
-        patch("rlmagent_app.cli.main._load_extensions", return_value=[]),
-        patch("rlmagent_app.cli.main._install_hooks"),
+        patch("rlmagent.cli.main._resolve_provider", return_value=provider),
+        patch("rlmagent.cli.main._load_tools", return_value=[]),
+        patch("rlmagent.cli.main._load_extensions", return_value=[]),
+        patch("rlmagent.cli.main._install_hooks"),
     ):
         code = main(["--no-session", "-p", "say hi"])
 
@@ -216,10 +216,10 @@ def test_one_shot_with_session():
 
     with tempfile.TemporaryDirectory() as td:
         with (
-            patch("rlmagent_app.cli.main._resolve_provider", return_value=provider),
-            patch("rlmagent_app.cli.main._load_tools", return_value=[]),
-            patch("rlmagent_app.cli.main._load_extensions", return_value=[]),
-            patch("rlmagent_app.cli.main._install_hooks"),
+            patch("rlmagent.cli.main._resolve_provider", return_value=provider),
+            patch("rlmagent.cli.main._load_tools", return_value=[]),
+            patch("rlmagent.cli.main._load_extensions", return_value=[]),
+            patch("rlmagent.cli.main._install_hooks"),
         ):
             code = main(["-p", "--session-dir", td, "test prompt"])
 
@@ -246,10 +246,10 @@ def test_print_mode_requires_prompt(capsys):
     provider = ReplayProvider(_make_simple_reply())
 
     with (
-        patch("rlmagent_app.cli.main._resolve_provider", return_value=provider),
-        patch("rlmagent_app.cli.main._load_tools", return_value=[]),
-        patch("rlmagent_app.cli.main._load_extensions", return_value=[]),
-        patch("rlmagent_app.cli.main._install_hooks"),
+        patch("rlmagent.cli.main._resolve_provider", return_value=provider),
+        patch("rlmagent.cli.main._load_tools", return_value=[]),
+        patch("rlmagent.cli.main._load_extensions", return_value=[]),
+        patch("rlmagent.cli.main._install_hooks"),
         patch("sys.stdin") as mock_stdin,
     ):
         mock_stdin.isatty.return_value = True
@@ -268,10 +268,10 @@ def test_session_export_jsonl(capsys):
 
     with tempfile.TemporaryDirectory() as td:
         with (
-            patch("rlmagent_app.cli.main._resolve_provider", return_value=provider),
-            patch("rlmagent_app.cli.main._load_tools", return_value=[]),
-            patch("rlmagent_app.cli.main._load_extensions", return_value=[]),
-            patch("rlmagent_app.cli.main._install_hooks"),
+            patch("rlmagent.cli.main._resolve_provider", return_value=provider),
+            patch("rlmagent.cli.main._load_tools", return_value=[]),
+            patch("rlmagent.cli.main._load_extensions", return_value=[]),
+            patch("rlmagent.cli.main._install_hooks"),
         ):
             main(["-p", "--session-dir", td, "test"])
 
@@ -297,10 +297,10 @@ async def test_repl_does_not_send_unrun_registered_command_to_model(
 ):
     import importlib
 
-    from rlmagent_app.conversation import CodingSession
-    from rlmagent_app.tools import build_tool_registry
+    from rlmagent.conversation import CodingSession
+    from rlmagent.tools import build_tool_registry
 
-    cli = importlib.import_module("rlmagent_app.cli.main")
+    cli = importlib.import_module("rlmagent.cli.main")
     session = await CodingSession.create(
         provider=ReplayProvider([]),
         provider_name="replay",

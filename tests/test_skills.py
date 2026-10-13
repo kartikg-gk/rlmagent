@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from rlmagent_app.skillset import (
+from rlmagent.skillset import (
     Severity,
     Skill,
     SkillInvocation,
@@ -279,7 +279,7 @@ def test_unreadable_skill_emits_warning(tmp_path: Path) -> None:
 
 def test_skill_load_error_direct() -> None:
     with pytest.raises(SkillLoadError):
-        from rlmagent_app.skillset import _load_skill_from_dir
+        from rlmagent.skillset import _load_skill_from_dir
         _load_skill_from_dir(Path("/nonexistent/skill"))
 
 

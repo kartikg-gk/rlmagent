@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from rlmagent_app.agents.bridge import BridgeServer, kernel_env
-from rlmagent_app.agents.kernel_api import KERNEL_API
-from rlmagent_app.kernel import KernelSession
+from rlmagent.agents.bridge import BridgeServer, kernel_env
+from rlmagent.agents.kernel_api import KERNEL_API
+from rlmagent.kernel import KernelSession
 
 
 
@@ -149,7 +149,7 @@ async def test_malformed_requests_get_an_error_reply(server):
 
 
 async def test_an_oversized_request_gets_an_error_reply(monkeypatch):
-    import rlmagent_app.agents.bridge as module
+    import rlmagent.agents.bridge as module
 
     monkeypatch.setattr(module, "LINE_LIMIT", 1024)
 

@@ -13,8 +13,8 @@ import json
 
 import httpx
 
-from rlmagent_harness.contracts.transcript import HumanEntry
-from rlmagent_harness.provider.wire import (
+from rlmagent.harness.contracts.transcript import HumanEntry
+from rlmagent.harness.provider.wire import (
     CallCloseEvent,
     ContentChunkEvent,
     ContentCloseEvent,
@@ -22,8 +22,8 @@ from rlmagent_harness.provider.wire import (
     StreamFaultEvent,
     StreamOpenEvent,
 )
-from rlmagent_model.oai_compatible import OpenAIProvider
-from rlmagent_model.settings import Credential, OpenAIProfile, RetryPolicy
+from rlmagent.model.oai_compatible import OpenAIProvider
+from rlmagent.model.settings import Credential, OpenAIProfile, RetryPolicy
 
 # ---------------------------------------------------------------------------
 # Helpers

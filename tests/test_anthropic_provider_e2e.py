@@ -13,8 +13,8 @@ import json
 
 import httpx
 
-from rlmagent_harness.contracts.transcript import HumanEntry
-from rlmagent_harness.provider.wire import (
+from rlmagent.harness.contracts.transcript import HumanEntry
+from rlmagent.harness.provider.wire import (
     CallCloseEvent,
     ContentChunkEvent,
     ContentCloseEvent,
@@ -24,8 +24,8 @@ from rlmagent_harness.provider.wire import (
     StreamFaultEvent,
     StreamOpenEvent,
 )
-from rlmagent_model.claude import AnthropicProvider
-from rlmagent_model.settings import AnthropicProfile, Credential, RetryPolicy
+from rlmagent.model.claude import AnthropicProvider
+from rlmagent.model.settings import AnthropicProfile, Credential, RetryPolicy
 
 # ---------------------------------------------------------------------------
 # Helpers

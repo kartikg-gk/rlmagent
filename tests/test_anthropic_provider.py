@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from rlmagent_harness.contracts.tooling import ToolOutcome, ToolSpec
-from rlmagent_harness.contracts.transcript import (
+from rlmagent.harness.contracts.tooling import ToolOutcome, ToolSpec
+from rlmagent.harness.contracts.transcript import (
     CallBlock,
     HumanEntry,
     ImageSegment,
@@ -14,7 +14,7 @@ from rlmagent_harness.contracts.transcript import (
     ThoughtSegment,
     ToolOutcomeEntry,
 )
-from rlmagent_harness.provider.wire import (
+from rlmagent.harness.provider.wire import (
     CallChunkEvent,
     CallCloseEvent,
     CallOpenEvent,
@@ -28,14 +28,14 @@ from rlmagent_harness.provider.wire import (
     StreamFaultEvent,
     StreamOpenEvent,
 )
-from rlmagent_model._claude.courier import ApiRejection
-from rlmagent_model._claude.emitter import (
+from rlmagent.model._claude.courier import ApiRejection
+from rlmagent.model._claude.emitter import (
     ResponseMachine,
     _map_stop_reason,
     _safe_json_args,
     _tally_usage,
 )
-from rlmagent_model.claude import (
+from rlmagent.model.claude import (
     _assistant_blocks,
     _compile_messages,
     _compose_body,
@@ -44,7 +44,7 @@ from rlmagent_model.claude import (
     _tool_schema,
     _user_content,
 )
-from rlmagent_model.settings import ReasoningPolicy
+from rlmagent.model.settings import ReasoningPolicy
 
 # ===========================================================================
 # emitter.py — helpers

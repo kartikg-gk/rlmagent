@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from rlmagent_app.cli.main import main
-from rlmagent_harness.contracts.transcript import HumanEntry, ModelEntry, TextSegment
-from rlmagent_harness.contracts.transcript.diagnostics import CostBreakdown, UsageStats
-from rlmagent_harness.session.records import SessionRecord, TranscriptRecord
-from rlmagent_harness.session.store import serialize_record
-from rlmagent_harness.session.summary import summarize_records
+from rlmagent.cli.main import main
+from rlmagent.harness.contracts.transcript import HumanEntry, ModelEntry, TextSegment
+from rlmagent.harness.contracts.transcript.diagnostics import CostBreakdown, UsageStats
+from rlmagent.harness.session.records import SessionRecord, TranscriptRecord
+from rlmagent.harness.session.store import serialize_record
+from rlmagent.harness.session.summary import summarize_records
 
 
 def reply(

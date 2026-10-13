@@ -1,8 +1,8 @@
 import pytest
 
-from rlmagent_app.kernel import CellResult, KernelSession
-from rlmagent_app.tools import build_tool_registry
-from rlmagent_app.tools.kernel import format_cell, make_python_tool
+from rlmagent.kernel import CellResult, KernelSession
+from rlmagent.tools import build_tool_registry
+from rlmagent.tools.kernel import format_cell, make_python_tool
 
 
 
@@ -36,15 +36,15 @@ async def test_tool_runs_code_in_the_kernel(tmp_path):
 
 
 def test_plan_mode_removes_the_python_tool(tmp_path):
-    from rlmagent_app.planning import restrict_tools
+    from rlmagent.planning import restrict_tools
 
     tools = build_tool_registry(KernelSession(cwd=str(tmp_path)))
     assert "python" not in [t.name for t in restrict_tools(tools)]
 
 
 def test_python_calls_count_as_mutating_for_approval():
-    from rlmagent_app.cli.main import _approval_context
-    from rlmagent_harness.contracts.transcript import CallBlock
+    from rlmagent.cli.main import _approval_context
+    from rlmagent.harness.contracts.transcript import CallBlock
 
     context = _approval_context(CallBlock(name="python", id="c1", arguments={"code": "open('x','w')"}))
     assert context.is_mutating

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from rlmagent_app.plugins import (
+from rlmagent.plugins import (
     EXTENSIONS_DIR_ENV,
     discover_extension_files,
     extension_dirs,

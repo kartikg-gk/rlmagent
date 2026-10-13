@@ -9,11 +9,11 @@ from pathlib import Path
 
 import httpx
 
-from rlmagent_app.conversation import CodingSession
-from rlmagent_app.tui.adapter import RetryNotice, SessionBridge
-from rlmagent_app.ui.render import TranscriptRenderer
-from rlmagent_harness.contracts.stream import MessageEndEvent, RetryEvent, RunEndEvent
-from rlmagent_harness.contracts.transcript import (
+from rlmagent.conversation import CodingSession
+from rlmagent.tui.adapter import RetryNotice, SessionBridge
+from rlmagent.ui.render import TranscriptRenderer
+from rlmagent.harness.contracts.stream import MessageEndEvent, RetryEvent, RunEndEvent
+from rlmagent.harness.contracts.transcript import (
     CallBlock,
     HumanEntry,
     ModelEntry,
@@ -21,12 +21,12 @@ from rlmagent_harness.contracts.transcript import (
     ThoughtSegment,
     ToolOutcomeEntry,
 )
-from rlmagent_harness.driver import RuntimeConfig, RuntimeHarness
-from rlmagent_harness.provider.wire import SourceRetryEvent, StreamCloseEvent, StreamFaultEvent
-from rlmagent_model.claude import AnthropicProvider, _compile_messages
-from rlmagent_model.oai_compatible import OpenAIProvider
-from rlmagent_model.scripted import ReplayProvider
-from rlmagent_model.settings import AnthropicProfile, Credential, OpenAIProfile, RetryPolicy
+from rlmagent.harness.driver import RuntimeConfig, RuntimeHarness
+from rlmagent.harness.provider.wire import SourceRetryEvent, StreamCloseEvent, StreamFaultEvent
+from rlmagent.model.claude import AnthropicProvider, _compile_messages
+from rlmagent.model.oai_compatible import OpenAIProvider
+from rlmagent.model.scripted import ReplayProvider
+from rlmagent.model.settings import AnthropicProfile, Credential, OpenAIProfile, RetryPolicy
 
 # ---------------------------------------------------------------------------
 # Provider retries are announced

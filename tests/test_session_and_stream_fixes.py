@@ -9,22 +9,22 @@ from pathlib import Path
 import httpx
 import pytest
 
-from rlmagent_app.conversation import CodingSession
-from rlmagent_harness.contracts.transcript import (
+from rlmagent.conversation import CodingSession
+from rlmagent.harness.contracts.transcript import (
     CallBlock,
     HumanEntry,
     ModelEntry,
     TextSegment,
     ThoughtSegment,
 )
-from rlmagent_harness.provider.wire import StreamCloseEvent
-from rlmagent_harness.session.index import SessionCatalog
-from rlmagent_model._claude.courier import ApiRejection
-from rlmagent_model._oai.transport import HttpStreamError
-from rlmagent_model.oai_compatible import OpenAIProvider
-from rlmagent_model.scripted import ReplayProvider
-from rlmagent_model.settings import Credential, OpenAIProfile, RetryPolicy
-from rlmagent_model.transport.client import build_async_client
+from rlmagent.harness.provider.wire import StreamCloseEvent
+from rlmagent.harness.session.index import SessionCatalog
+from rlmagent.model._claude.courier import ApiRejection
+from rlmagent.model._oai.transport import HttpStreamError
+from rlmagent.model.oai_compatible import OpenAIProvider
+from rlmagent.model.scripted import ReplayProvider
+from rlmagent.model.settings import Credential, OpenAIProfile, RetryPolicy
+from rlmagent.model.transport.client import build_async_client
 
 # ---------------------------------------------------------------------------
 # Retry status codes
@@ -149,7 +149,7 @@ async def test_provider_switch_is_recorded_for_resume(tmp_path: Path) -> None:
 ])
 def test_only_registered_commands_are_run_as_commands(text: str, command: bool) -> None:
     pytest.importorskip("textual")
-    from rlmagent_app.tui.app import _is_registered_command
+    from rlmagent.tui.app import _is_registered_command
 
     assert _is_registered_command(text) is command
 
@@ -252,7 +252,7 @@ async def test_reasoning_summary_parts_are_separate_paragraphs() -> None:
 
 
 def test_reported_gateway_cost_is_recorded() -> None:
-    from rlmagent_model._oai.helpers import extract_usage
+    from rlmagent.model._oai.helpers import extract_usage
 
     usage = extract_usage({
         "prompt_tokens": 8, "completion_tokens": 10, "total_tokens": 18, "cost": 0.0000192,
@@ -268,7 +268,7 @@ def test_reported_gateway_cost_is_recorded() -> None:
 def test_compatible_providers_are_labelled_by_their_own_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from rlmagent_app.config.config import resolve_provider
+    from rlmagent.config.config import resolve_provider
 
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     provider = resolve_provider("openrouter")

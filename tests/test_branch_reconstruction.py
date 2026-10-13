@@ -10,15 +10,15 @@ sys.path.insert(0, str(__file__.rsplit("test_branch_reconstruction.py", 1)[0]))
 
 from _session_helpers import _make_session, _text_turn  # noqa: E402
 
-from rlmagent_app.conversation import CodingSession  # noqa: E402
-from rlmagent_harness.contracts.transcript import surface_text  # noqa: E402
-from rlmagent_harness.session.records import TipRecord, TranscriptRecord  # noqa: E402
-from rlmagent_harness.session.replay import (  # noqa: E402
+from rlmagent.conversation import CodingSession  # noqa: E402
+from rlmagent.harness.contracts.transcript import surface_text  # noqa: E402
+from rlmagent.harness.session.records import TipRecord, TranscriptRecord  # noqa: E402
+from rlmagent.harness.session.replay import (  # noqa: E402
     TreeIntegrityError,
     find_tip,
     project_active_branch,
 )
-from rlmagent_model.scripted import ReplayProvider  # noqa: E402
+from rlmagent.model.scripted import ReplayProvider  # noqa: E402
 
 
 def _texts(entries) -> list[str]:
@@ -39,21 +39,21 @@ async def _resume(tmp_path, session_id) -> CodingSession:
 class TestActiveBranchProjection:
     def test_no_tip_falls_back_to_flat(self):
         records = [TranscriptRecord(message=__import__(
-            "rlmagent_harness.contracts.transcript", fromlist=["HumanEntry"],
+            "rlmagent.harness.contracts.transcript", fromlist=["HumanEntry"],
         ).HumanEntry(content="hi"))]
         assert find_tip(records) is None
         state = project_active_branch(records)
         assert len(state.transcript) == 1
 
     def test_broken_chain_degrades_instead_of_raising(self):
-        from rlmagent_harness.contracts.transcript import HumanEntry
+        from rlmagent.harness.contracts.transcript import HumanEntry
 
         orphan = TranscriptRecord(message=HumanEntry(content="hi"))
         orphan.parent_id = "does-not-exist"
         records = [orphan, TipRecord(entry_id=orphan.id)]
 
         with pytest.raises(TreeIntegrityError):
-            from rlmagent_harness.session.replay import trace_to_entry
+            from rlmagent.harness.session.replay import trace_to_entry
 
             trace_to_entry(records, orphan.id)
 

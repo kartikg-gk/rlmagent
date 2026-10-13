@@ -10,7 +10,7 @@ sys.path.insert(0, str(__file__.rsplit("test_skills_command.py", 1)[0]))
 
 from _session_helpers import _make_session, _text_turn  # noqa: E402
 
-from rlmagent_app.skillset import load_skills  # noqa: E402
+from rlmagent.skillset import load_skills  # noqa: E402
 
 
 def _write_skill(root, name: str, description: str, body: str = "") -> None:
@@ -125,7 +125,7 @@ class TestInvocation:
         _, _, messages, _ = provider.calls[0]
         await session.shutdown()
 
-        from rlmagent_harness.contracts.transcript import surface_text
+        from rlmagent.harness.contracts.transcript import surface_text
 
         sent = " ".join(surface_text(m) for m in messages)
         assert "Do the review thing." in sent
@@ -139,7 +139,7 @@ class TestInvocation:
         _, _, messages, _ = provider.calls[0]
         await session.shutdown()
 
-        from rlmagent_harness.contracts.transcript import surface_text
+        from rlmagent.harness.contracts.transcript import surface_text
 
         sent = " ".join(surface_text(m) for m in messages)
         assert "hello there" in sent
@@ -148,14 +148,14 @@ class TestInvocation:
 
 class TestRegistration:
     def test_skills_is_a_known_command(self):
-        from rlmagent_app.conversation import CodingSession
+        from rlmagent.conversation import CodingSession
 
         assert any(name == "skills" for name, _ in CodingSession.COMMANDS)
 
     async def test_autocomplete_offers_it(self, tmp_path):
         pytest.importorskip("textual")
-        from rlmagent_app.conversation import CodingSession
-        from rlmagent_app.tui.completions import match_commands
+        from rlmagent.conversation import CodingSession
+        from rlmagent.tui.completions import match_commands
 
         names = [c.name for c in match_commands("/sk", CodingSession.COMMANDS)]
         assert "skills" in names

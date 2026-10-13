@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from rlmagent_app.discovery import (
+from rlmagent.discovery import (
     RLM_AGENT_HOME_ENV,
     RLM_AGENT_SESSIONS_DIR_ENV,
     RlmAgentPaths,
@@ -360,7 +360,7 @@ class TestAgentsMdPrecedence:
         agents_md = tmp_path / "AGENTS.md"
         agents_md.write_text("Project instructions here.", encoding="utf-8")
 
-        from rlmagent_app.instructions import _project_context
+        from rlmagent.instructions import _project_context
 
         result = _project_context(str(tmp_path))
         assert "Project instructions here." in result
@@ -372,7 +372,7 @@ class TestAgentsMdPrecedence:
         monkeypatch.setenv(RLM_AGENT_HOME_ENV, str(home))
         (home / "AGENTS.md").write_text("User-level context.", encoding="utf-8")
 
-        from rlmagent_app.instructions import _project_context
+        from rlmagent.instructions import _project_context
 
         result = _project_context(str(tmp_path / "some" / "project"))
         assert "User-level context." in result
@@ -388,7 +388,7 @@ class TestAgentsMdPrecedence:
         project.mkdir()
         (project / "AGENTS.md").write_text("Local rules.", encoding="utf-8")
 
-        from rlmagent_app.instructions import _project_context
+        from rlmagent.instructions import _project_context
 
         result = _project_context(str(project))
         assert "Global rules." in result
@@ -398,7 +398,7 @@ class TestAgentsMdPrecedence:
         """No AGENTS.md anywhere returns empty string."""
         monkeypatch.setenv(RLM_AGENT_HOME_ENV, str(tmp_path / "home" / ".rlm-agent"))
 
-        from rlmagent_app.instructions import _project_context
+        from rlmagent.instructions import _project_context
 
         result = _project_context(str(tmp_path / "empty"))
         assert result == ""
@@ -413,7 +413,7 @@ class TestAgentsMdPrecedence:
         delta_dir.mkdir(parents=True)
         (delta_dir / "AGENTS.md").write_text("rlm-agent project context.", encoding="utf-8")
 
-        from rlmagent_app.instructions import _project_context
+        from rlmagent.instructions import _project_context
 
         result = _project_context(str(project))
         assert "rlm-agent project context." in result
@@ -428,7 +428,7 @@ class TestAgentsMdPrecedence:
         agents_dir.mkdir(parents=True)
         (agents_dir / "AGENTS.md").write_text("Cross-tool project context.", encoding="utf-8")
 
-        from rlmagent_app.instructions import _project_context
+        from rlmagent.instructions import _project_context
 
         result = _project_context(str(project))
         assert "Cross-tool project context." in result

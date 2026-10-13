@@ -7,13 +7,13 @@ from pathlib import Path
 
 import httpx
 
-from rlmagent_app.conversation import CodingSession
-from rlmagent_app.routing import RoutePin, pin_from_storage
-from rlmagent_harness.contracts.stream import RunEndEvent
-from rlmagent_harness.contracts.transcript import HumanEntry, ModelEntry
-from rlmagent_harness.session.index import SessionCatalog, SessionMeta
-from rlmagent_model.oai_compatible import OpenAIProvider
-from rlmagent_model.settings import Credential, OpenAIProfile, RetryPolicy
+from rlmagent.conversation import CodingSession
+from rlmagent.routing import RoutePin, pin_from_storage
+from rlmagent.harness.contracts.stream import RunEndEvent
+from rlmagent.harness.contracts.transcript import HumanEntry, ModelEntry
+from rlmagent.harness.session.index import SessionCatalog, SessionMeta
+from rlmagent.model.oai_compatible import OpenAIProvider
+from rlmagent.model.settings import Credential, OpenAIProfile, RetryPolicy
 
 _ROUTER = "https://router.huggingface.co/v1"
 
@@ -165,7 +165,7 @@ def test_legacy_rows_load_conservatively(tmp_path: Path) -> None:
 
 
 async def test_failover_shows_progress_instead_of_the_backend_error(tmp_path: Path) -> None:
-    from rlmagent_harness.contracts.stream import MessageEndEvent, RetryEvent
+    from rlmagent.harness.contracts.stream import MessageEndEvent, RetryEvent
 
     router = _Router([(200, "baseten", "one"), (503, None, ""), (200, "deepinfra", "saved")])
     session = await _session(tmp_path, router)

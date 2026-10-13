@@ -10,12 +10,12 @@ sys.path.insert(0, str(__file__.rsplit("test_create_skill.py", 1)[0]))
 
 from _session_helpers import _make_session, _text_turn  # noqa: E402
 
-from rlmagent_app.conversation import (  # noqa: E402
+from rlmagent.conversation import (  # noqa: E402
     derive_skill_description,
     parse_create_skill_arg,
     render_skill_file,
 )
-from rlmagent_app.skillset import load_skills  # noqa: E402
+from rlmagent.skillset import load_skills  # noqa: E402
 
 
 async def _session(tmp_path):
@@ -158,14 +158,14 @@ class TestValidation:
 
 class TestRegistration:
     def test_command_is_registered(self):
-        from rlmagent_app.conversation import CodingSession
+        from rlmagent.conversation import CodingSession
 
         assert any(name == "create-skill" for name, _ in CodingSession.COMMANDS)
 
     def test_autocomplete_offers_it(self):
         pytest.importorskip("textual")
-        from rlmagent_app.conversation import CodingSession
-        from rlmagent_app.tui.completions import match_commands
+        from rlmagent.conversation import CodingSession
+        from rlmagent.tui.completions import match_commands
 
         names = [c.name for c in match_commands("/create", CodingSession.COMMANDS)]
         assert "create-skill" in names

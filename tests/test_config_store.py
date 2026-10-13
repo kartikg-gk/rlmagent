@@ -1,4 +1,4 @@
-"""Tests for rlmagent_app.config.store and rlmagent_app.config.loader."""
+"""Tests for rlmagent.config.store and rlmagent.config.loader."""
 
 from __future__ import annotations
 
@@ -6,13 +6,13 @@ import os
 
 import pytest
 
-from rlmagent_app.config.loader import (
+from rlmagent.config.loader import (
     apply_config,
     load_api_key,
     load_model,
     load_provider,
 )
-from rlmagent_app.config.store import (
+from rlmagent.config.store import (
     PROVIDER_KEYS,
     RlmAgentConfig,
     config_path,
