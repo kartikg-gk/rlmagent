@@ -45,7 +45,8 @@ CHECK_CHARS = 30_000
 CHECK_SYSTEM = """You decide whether an agent's recent conversation holds anything worth \
 keeping in its playbook: a correction from the user, a mistake made more than once, a \
 procedure done twice, a lasting fact or preference. Routine work, one-off details and \
-guesses are not worth keeping. Answer with one JSON object and nothing else:
+guesses are not worth keeping, and neither is anything the current playbook (shown \
+first) already holds. Answer with one JSON object and nothing else:
 {"worth_it": true or false, "why": "one sentence", "focus": "what to keep, if anything"}"""
 
 AUTO_NOTE = (

@@ -109,3 +109,21 @@ def test_cli_accepts_the_auto_improve_settings():
     assert (ns.auto_improve, ns.improve_every, ns.improve_cooldown) == (False, 5, 60.0)
     ns = _build_run_parser().parse_args([])
     assert (ns.auto_improve, ns.improve_every, ns.improve_cooldown) == (True, 20, 900.0)
+
+
+async def test_the_check_sees_what_the_playbook_already_holds(tmp_path):
+    session, provider, improver = await _setup(tmp_path, [text_turn("a"), text_turn(NO)])
+    _auto(improver, every=1)
+    try:
+        improver.apply([SKILL], trigger="t")
+        await _submit(session, "count lines")
+        sent = json.dumps([str(m) for m in provider.calls[-1][2]])
+        assert "Current playbook" in sent and "lines: Count lines" in sent
+    finally:
+        await session.shutdown()
+
+
+def test_the_guide_says_when_to_share():
+    from rlmagent_app.agents.prompts import PLAYBOOK_GUIDE
+
+    assert "this session only" in PLAYBOOK_GUIDE and "every future" in PLAYBOOK_GUIDE
