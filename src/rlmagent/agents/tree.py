@@ -17,7 +17,7 @@ from rlmagent.agents.bridge import BridgeServer, kernel_env
 from rlmagent.agents.kernel_api import KERNEL_API
 from rlmagent.kernel import KernelSession
 from rlmagent.tools import build_tool_registry
-from rlmagent.model.external import PREFIX, parse_model, with_external
+from rlmagent.model.external import is_external, parse_model, with_external
 from rlmagent.harness.contracts.tooling import ToolSpec
 
 NUDGE = (
@@ -282,7 +282,7 @@ class AgentTree:
               role: str | None = None, model: str | None = None) -> str:
         parent = self.nodes[parent_id]
         role_text = self._role(role) if role else ""
-        if model and model.startswith(PREFIX):
+        if is_external(model):
             parse_model(model)
         if not self._can_delegate(parent):
             raise RuntimeError("sub-agents are not available at this depth")

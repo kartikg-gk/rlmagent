@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from types import SimpleNamespace
 
 import pytest
 from _scripted import code_turn, text_turn
@@ -86,8 +87,8 @@ def test_cli_output_parses_with_usage_and_cost():
 
 
 def test_model_names():
-    assert parse_model("cli:codex?model=gpt-5.5") == ("codex", "gpt-5.5")
-    assert parse_model("cli:claude-code") == ("claude-code", None)
+    assert parse_model("cli:codex?model=gpt-5.5") == ("cli", "codex", "gpt-5.5")
+    assert parse_model("acp:claude-code") == ("acp", "claude-code", None)
     with pytest.raises(ValueError, match="unknown agent"):
         parse_model("cli:cursor")
 
@@ -133,3 +134,79 @@ async def test_an_unknown_agent_is_refused_at_spawn(tmp_path):
             session.agent_tree.spawn("root", "t", None, model="cli:nope")
     finally:
         await session.shutdown()
+
+
+FAKE_ACP = r"""
+import json, os, sys
+log = []
+def send(m):
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", **m}) + "\n"); sys.stdout.flush()
+def read():
+    return json.loads(sys.stdin.readline())
+for line in sys.stdin:
+    msg = json.loads(line)
+    method, rid, params = msg.get("method"), msg.get("id"), msg.get("params", {})
+    log.append({"method": method, "params": params})
+    if method == "initialize":
+        send({"id": rid, "result": {"protocolVersion": 1, "agentCapabilities": {}}})
+    elif method == "session/new":
+        send({"id": rid, "result": {"sessionId": "s1", "modes": {"currentModeId": "default",
+              "availableModes": [{"id": "default"}, {"id": "plan"}]}}})
+    elif method == "session/set_mode":
+        send({"id": rid, "result": {}})
+    elif method == "session/prompt":
+        send({"id": 900, "method": "session/request_permission", "params": {"sessionId": "s1",
+              "options": [{"optionId": "yes", "kind": "allow_once"}, {"optionId": "no", "kind": "reject_once"}]}})
+        log.append({"permission_reply": read()})
+        send({"id": 901, "method": "fs/read_text_file", "params": {"path": "x"}})
+        log.append({"fs_reply": read()})
+        for chunk in ["Running it.\n```python\n", "print(6 * 7)\n```"]:
+            send({"method": "session/update", "params": {"sessionId": "s1", "update": {
+                  "sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": chunk}}}})
+        with open(os.environ["FAKE_ACP_LOG"], "w") as f:
+            json.dump(log, f)
+        send({"id": rid, "result": {"stopReason": "end_turn",
+              "usage": {"inputTokens": 30, "outputTokens": 7, "totalTokens": 37}}})
+"""
+
+
+async def test_an_acp_agent_answers_through_the_protocol(tmp_path, monkeypatch):
+    from rlmagent.model.external import ExternalAgentProvider
+
+    script = tmp_path / "fake_acp.py"
+    script.write_text(FAKE_ACP)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "acp_agents.json").write_text(json.dumps({"fake": {
+        "command": sys.executable, "args": [str(script)], "readonly_mode": "plan"}}))
+    monkeypatch.setenv("RLM_AGENT_HOME", str(home))
+    monkeypatch.setenv("FAKE_ACP_LOG", str(tmp_path / "acp.json"))
+
+    events = [e async for e in ExternalAgentProvider().stream_response(
+        model="acp:fake", system="SYS", messages=[HumanEntry(content="what is 6*7?")],
+        tools=[SimpleNamespace(name="python")])]
+    message = events[-1].message
+    assert events[-1].reason == "toolUse"
+    assert message.content[0].text == "Running it."
+    assert message.content[1].arguments["code"] == "print(6 * 7)\n"
+    assert message.usage.total_tokens == 37
+    log = json.loads((tmp_path / "acp.json").read_text())
+    prompt = next(e for e in log if e.get("method") == "session/prompt")
+    assert "SYS" in prompt["params"]["prompt"][0]["text"] and "what is 6*7?" in prompt["params"]["prompt"][0]["text"]
+    assert {"method": "session/set_mode", "params": {"sessionId": "s1", "modeId": "plan"}} in log
+    permission = next(e["permission_reply"] for e in log if "permission_reply" in e)
+    assert permission["result"]["outcome"] == {"outcome": "selected", "optionId": "no"}
+    assert next(e["fs_reply"] for e in log if "fs_reply" in e)["error"]["code"] == -32601
+
+
+async def test_an_acp_agent_that_exits_is_an_error_not_a_hang(tmp_path, monkeypatch):
+    from rlmagent.model.external import ExternalAgentProvider
+
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "acp_agents.json").write_text(json.dumps({"dead": {
+        "command": sys.executable, "args": ["-c", "pass"]}}))
+    monkeypatch.setenv("RLM_AGENT_HOME", str(home))
+    events = [e async for e in ExternalAgentProvider().stream_response(
+        model="acp:dead", system="s", messages=[HumanEntry(content="hi")], tools=[])]
+    assert events[-1].type == "error" and "exited" in events[-1].error.error_message

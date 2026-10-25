@@ -1,10 +1,12 @@
-"""Claude Code and Codex as models, through their own non-interactive modes."""
+"""Coding agents as models: Claude Code and Codex through their own CLIs, others through ACP."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import shutil
+import subprocess
+import sys
 import tempfile
 import uuid
 from collections.abc import AsyncIterator, Sequence
@@ -25,22 +27,36 @@ from rlmagent.harness.provider.wire import (
     StreamFaultEvent,
     WireEvent,
 )
+from rlmagent.model.external import acp
+from rlmagent.model.external.acp import Cancelled as _Cancelled
 from rlmagent.model.external.textcalls import PROTOCOL, parse_reply, render
 
-PREFIX = "cli:"
+PREFIXES = ("cli:", "acp:")
 
 
-class _Cancelled(Exception):
-    pass
+def is_external(model: str | None) -> bool:
+    return bool(model) and model.startswith(PREFIXES)
 
 
-def parse_model(model: str) -> tuple[str, str | None]:
-    """`cli:codex?model=gpt-5.5` -> ("codex", "gpt-5.5")."""
-    name, _, query = model.removeprefix(PREFIX).partition("?")
+def parse_model(model: str) -> tuple[str, str, str | None]:
+    """`cli:codex?model=gpt-5.5` -> ("cli", "codex", "gpt-5.5")."""
+    route, _, rest = model.partition(":")
+    name, _, query = rest.partition("?")
     sub = dict(p.partition("=")[::2] for p in query.split("&") if p).get("model") or None
-    if name not in PRESETS:
-        raise ValueError(f"unknown agent {name!r} in {model!r}; known: {', '.join(PRESETS)}")
-    return name, sub
+    known = PRESETS if route == "cli" else acp.agents()
+    if name not in known:
+        raise ValueError(f"unknown agent {name!r} in {model!r}; known: {', '.join(known)}")
+    return route, name, sub
+
+
+def kill_tree(proc) -> None:
+    """Stop the process and anything it started (npx starts node, for one)."""
+    if proc.returncode is not None:
+        return
+    if sys.platform == "win32":
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
+    else:
+        proc.kill()
 
 
 def _exe(name: str) -> str:
@@ -132,8 +148,7 @@ async def _run(argv: list[str], stdin: str, cwd: Path, signal: CancelToken | Non
             await asyncio.wait({task}, timeout=0.2)
     finally:
         if not task.done():
-            if proc.returncode is None:
-                proc.kill()
+            kill_tree(proc)
             task.cancel()
             await proc.wait()
     out, err = task.result()
@@ -162,9 +177,9 @@ class ExternalAgentProvider:
     def stream_response(self, *, model: str, system: str, messages: Sequence[TranscriptEntry],
                         tools: Sequence[ToolSpec], signal: CancelToken | None = None,
                         cache_key: str | None = None) -> AsyncIterator[WireEvent]:
-        if not model.startswith(PREFIX):
+        if not is_external(model):
             if self.fallback is None:
-                raise ValueError(f"the cli provider needs a cli: model, got {model!r}")
+                raise ValueError(f"the cli provider needs a cli: or acp: model, got {model!r}")
             return self.fallback.stream_response(model=model, system=system, messages=messages,
                                                  tools=tools, signal=signal, cache_key=cache_key)
         return self._answer(model, system, messages, tools, signal)
@@ -172,12 +187,16 @@ class ExternalAgentProvider:
     async def _answer(self, model, system, messages, tools, signal) -> AsyncIterator[WireEvent]:
         coding = any(t.name == "python" for t in tools)
         try:
-            name, sub = parse_model(model)
-            build, parse = PRESETS[name]
+            route, name, sub = parse_model(model)
+            system = f"{system}\n\n{PROTOCOL}" if coding else system
             with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-                argv, stdin = build(sub, f"{system}\n\n{PROTOCOL}" if coding else system,
-                                    render(messages), Path(tmp))
-                text, usage = parse(await _run(argv, stdin, Path(tmp), signal))
+                if route == "acp":
+                    text, usage = await acp.answer(name, sub, f"{system}\n\n{render(messages)}",
+                                                   Path(tmp), signal)
+                else:
+                    build, parse = PRESETS[name]
+                    argv, stdin = build(sub, system, render(messages), Path(tmp))
+                    text, usage = parse(await _run(argv, stdin, Path(tmp), signal))
         except _Cancelled:
             yield _fault(model, "aborted", "cancelled")
             return
