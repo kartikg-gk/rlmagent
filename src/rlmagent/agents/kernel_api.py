@@ -50,9 +50,10 @@ async def _rlmagent_call(op, args):
 
 
 if _rlmagent_os.environ.get("RLM_AGENT_CAN_DELEGATE") == "1":
-    async def rlm(task, context=None, role=None):
+    async def rlm(task, context=None, role=None, model=None):
         """Hand `task` to a sub-agent; `context` arrives in its kernel as CONTEXT. Returns its FINAL value."""
-        return await _rlmagent_call("rlm", {"task": str(task), "context": context, "role": role})
+        return await _rlmagent_call("rlm", {"task": str(task), "context": context, "role": role,
+                                            "model": model})
 
     async def gather_rlm(jobs):
         """Run several sub-agents at once. `jobs` is a list of (task, context) pairs or tasks. Results keep order."""
@@ -90,10 +91,11 @@ class _SubAgent:
 
 
 if _rlmagent_os.environ.get("RLM_AGENT_CAN_DELEGATE") == "1":
-    async def spawn(task, data=None, keep=False, role=None):
+    async def spawn(task, data=None, keep=False, role=None, model=None):
         """Start a sub-agent and return at once. keep=True: it stays idle after FINAL, ready for send()."""
         return _SubAgent(await _rlmagent_call(
-            "spawn", {"task": str(task), "context": data, "keep": bool(keep), "role": role}))
+            "spawn", {"task": str(task), "context": data, "keep": bool(keep), "role": role,
+                      "model": model}))
 
     async def children():
         """Every sub-agent you started, in order."""

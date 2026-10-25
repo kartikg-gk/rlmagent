@@ -49,6 +49,8 @@ gather_rlm for independent pieces you need all of now.
 - spawn(task, data, keep=True) keeps the sub-agent after its FINAL, idle, so \
 h.send("next instruction") can give it more work; h.result() then returns its \
 newest FINAL.
+- rlm and spawn take model=, e.g. model="cli:codex" or "cli:claude-code?model=sonnet", \
+to run that sub-agent on another model; only when the user asks for one.
 - When you finish, sub-agents you started are stopped; collect what you need \
 first."""
 

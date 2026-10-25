@@ -242,6 +242,8 @@ def _resolve_model(override: str | None, provider_name: str = "anthropic") -> st
         return explicit
     if provider_name == "openai":
         return _DEFAULT_OPENAI_MODEL
+    if provider_name == "cli":
+        return "cli:claude-code"
     return _DEFAULT_ANTHROPIC_MODEL
 
 
