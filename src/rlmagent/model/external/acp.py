@@ -23,6 +23,7 @@ PRESETS: dict[str, dict] = {
     "codex": {
         "command": "npx", "args": ["-y", "@agentclientprotocol/codex-acp@2.2.2"],
         "readonly_mode": "read-only",
+        "approve": True,
     },
     "opencode": {
         "command": "opencode", "args": ["acp"], "readonly_mode": "plan",
@@ -54,8 +55,9 @@ class Cancelled(Exception):
 class _Connection:
     """JSON-RPC 2.0, one message per line, over the agent's stdin and stdout."""
 
-    def __init__(self, proc) -> None:
+    def __init__(self, proc, approve: bool = False) -> None:
         self.proc = proc
+        self.approve = approve
         self.ids = itertools.count(1)
         self.waiting: dict[int, asyncio.Future] = {}
         self.text: list[str] = []
@@ -113,8 +115,9 @@ class _Connection:
         if "id" not in message:
             return
         if method == "session/request_permission":
-            reject = [o for o in params.get("options", []) if o.get("kind", "").startswith("reject")]
-            outcome = ({"outcome": "selected", "optionId": reject[0]["optionId"]} if reject
+            wanted = "allow_once" if self.approve else "reject"
+            picks = [o for o in params.get("options", []) if o.get("kind", "").startswith(wanted)]
+            outcome = ({"outcome": "selected", "optionId": picks[0]["optionId"]} if picks
                        else {"outcome": "cancelled"})
             await self._send({"id": message["id"], "result": {"outcome": outcome}})
         else:
@@ -145,7 +148,7 @@ async def answer(name: str, sub: str | None, prompt: str, cwd: Path,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=errors,
             env={**os.environ, **(spec.get("env") or {})},
         )
-    conn = _Connection(proc)
+    conn = _Connection(proc, approve=bool(spec.get("approve")))
     pump = asyncio.create_task(conn.pump())
     try:
         await asyncio.wait_for(conn.request("initialize", {

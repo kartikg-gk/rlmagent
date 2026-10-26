@@ -199,6 +199,24 @@ async def test_an_acp_agent_answers_through_the_protocol(tmp_path, monkeypatch):
     assert next(e["fs_reply"] for e in log if "fs_reply" in e)["error"]["code"] == -32601
 
 
+async def test_an_agent_marked_approve_gets_its_permission_requests_allowed(tmp_path, monkeypatch):
+    from rlmagent.model.external import ExternalAgentProvider
+
+    script = tmp_path / "fake_acp.py"
+    script.write_text(FAKE_ACP)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "acp_agents.json").write_text(json.dumps({"fake": {
+        "command": sys.executable, "args": [str(script)], "approve": True}}))
+    monkeypatch.setenv("RLM_AGENT_HOME", str(home))
+    monkeypatch.setenv("FAKE_ACP_LOG", str(tmp_path / "acp.json"))
+    [e async for e in ExternalAgentProvider().stream_response(
+        model="acp:fake", system="s", messages=[HumanEntry(content="hi")], tools=[])]
+    log = json.loads((tmp_path / "acp.json").read_text())
+    permission = next(e["permission_reply"] for e in log if "permission_reply" in e)
+    assert permission["result"]["outcome"] == {"outcome": "selected", "optionId": "yes"}
+
+
 async def test_an_acp_agent_that_exits_is_an_error_not_a_hang(tmp_path, monkeypatch):
     from rlmagent.model.external import ExternalAgentProvider
 
