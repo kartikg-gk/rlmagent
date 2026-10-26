@@ -17,11 +17,11 @@ _DENY_CLAUDE = ["Bash(*)", "Read(*)", "Write(*)", "Edit(*)", "Glob(*)", "Grep(*)
 
 PRESETS: dict[str, dict] = {
     "claude-code": {
-        "command": "npx", "args": ["-y", "@agentclientprotocol/claude-agent-acp@0.89.1"],
+        "command": "npx", "bridge": "claude-code",
         "files": {".claude/settings.json": {"permissions": {"deny": _DENY_CLAUDE}}},
     },
     "codex": {
-        "command": "npx", "args": ["-y", "@agentclientprotocol/codex-acp@2.2.2"],
+        "command": "npx", "bridge": "codex",
         "readonly_mode": "read-only",
         "approve": True,
     },
@@ -101,7 +101,10 @@ class _Connection:
             future = self.waiting.pop(message.get("id"), None)
             if future is not None and not future.done():
                 if "error" in message:
-                    future.set_exception(ValueError(message["error"].get("message", "agent error")))
+                    error = message["error"]
+                    detail = (error.get("data") or {}).get("message") if isinstance(error.get("data"), dict) else None
+                    text = error.get("message", "agent error") + (f": {detail}" if detail else "")
+                    future.set_exception(ValueError(text[:500]))
                 else:
                     future.set_result(message.get("result") or {})
             return
@@ -125,13 +128,6 @@ class _Connection:
                               "error": {"code": -32601, "message": f"{method} is not offered"}})
 
 
-def _usage(result: dict) -> UsageStats:
-    u = result.get("usage") or {}
-    kw = {"input": u.get("inputTokens", 0), "output": u.get("outputTokens", 0),
-          "cache_read": u.get("cachedReadTokens", 0), "cache_write": u.get("cachedWriteTokens", 0)}
-    return UsageStats(total_tokens=u.get("totalTokens") or sum(kw.values()), **kw)
-
-
 async def answer(name: str, sub: str | None, prompt: str, cwd: Path,
                  signal: CancelToken | None) -> tuple[str, UsageStats]:
     spec = agents()[name]
@@ -139,12 +135,17 @@ async def answer(name: str, sub: str | None, prompt: str, cwd: Path,
         target = cwd / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(content), encoding="utf-8")
+    args = list(spec.get("args", []))
+    if spec.get("bridge"):
+        from rlmagent.model.external.acp_install import bridge_spec
+
+        args = ["-y", bridge_spec(spec["bridge"]), *args]
     exe = shutil.which(spec["command"])
     if exe is None:
         raise ValueError(f"{spec['command']} not found on PATH")
     with open(cwd / "agent-stderr.log", "wb") as errors:
         proc = await asyncio.create_subprocess_exec(
-            exe, *spec.get("args", []), cwd=str(cwd), limit=2**24,
+            exe, *args, cwd=str(cwd), limit=2**24,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=errors,
             env={**os.environ, **(spec.get("env") or {})},
         )
@@ -182,4 +183,5 @@ async def answer(name: str, sub: str | None, prompt: str, cwd: Path,
         pump.cancel()
     if result.get("stopReason") == "refusal":
         raise ValueError(f"{name} refused")
-    return "".join(conn.text), _usage(result)
+    # Agents report no usage over the protocol, so accounting is zero; --max-calls is the budget.
+    return "".join(conn.text), UsageStats()

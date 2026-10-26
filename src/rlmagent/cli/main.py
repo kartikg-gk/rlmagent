@@ -46,7 +46,7 @@ _PACKAGE = "rlmagent"
 _DEFAULT_ANTHROPIC_MODEL = "claude-opus-5"
 _DEFAULT_OPENAI_MODEL = "gpt-5"
 _DEFAULT_SYSTEM = "You are a helpful coding assistant."
-_SUBCOMMANDS = frozenset({"config", "provider", "session", "tui"})
+_SUBCOMMANDS = frozenset({"acp", "config", "provider", "session", "tui"})
 
 
 # ---------------------------------------------------------------------------
@@ -149,8 +149,8 @@ def _build_run_parser() -> argparse.ArgumentParser:
     budget = p.add_argument_group("limits for the whole tree of agents")
     budget.add_argument("--max-depth", type=int, default=2,
                         help="How many levels of sub-agents may be started (default 2).")
-    budget.add_argument("--max-calls", type=int, default=200,
-                        help="Model calls allowed across all agents (default 200).")
+    budget.add_argument("--max-calls", type=int, default=None,
+                        help="Model calls allowed across all agents (default 200; 50 for acp: models).")
     budget.add_argument("--max-cost", type=float, default=2.0,
                         help="Spend allowed across all agents, in dollars (default 2.0).")
     budget.add_argument("--max-agents", type=int, default=50,
@@ -789,6 +789,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Subcommand dispatch (checked before argparse to avoid positional conflicts)
     if args and args[0] in _SUBCOMMANDS:
         cmd, rest = args[0], args[1:]
+        if cmd == "acp":
+            from rlmagent.model.external.acp_install import main as acp_main
+            return acp_main(rest)
         if cmd == "config":
             from rlmagent.cli.config_cmd import handle_config
             return handle_config(rest)

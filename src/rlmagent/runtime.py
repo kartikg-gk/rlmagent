@@ -145,7 +145,7 @@ def make_agent_tree(ns, provider, provider_name, model, sessions_dir, *, cwd):
 
     allowance = Allowance(
         max_depth=getattr(ns, "max_depth", 2),
-        max_calls=getattr(ns, "max_calls", 200),
+        max_calls=getattr(ns, "max_calls", None) or (50 if str(model).startswith("acp:") else 200),
         max_cost=getattr(ns, "max_cost", 2.0),
         max_live=getattr(ns, "max_live", 8),
         max_seconds=getattr(ns, "max_seconds", None),

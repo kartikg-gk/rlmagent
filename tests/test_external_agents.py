@@ -189,7 +189,7 @@ async def test_an_acp_agent_answers_through_the_protocol(tmp_path, monkeypatch):
     assert events[-1].reason == "toolUse"
     assert message.content[0].text == "Running it."
     assert message.content[1].arguments["code"] == "print(6 * 7)\n"
-    assert message.usage.total_tokens == 37
+    assert message.usage.total_tokens == 0          # no usage over ACP; --max-calls is the budget
     log = json.loads((tmp_path / "acp.json").read_text())
     prompt = next(e for e in log if e.get("method") == "session/prompt")
     assert "SYS" in prompt["params"]["prompt"][0]["text"] and "what is 6*7?" in prompt["params"]["prompt"][0]["text"]
@@ -228,3 +228,44 @@ async def test_an_acp_agent_that_exits_is_an_error_not_a_hang(tmp_path, monkeypa
     events = [e async for e in ExternalAgentProvider().stream_response(
         model="acp:dead", system="s", messages=[HumanEntry(content="hi")], tools=[])]
     assert events[-1].type == "error" and "exited" in events[-1].error.error_message
+
+
+def test_a_bridge_preset_needs_acp_install_first(tmp_path, monkeypatch):
+    from rlmagent.model.external.acp_install import bridge_spec, marker_path
+
+    monkeypatch.setenv("RLM_AGENT_HOME", str(tmp_path))
+    with pytest.raises(ValueError, match="rlm-agent acp install"):
+        bridge_spec("codex")
+    marker_path().write_text(json.dumps({"marker_version": 1, "bridges": {"codex": "2.2.2"},
+                                         "bridge_packages": {"codex": "@acme/codex-bridge"}}))
+    assert bridge_spec("codex") == "@acme/codex-bridge@2.2.2"
+    assert bridge_spec("claude-code") == "@agentclientprotocol/claude-agent-acp"
+
+
+def test_install_keeps_recorded_versions_unless_asked_to_update(tmp_path, monkeypatch):
+    from rlmagent.model.external import acp_install
+
+    monkeypatch.setenv("RLM_AGENT_HOME", str(tmp_path))
+    calls = []
+
+    def fake_npm(*args):
+        calls.append(args)
+        return "9.9.9" if args[0] == "view" else "ok"
+    monkeypatch.setattr(acp_install, "_npm", fake_npm)
+    assert acp_install.install()["bridges"] == {"claude-code": "9.9.9", "codex": "9.9.9"}
+    marker = json.loads(acp_install.marker_path().read_text())
+    marker["bridges"]["codex"] = "1.0.0"
+    acp_install.marker_path().write_text(json.dumps(marker))
+    assert acp_install.install()["bridges"]["codex"] == "1.0.0"
+    assert acp_install.install(update=True)["bridges"]["codex"] == "9.9.9"
+    assert ("cache", "add", "@agentclientprotocol/codex-acp@9.9.9") in calls
+
+
+def test_acp_runs_default_to_fifty_calls():
+    from rlmagent.cli.main import _build_run_parser
+
+    ns = _build_run_parser().parse_args([])
+    assert ns.max_calls is None
+    import inspect
+    from rlmagent import runtime
+    assert '50 if str(model).startswith("acp:")' in inspect.getsource(runtime.make_agent_tree)
