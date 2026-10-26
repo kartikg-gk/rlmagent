@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import argparse
 from contextlib import suppress
 from pathlib import Path
@@ -95,6 +97,19 @@ class RlmAgentApp(App[None]):
         self._refresh_status()
         if self._bridge is not None:
             self.query_one(TranscriptView).replay(self._bridge.session.transcript)
+            tree = getattr(self._bridge.session, "agent_tree", None)
+            if tree is not None and tree.approver.policy == "ask":
+                tree.approver.ask = self._ask_approval
+
+    async def _ask_approval(self, request) -> str:
+        """Show what the sandbox wants to change and wait for the answer."""
+        from rlmagent.agents.approval import DENY
+        from rlmagent.tui.approval_screen import ApprovalScreen
+
+        answer = asyncio.get_running_loop().create_future()
+        self.push_screen(ApprovalScreen(request),
+                         lambda choice: answer.done() or answer.set_result(choice or DENY))
+        return await answer
 
     # -- user actions -------------------------------------------------------
 

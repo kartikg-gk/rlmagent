@@ -15,7 +15,11 @@ from rlmagent.agents.budget import BudgetedProvider
 from rlmagent.agents.trace import TracedProvider, Tracer
 from rlmagent.agents.bridge import BridgeServer, kernel_env
 from rlmagent.agents.kernel_api import KERNEL_API
+from rlmagent.agents.approval import Approver
+from rlmagent.agents.wasm_api import wasm_api
+from rlmagent.agents.workspace import Workspace
 from rlmagent.kernel import KernelSession
+from rlmagent.kernel.wasm import WasmKernel
 from rlmagent.tools import build_tool_registry
 from rlmagent.model.external import is_external, parse_model, with_external
 from rlmagent.harness.contracts.tooling import ToolSpec
@@ -78,7 +82,11 @@ class AgentTree:
         cell_timeout: float = 300.0,
         max_agents: int = 50,
         tracer: Tracer | None = None,
+        kernel: str = "local",
+        approver: Approver | None = None,
     ) -> None:
+        self.kernel_kind = kernel
+        self.approver = approver or Approver("deny")
         self.provider = BudgetedProvider(with_external(provider), allowance)
         self.provider_name = provider_name
         self.model = model
@@ -131,6 +139,8 @@ class AgentTree:
         return node.depth < self.allowance.max_depth
 
     def _kernel_for(self, node: AgentNode) -> KernelSession:
+        if self.kernel_kind == "wasm":
+            return self._sandbox_for(node)
         if not self._bridge.port:
             raise RuntimeError("start() the agent tree before creating kernels")
         env = kernel_env(
@@ -142,6 +152,23 @@ class AgentTree:
         )
         kernel = KernelSession(
             cwd=self.cwd, env=env, startup_code=KERNEL_API, timeout=self.cell_timeout
+        )
+        self.kernels[node.id] = kernel
+        return kernel
+
+    def _sandbox_for(self, node: AgentNode) -> WasmKernel:
+        workspace = Workspace(self.cwd, self.approver)
+
+        async def call(op, args):
+            return await self._handle(node.id, op, args)
+
+        async def final(value):
+            await self._handle(node.id, "final", {"value": value, "note": ""})
+
+        kernel = WasmKernel(
+            cwd=self.cwd, bridges={"_rlmagent": call, **workspace.functions()},
+            startup_code=wasm_api(self._can_delegate(node), node.parent_id is not None),
+            timeout=self.cell_timeout, on_final=final,
         )
         self.kernels[node.id] = kernel
         return kernel
@@ -403,7 +430,8 @@ class AgentTree:
             for child_id in self._kids.get(node.id, []):
                 await self._cancel(self.records[child_id])
             if kernel is not None:
-                self._bridge.revoke(kernel.env["RLM_AGENT_BRIDGE_TOKEN"])
+                if "RLM_AGENT_BRIDGE_TOKEN" in kernel.env:
+                    self._bridge.revoke(kernel.env["RLM_AGENT_BRIDGE_TOKEN"])
                 await kernel.shutdown()
 
     async def _round(self, session, node: AgentNode, message: str) -> object:

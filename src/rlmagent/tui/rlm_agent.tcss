@@ -238,3 +238,18 @@ ModelScreen {
     padding: 0 0 1 0;
     color: #5a5a5a;
 }
+
+#approval-dialog {
+    width: 80;
+    height: auto;
+    max-height: 30;
+    padding: 1 2;
+    background: #0a0a0a;
+    border: solid #333333;
+}
+
+#approval-body {
+    max-height: 18;
+    overflow-y: auto;
+    margin: 1 0;
+}
