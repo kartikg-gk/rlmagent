@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -32,6 +33,17 @@ from rlmagent.model.external.acp import Cancelled as _Cancelled
 from rlmagent.model.external.textcalls import PROTOCOL, parse_reply, render
 
 PREFIXES = ("cli:", "acp:")
+
+# Some models answer in their own tool-call markup instead of a python block.
+FAKE_CALL = re.compile(r"<(function_calls|invoke|parameter|tool_use|tool_call)\b")
+CORRECTION = ("That tool-call markup does nothing here and nothing ran. To run code, reply "
+              "with one ```python block.")
+
+
+def _add(a: UsageStats, b: UsageStats) -> UsageStats:
+    fields = ("total_tokens", "input", "output", "cache_read", "cache_write")
+    return UsageStats(**{f: getattr(a, f) + getattr(b, f) for f in fields},
+                      cost=CostBreakdown(total=a.cost.total + b.cost.total))
 
 
 def is_external(model: str | None) -> bool:
@@ -184,19 +196,25 @@ class ExternalAgentProvider:
                                                  tools=tools, signal=signal, cache_key=cache_key)
         return self._answer(model, system, messages, tools, signal)
 
+    async def _ask(self, route, name, sub, system, conversation, signal) -> tuple[str, UsageStats]:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            if route == "acp":
+                return await acp.answer(name, sub, f"{system}\n\n{conversation}", Path(tmp), signal)
+            build, parse = PRESETS[name]
+            argv, stdin = build(sub, system, conversation, Path(tmp))
+            return parse(await _run(argv, stdin, Path(tmp), signal))
+
     async def _answer(self, model, system, messages, tools, signal) -> AsyncIterator[WireEvent]:
         coding = any(t.name == "python" for t in tools)
         try:
             route, name, sub = parse_model(model)
             system = f"{system}\n\n{PROTOCOL}" if coding else system
-            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-                if route == "acp":
-                    text, usage = await acp.answer(name, sub, f"{system}\n\n{render(messages)}",
-                                                   Path(tmp), signal)
-                else:
-                    build, parse = PRESETS[name]
-                    argv, stdin = build(sub, system, render(messages), Path(tmp))
-                    text, usage = parse(await _run(argv, stdin, Path(tmp), signal))
+            conversation = render(messages)
+            text, usage = await self._ask(route, name, sub, system, conversation, signal)
+            if coding and parse_reply(text)[1] is None and FAKE_CALL.search(text):
+                conversation += f"\n\n[assistant]\n{text}\n\n[user]\n{CORRECTION}"
+                text, more = await self._ask(route, name, sub, system, conversation, signal)
+                usage = _add(usage, more)
         except _Cancelled:
             yield _fault(model, "aborted", "cancelled")
             return

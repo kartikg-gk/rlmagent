@@ -1,0 +1,2 @@
+Read orders.csv and write totals.json: an object mapping each customer to the sum of their paid
+orders, rounded to 2 decimals, keys sorted. Ignore refunded and cancelled orders.

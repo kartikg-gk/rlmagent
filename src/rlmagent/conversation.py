@@ -98,7 +98,7 @@ COMMAND_REGISTRY = build_default_registry()
 _RUNNABLE_COMMANDS: frozenset[str] = frozenset({
     "branch", "branches", "compact", "continue", "create-skill", "diag",
     "export", "help", "model", "name", "plan", "provider", "quit", "reload",
-    "rewind", "session", "shell", "skills", "stats", "system", "think", "version",
+    "rewind", "session", "shell", "skills", "stats", "system", "think", "undo", "version",
 })
 
 _RUNNABLE_COMMAND_TABLE: tuple[tuple[str, str], ...] = tuple(
@@ -446,6 +446,8 @@ class CodingSession:
         )
         self._extensions: list[object] = []
         self._named = title is not None
+        self.shadow = None
+        self._undo_stack: list[tuple[str, str | None, list]] = []
         self._renamed_manually = False
         self._tools_loader = tools_loader
         self._skills_loader = skills_loader
@@ -630,7 +632,46 @@ class CodingSession:
         # Skills are checked first: their `skill:` prefix cannot collide with a
         # template name, so the cheaper, unambiguous match goes ahead.
         prompt = self.expand_skill(text) or self.expand_template(text) or text
-        return self._run_wrapped(self._harness.submit(prompt))
+        return self._turn(text, prompt)
+
+    async def _turn(self, text: str, prompt: str) -> AsyncIterator[AgentEvent]:
+        prompt += await self._before_turn(text)
+        async for event in self._run_wrapped(self._harness.submit(prompt)):
+            yield event
+
+    async def _before_turn(self, text: str) -> str:
+        """Snapshot the workspace for /undo; preload the files and links the prompt names."""
+        if self.shadow is not None and self.shadow.available:
+            try:
+                commit = await asyncio.to_thread(self.shadow.snapshot, f"before: {text[:80]}")
+                self._undo_stack.append((commit, self._tip_id, list(self._harness.transcript)))
+            except (RuntimeError, OSError, subprocess.TimeoutExpired):
+                pass
+        tree = getattr(self, "agent_tree", None)
+        if tree is None or not self.cwd:
+            return ""
+        from rlmagent.prompt_refs import note, references
+
+        refs = references(text, self.cwd)
+        if not refs["files"] and not refs["links"]:
+            return ""
+        literal = json.dumps(json.dumps(refs))
+        await tree.root_kernel().run(f"import json as _j\nPROMPT = _j.loads({literal})\ndel _j")
+        return note(refs)
+
+    async def _cmd_undo(self, _arg: str) -> str:
+        if not self._undo_stack:
+            ready = self.shadow is not None and self.shadow.available
+            return "Nothing to undo." if ready else "Undo needs git on PATH."
+        commit, tip, transcript = self._undo_stack.pop()
+        changed = await asyncio.to_thread(self.shadow.restore, commit)
+        if tip is not None and self._vault is not None:
+            await self.rewind(tip)
+        else:
+            self._harness.set_messages(transcript)
+        files = ", ".join(changed[:10]) + (" ..." if len(changed) > 10 else "")
+        return (f"Undid the last turn. Files restored: {files or 'none changed'}. "
+                "Kernel variables are not rolled back.")
 
     def set_provisional_title(self, text: str) -> None:
         """Derive a placeholder title from *text* and publish it immediately."""
@@ -958,6 +999,7 @@ class CodingSession:
             "plan": self._cmd_plan,
             "compact": self._cmd_compact,
             "improve": self._cmd_improve,
+            "undo": self._cmd_undo,
             "stats": self._cmd_stats,
             "name": self._cmd_name,
             "export": self._cmd_export,

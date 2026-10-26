@@ -269,3 +269,16 @@ def test_acp_runs_default_to_fifty_calls():
     import inspect
     from rlmagent import runtime
     assert '50 if str(model).startswith("acp:")' in inspect.getsource(runtime.make_agent_tree)
+
+
+async def test_fake_tool_call_markup_gets_one_correction(tmp_path, fake_agents):
+    calls = fake_agents('<invoke name="bash"><parameter name="command">ls</parameter></invoke>',
+                        "Running.\n```python\nprint(1)\n```")
+    from types import SimpleNamespace
+
+    events = [e async for e in ExternalAgentProvider().stream_response(
+        model="cli:claude-code", system="s", messages=[HumanEntry(content="list files")],
+        tools=[SimpleNamespace(name="python")])]
+    made = calls()
+    assert len(made) == 2 and "does nothing here" in made[1]["stdin"]
+    assert events[-1].reason == "toolUse" and events[-1].message.usage.cost.total == pytest.approx(0.002)

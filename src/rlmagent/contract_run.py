@@ -63,6 +63,9 @@ async def build_contract_session(c: Contract, *, provider=None):
     sessions_dir = None
     if c.sessions.save:
         sessions_dir = Path(c.sessions.dir or Path(workdir) / ".rlm-agent" / "sessions")
+    from rlmagent.tools._shared import set_workspace
+
+    set_workspace(workdir)
     tree = AgentTree(
         provider=provider, provider_name=c.model.provider, model=c.model.name, cwd=workdir,
         allowance=allowance, sessions_dir=sessions_dir, system_for=system_for,

@@ -148,6 +148,15 @@ def text_outcome(text: str) -> ToolOutcome:
 # ---------------------------------------------------------------------------
 
 
+_workspace: Path | None = None
+
+
+def set_workspace(root: str | Path | None) -> None:
+    """Confine the file tools to `root` (None: no confinement)."""
+    global _workspace
+    _workspace = Path(root).resolve() if root is not None else None
+
+
 def validate_file_path(raw: str) -> Path:
     """Validate and resolve a file path. Raises ValueError on issues."""
     if not raw.strip():
@@ -157,6 +166,10 @@ def validate_file_path(raw: str) -> Path:
         raise ValueError(
             f"File path must be absolute, got relative path: {raw}"
         )
+    if _workspace is not None:
+        real = path.resolve()  # follows symlinks, so a link out of the workspace is caught
+        if real != _workspace and _workspace not in real.parents:
+            raise ValueError(f"{raw} is outside the workspace {_workspace}")
     return path
 
 
@@ -187,5 +200,6 @@ __all__ = [
     "require_str",
     "text_outcome",
     "truncate_output",
+    "set_workspace",
     "validate_file_path",
 ]

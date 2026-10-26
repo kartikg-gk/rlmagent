@@ -1,0 +1,7 @@
+order_id,customer,amount,status
+1,ana,19.50,paid
+2,ben,5.00,refunded
+3,ana,30.25,paid
+4,cleo,12.00,paid
+5,ben,8.75,paid
+6,cleo,3.00,cancelled

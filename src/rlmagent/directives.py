@@ -370,6 +370,11 @@ def _cmd_improve(ctx: CommandContext) -> CommandResult:
     return _ok()
 
 
+def _cmd_undo(ctx: CommandContext) -> CommandResult:
+    """Handled by the session."""
+    return _ok()
+
+
 def _cmd_compact(ctx: CommandContext) -> CommandResult:
     """Request context compaction."""
     return _ok(compact_requested=True)
@@ -582,6 +587,13 @@ def build_default_registry() -> CommandRegistry:
             handler=_cmd_plan,
             usage="/plan [on|off]",
             search_terms=("planning", "readonly", "research", "propose"),
+        ),
+        SlashCommand(
+            name="undo",
+            description="Undo the last turn: its file changes and its messages",
+            handler=_cmd_undo,
+            usage="/undo",
+            search_terms=("revert", "restore", "rollback"),
         ),
         SlashCommand(
             name="improve",
