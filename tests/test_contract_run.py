@@ -109,3 +109,38 @@ def test_cli_contract_needs_a_prompt(tmp_path, capsys, monkeypatch):
     path.write_text(json.dumps(VALID))
     assert main(["--contract", str(path)]) == 2
     assert "needs a prompt" in capsys.readouterr().err
+
+
+def test_the_kernel_section_is_optional_and_strict(tmp_path):
+    import pytest
+    from rlmagent.contract import ContractError
+
+    assert _contract(tmp_path).kernel.kind == "local"
+    assert _contract(tmp_path).kernel.approve == "deny"
+    c = _contract(tmp_path, kernel={"kind": "wasm", "approve": "auto"}, tools=["python", "Read"])
+    assert (c.kernel.kind, c.kernel.approve) == ("wasm", "auto")
+    for bad, named in [({"kind": "docker", "approve": "deny"}, "kernel.kind"),
+                       ({"kind": "wasm", "approve": "ask"}, "kernel.approve"),
+                       ({"kind": "wasm"}, "kernel.approve"),
+                       ({"kind": "wasm", "approve": "deny", "x": 1}, "kernel.x")]:
+        with pytest.raises(ContractError, match=named):
+            _contract(tmp_path, kernel=bad)
+    with pytest.raises(ContractError, match="Write and Edit"):
+        _contract(tmp_path, kernel={"kind": "wasm", "approve": "deny"})
+
+
+async def test_a_wasm_contract_runs_sandboxed(tmp_path, monkeypatch):
+    import pytest
+    from rlmagent.kernel.wasm import WasmKernel, available
+
+    if not available():
+        pytest.skip("sandbox not set up")
+    session = await _session(tmp_path, monkeypatch, tools=["python", "Read"],
+                             kernel={"kind": "wasm", "approve": "deny"})
+    try:
+        tree = session.agent_tree
+        assert isinstance(tree.root_kernel(), WasmKernel) and tree.approver.policy == "deny"
+        assert "read_file" in session.harness.settings.system
+        assert json.loads(json.dumps(tree.kernel_kind)) == "wasm"
+    finally:
+        await session.shutdown()

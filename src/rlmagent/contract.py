@@ -61,6 +61,12 @@ class Trace:
 
 
 @dataclass(frozen=True)
+class KernelSpec:
+    kind: str = "local"
+    approve: str = "deny"
+
+
+@dataclass(frozen=True)
 class Contract:
     model: ModelSpec
     limits: Limits
@@ -70,6 +76,7 @@ class Contract:
     sessions: Sessions
     trace: Trace
     raw: dict
+    kernel: KernelSpec = KernelSpec()
 
     def api_key(self) -> str:
         if self.model.provider in _KEYLESS and self.model.api_key_env is None:
@@ -120,6 +127,17 @@ N = type(None)
 
 
 def parse_contract(doc: object) -> Contract:
+    original = doc
+    kernel = KernelSpec()
+    if isinstance(doc, dict) and "kernel" in doc:
+        # Optional, so contracts written before it still run the same way.
+        k = _fields(doc["kernel"], "kernel", {"kind": (str,), "approve": (str,)})
+        if k["kind"] not in ("wasm", "local"):
+            raise ContractError(f"kernel.kind: {k['kind']!r} is not 'wasm' or 'local'")
+        if k["approve"] not in ("deny", "auto"):
+            raise ContractError(f"kernel.approve: {k['approve']!r} is not 'deny' or 'auto'")
+        kernel = KernelSpec(**k)
+        doc = {key: value for key, value in doc.items() if key != "kernel"}
     top = _fields(doc, "", {
         "format": (str,), "model": (dict,), "limits": (dict,), "prompt": (dict,),
         "tools": (list,), "workdir": (str,), "sessions": (dict,), "trace": (dict,),
@@ -145,6 +163,9 @@ def parse_contract(doc: object) -> Contract:
     bad = [t for t in tools if t not in BUILTIN_TOOLS]
     if bad or len(set(tools)) != len(tools):
         raise ContractError(f"tools: each must be one of {list(BUILTIN_TOOLS)}, once")
+    if kernel.kind == "wasm" and {"Write", "Edit"} & set(tools):
+        raise ContractError("tools: Write and Edit are not offered with kernel.kind 'wasm'; "
+                            "the sandbox changes files through write_file and edit_file")
     ses = _fields(top["sessions"], "sessions", {"save": (bool,), "dir": (str, N)})
     tr = _fields(top["trace"], "trace", {"file": (str,)})
     return Contract(
@@ -156,7 +177,8 @@ def parse_contract(doc: object) -> Contract:
         workdir=top["workdir"],
         sessions=Sessions(**ses),
         trace=Trace(**tr),
-        raw=doc,
+        raw=original,
+        kernel=kernel,
     )
 
 
