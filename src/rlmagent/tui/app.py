@@ -104,7 +104,7 @@ class RlmAgentApp(App[None]):
                 tree.approver.ask = self._ask_approval
 
     def action_toggle_auto(self) -> None:
-        """Shift+Tab: writes and commands run without asking, for this session only."""
+        """Shift+Tab: stop or resume asking before file changes and commands, this session only."""
         tree = getattr(self._bridge.session, "agent_tree", None) if self._bridge else None
         if tree is None:
             return
@@ -115,7 +115,7 @@ class RlmAgentApp(App[None]):
             self.screen.action_auto()
             return
         on = tree.approver.toggle_auto()
-        self.notify("auto-accept on: writes and commands run without asking" if on
+        self.notify("auto-accept on: file changes and commands go ahead unasked" if on
                     else "auto-accept off")
 
     async def _ask_approval(self, request) -> str:

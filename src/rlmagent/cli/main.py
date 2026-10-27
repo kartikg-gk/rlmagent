@@ -649,7 +649,7 @@ async def _run_interactive(session: CodingSession) -> int:
             continue
         if text == "/auto" and tree is not None:
             on = tree.approver.toggle_auto()
-            _info("auto-accept on: writes and commands run without asking" if on
+            _info("auto-accept on: file changes and commands go ahead unasked" if on
                   else "auto-accept off: writes and commands ask first")
             continue
 
