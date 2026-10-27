@@ -189,3 +189,24 @@ def test_the_guide_says_whether_the_sandbox_is_online():
 
     assert "micropip" in kernel_guide(True, True) and "no network" in kernel_guide(True, False)
     assert "read_file" not in kernel_guide(False)
+
+
+@needs_wasm
+async def test_a_runaway_cell_restarts_the_host_and_the_others_recover(tmp_path):
+    from rlmagent.kernel.wasm import WasmKernel
+
+    stuck = WasmKernel(cwd=str(tmp_path), bridges={}, timeout=3)
+    other = WasmKernel(cwd=str(tmp_path), bridges={}, timeout=30)
+    try:
+        await other.run("x = 1")
+        out = await stuck.run("while True:\n    pass")
+        assert out.timed_out and "every agent's sandbox was restarted" in out.output
+        lost = await other.run("print(x)")
+        assert lost.restarted and "replaced" in lost.output
+        fresh = await other.run("print(1 + 1)")
+        assert fresh.output.strip() == "2", fresh
+        again = await stuck.run("print('alive')")
+        assert again.output.strip() == "alive"
+    finally:
+        await stuck.shutdown()
+        await other.shutdown()
