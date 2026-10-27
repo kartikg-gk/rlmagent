@@ -653,6 +653,8 @@ class CodingSession:
         from rlmagent.prompt_refs import note, references
 
         refs = references(text, self.cwd)
+        # What the root works from; the delegation guard compares sub-agent contexts to it.
+        tree.nodes[tree.root_id()].context = refs if refs["files"] else text
         if not refs["files"] and not refs["links"]:
             return ""
         literal = json.dumps(json.dumps(refs))

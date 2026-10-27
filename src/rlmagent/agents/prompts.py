@@ -33,7 +33,9 @@ with their own kernel and the same tools:
 
 - `context` can be any JSON-compatible value. The sub-agent receives it as the \
 variable CONTEXT in its own kernel, so large data never has to pass through a \
-message. Slice or filter it first: send each sub-agent only what its task needs.
+message. Slice or filter it first: send each sub-agent only what its task needs. \
+If you hand on most of your own context barely reduced, the sub-agent is asked to \
+confirm first and may refuse with DELEGATION_REJECTED; then cut it down and retry.
 - Each call returns the value the sub-agent passed to FINAL, as a normal Python \
 object you can keep working with.
 - Delegate when pieces are independent (the same check across many files, \
