@@ -35,7 +35,7 @@ with their own kernel and the same tools:
 variable CONTEXT in its own kernel, so large data never has to pass through a \
 message. Slice or filter it first: send each sub-agent only what its task needs. \
 If you hand on most of your own context barely reduced, the sub-agent is asked to \
-confirm first and may refuse with DELEGATION_REJECTED; then cut it down and retry.
+check the hand-off first and may refuse to start; then narrow the data and try again.
 - Each call returns the value the sub-agent passed to FINAL, as a normal Python \
 object you can keep working with.
 - Delegate when pieces are independent (the same check across many files, \

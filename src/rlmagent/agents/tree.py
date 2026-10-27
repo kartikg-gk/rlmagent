@@ -74,27 +74,27 @@ GUARD_MIN_CHARS = 5000
 GUARD_RATIO = 0.6
 
 CONFIRM = (
-    "STOP: confirm before doing this task. You were handed a context of {child:,} characters, "
-    "{pct}% of the delegating agent's own context ({parent:,} characters), so it was passed on "
-    "with little or no cutting down. Sub-agents work best when the caller slices, filters or "
-    "summarises in its own kernel first and delegates only the reduced part.\n"
-    "Reply on the FIRST line with exactly YES (this delegation is right, e.g. one map step over "
-    "one chunk) or NO (the caller should cut it down first). If NO, give a one-line reason, then "
-    "a ```python block the caller can run in its own kernel to cut the context down (slicing, "
-    "searching, chunking) before delegating. Do not suggest re-sending the full context.")
+    "Before starting, check this hand-off. Your CONTEXT holds {child:,} characters; the agent "
+    "that started you holds {parent:,}, so you got {pct}% of it. Handing on nearly everything "
+    "usually means the work of narrowing it down was skipped.\n"
+    "Answer with YES or NO as the very first word. YES: this hand-off makes sense as it is "
+    "(for example, the same step applied to one piece). NO: the starting agent should narrow "
+    "the data before handing it on. After a NO, say why in one sentence and add a short "
+    "```python cell that agent could run on its own data to narrow it (pick the relevant part, "
+    "search, split) for this task.")
 CONFIRM_BATCH = (
-    "STOP: confirm before this parallel batch of {n} sub-agents runs. Your context is "
-    "{parent:,} characters. The sub-agents would receive:\n{lines}\n{flagged} of them get a "
-    "large, barely reduced slice of it. Sub-agents work best when you slice, filter or summarise "
-    "in your own kernel first and delegate only the reduced part.\n"
-    "Approve the WHOLE batch? Reply YES or NO on the first line, then a one-line reason.")
+    "Before these {n} sub-agents start together, check the hand-off. Your data holds "
+    "{parent:,} characters, and each would get:\n{lines}\nFor {flagged} of them that is most of "
+    "your data, barely narrowed.\n"
+    "Answer with YES or NO as the very first word (YES lets all of them start), then one "
+    "sentence on why.")
 REJECTED = (
-    "DELEGATION_REJECTED: declined as barely reduced ({pct}% of your context). Cut the context "
-    "down in your own kernel (slice, filter, summarise into a smaller variable), then delegate "
-    "only that. Do not re-send the full context. The reviewer suggests:\n{reason}")
+    "Sub-agent not started: it would have received {pct}% of your data, barely narrowed. "
+    "Narrow it in your own kernel and hand on only the part the task needs. "
+    "The check said:\n{reason}")
 BATCH_REJECTED = (
-    "BATCH_DELEGATION_REJECTED: this gather_rlm batch was declined as barely reduced. Cut each "
-    "context down in your own kernel first, then delegate only the reduced parts.\n{reason}")
+    "gather_rlm not started: some jobs would have received most of your data, barely "
+    "narrowed. Narrow each one in your own kernel first. The check said:\n{reason}")
 
 
 def _size(value: object) -> int:
