@@ -794,6 +794,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8", errors="replace")
     args = list(argv if argv is not None else sys.argv[1:])
 
+    if "--acp" in args:
+        from rlmagent.acp.server import run as serve_acp
+
+        args.remove("--acp")
+        return serve_acp(args)
+
     # Subcommand dispatch (checked before argparse to avoid positional conflicts)
     if args and args[0] in _SUBCOMMANDS:
         cmd, rest = args[0], args[1:]
