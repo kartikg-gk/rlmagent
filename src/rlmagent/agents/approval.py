@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from rlmagent.safety import is_dangerous_command, is_safe_command
 
 ONCE, ALWAYS, DENY = "once", "always", "deny"
+AUTO = "auto"  # allow this one and stop asking for the rest of the session
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,17 @@ class Approver:
             raise Refused(f"the user refused: {request.kind} {request.target}")
         if answer == ALWAYS:
             self._always.add((request.kind, request.target))
+        if answer == AUTO:
+            self.policy = "auto"
         return request.digest
+
+    def toggle_auto(self) -> bool:
+        """Switch between asking and auto-accepting; True when auto-accept is now on."""
+        if self.policy == "ask":
+            self.policy = "auto"
+        elif self.policy == "auto" and self.ask is not None:
+            self.policy = "ask"
+        return self.policy == "auto"
 
 
 def check(approved: str, request: Request) -> None:

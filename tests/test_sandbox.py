@@ -210,3 +210,28 @@ async def test_a_runaway_cell_restarts_the_host_and_the_others_recover(tmp_path)
     finally:
         await stuck.shutdown()
         await other.shutdown()
+
+
+async def test_auto_accept_from_an_answer_or_a_toggle():
+    from rlmagent.agents.approval import AUTO
+
+    asked = []
+
+    async def ask(request):
+        asked.append(request.target)
+        return AUTO
+    approver = Approver("ask", ask)
+    await approver.approve(Request("run", "make a"))
+    await approver.approve(Request("run", "make b"))
+    assert asked == ["make a"] and approver.policy == "auto"
+    assert approver.toggle_auto() is False and approver.policy == "ask"
+    assert Approver("deny").toggle_auto() is False
+
+
+async def test_line_mode_asks_on_the_console(monkeypatch):
+    import importlib
+    cli_main = importlib.import_module("rlmagent.cli.main")
+
+    answers = iter(["?", "t"])
+    monkeypatch.setattr("builtins.input", lambda _q: next(answers))
+    assert await cli_main._ask_on_console(Request("run", "make test")) == "auto"

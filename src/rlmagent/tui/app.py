@@ -9,6 +9,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.css.query import NoMatches
@@ -66,6 +67,7 @@ class RlmAgentApp(App[None]):
         ("ctrl+c", "cancel", "Stop / Quit"),
         ("ctrl+n", "new_session", "New session"),
         ("ctrl+q", "quit", "Quit"),
+        Binding("shift+tab", "toggle_auto", "Auto-accept", priority=True),
     ]
 
     def __init__(self, bridge: SessionBridge | None = None) -> None:
@@ -98,8 +100,23 @@ class RlmAgentApp(App[None]):
         if self._bridge is not None:
             self.query_one(TranscriptView).replay(self._bridge.session.transcript)
             tree = getattr(self._bridge.session, "agent_tree", None)
-            if tree is not None and tree.approver.policy == "ask":
+            if tree is not None and tree.approver.policy in ("ask", "auto"):
                 tree.approver.ask = self._ask_approval
+
+    def action_toggle_auto(self) -> None:
+        """Shift+Tab: writes and commands run without asking, for this session only."""
+        tree = getattr(self._bridge.session, "agent_tree", None) if self._bridge else None
+        if tree is None:
+            return
+        from rlmagent.tui.approval_screen import ApprovalScreen
+
+        if isinstance(self.screen, ApprovalScreen):
+            # On a waiting approval it lets that call through and turns auto-accept on.
+            self.screen.action_auto()
+            return
+        on = tree.approver.toggle_auto()
+        self.notify("auto-accept on: writes and commands run without asking" if on
+                    else "auto-accept off")
 
     async def _ask_approval(self, request) -> str:
         """Show what the sandbox wants to change and wait for the answer."""
