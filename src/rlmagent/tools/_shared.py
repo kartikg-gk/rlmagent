@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -149,12 +150,15 @@ def text_outcome(text: str) -> ToolOutcome:
 
 
 _workspace: Path | None = None
+# One process can serve several sessions in different folders; each task sees its own.
+_task_workspace: ContextVar[Path | None] = ContextVar("workspace", default=None)
 
 
 def set_workspace(root: str | Path | None) -> None:
     """Confine the file tools to `root` (None: no confinement)."""
     global _workspace
     _workspace = Path(root).resolve() if root is not None else None
+    _task_workspace.set(_workspace)
 
 
 def validate_file_path(raw: str) -> Path:
@@ -166,10 +170,11 @@ def validate_file_path(raw: str) -> Path:
         raise ValueError(
             f"File path must be absolute, got relative path: {raw}"
         )
-    if _workspace is not None:
+    workspace = _task_workspace.get() or _workspace
+    if workspace is not None:
         real = path.resolve()  # follows symlinks, so a link out of the workspace is caught
-        if real != _workspace and _workspace not in real.parents:
-            raise ValueError(f"{raw} is outside the workspace {_workspace}")
+        if real != workspace and workspace not in real.parents:
+            raise ValueError(f"{raw} is outside the workspace {workspace}")
     return path
 
 

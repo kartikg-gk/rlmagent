@@ -1,4 +1,6 @@
 import asyncio
+
+import pytest
 import json
 
 from _scripted import code_turn, text_turn
@@ -119,3 +121,79 @@ def test_tool_events_and_prompt_blocks_translate():
 
 
 __all__ = ["Approver", "code_turn"]
+
+
+async def test_modes_reach_the_session_and_the_editor(tmp_path):
+    pipe, server, task, sid = await _start(tmp_path, [text_turn("ok")])
+    try:
+        assert (await pipe.reply(2))["result"]["modes"]["currentModeId"] == "default"
+        pipe.send(6, "session/set_mode", {"sessionId": sid, "modeId": "plan"})
+        assert "result" in await pipe.reply(6)
+        pipe.send(7, "session/prompt", {"sessionId": sid, "prompt": [{"type": "text", "text": "x"}]})
+        await pipe.reply(7)
+        assert server.sessions[sid].plan_mode
+        pipe.send(8, "session/set_mode", {"sessionId": sid, "modeId": "nope"})
+        assert (await pipe.reply(8))["error"]["code"] == -32602
+    finally:
+        await _stop(pipe, task)
+
+
+async def test_each_session_keeps_its_own_folder(tmp_path):
+    from rlmagent.tools._shared import set_workspace, validate_file_path
+
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir(), b.mkdir()
+
+    async def inside(root):
+        set_workspace(root)
+        await asyncio.sleep(0.01)
+        validate_file_path(str(root / "f.py"))
+        try:
+            validate_file_path(str((b if root == a else a) / "f.py"))
+        except ValueError:
+            return True
+        return False
+    assert await asyncio.gather(asyncio.create_task(inside(a)), asyncio.create_task(inside(b))) \
+        == [True, True]
+
+
+async def test_folder_trust_is_asked_through_the_editor(tmp_path):
+    from rlmagent.trust import Choice
+
+    pipe, server, task, sid = await _start(tmp_path, [])
+
+    class Inputs:
+        def describe(self):
+            return "AGENTS.md"
+
+    class TrustRequest:
+        folder, parent, inputs, store_problem = str(tmp_path), None, Inputs(), None
+    try:
+        asking = asyncio.create_task(server._ask_trust(sid, TrustRequest()))
+        while not any(m.get("method") == "session/request_permission" for m in pipe.sent):
+            pipe.new.clear()
+            await asyncio.wait_for(pipe.new.wait(), 10)
+        ask = next(m for m in pipe.sent if m.get("method") == "session/request_permission")
+        kinds = {o["optionId"]: o["kind"] for o in ask["params"]["options"]}
+        assert kinds["trust-folder"] == "allow_always" and kinds["distrust-once"] == "reject_once"
+        pipe.inbox.put_nowait((json.dumps({"jsonrpc": "2.0", "id": ask["id"], "result": {
+            "outcome": {"outcome": "selected", "optionId": "trust-once"}}}) + "\n").encode())
+        assert await asyncio.wait_for(asking, 10) is Choice.TRUST_ONCE
+    finally:
+        await _stop(pipe, task)
+
+
+@pytest.fixture(autouse=True)
+def _home(tmp_path, monkeypatch):
+    monkeypatch.setenv("RLM_AGENT_HOME", str(tmp_path / "home"))
+
+
+async def test_a_session_started_here_loads_later_by_the_editors_id(tmp_path):
+    pipe, server, task, sid = await _start(tmp_path, [text_turn("ok")])
+    try:
+        pipe.send(9, "session/prompt", {"sessionId": sid, "prompt": [{"type": "text", "text": "x"}]})
+        await pipe.reply(9)
+        from rlmagent.acp.server import _recall
+        assert _recall(sid) == server.sessions[sid].session_id != sid
+    finally:
+        await _stop(pipe, task)

@@ -7,6 +7,7 @@ import contextlib
 import json
 import os
 import sys
+import uuid
 from collections.abc import Awaitable, Callable
 
 from rlmagent.acp import updates
@@ -18,9 +19,37 @@ OPTIONS = [
     {"optionId": ALWAYS, "name": "Always this session", "kind": "allow_always"},
     {"optionId": DENY, "name": "Deny", "kind": "reject_once"},
 ]
+MODES = [
+    {"id": "default", "name": "Default", "description": "Reads, writes and runs (writes and commands ask first)"},
+    {"id": "plan", "name": "Plan", "description": "Reads and plans; changes nothing"},
+]
 
 ReadLine = Callable[[], Awaitable[bytes]]
 Write = Callable[[bytes], None]
+
+
+def _ids_file():
+    from rlmagent.plugins import rlm_agent_home
+
+    return rlm_agent_home() / "acp_sessions.json"
+
+
+def _recall(sid: str) -> str:
+    """Our saved-session id for an editor's session id (they differ for sessions started here)."""
+    with contextlib.suppress(OSError, ValueError):
+        return json.loads(_ids_file().read_text(encoding="utf-8")).get(sid, sid)
+    return sid
+
+
+def _remember(sid: str, session_id: str) -> None:
+    path = _ids_file()
+    known: dict = {}
+    with contextlib.suppress(OSError, ValueError):
+        known = json.loads(path.read_text(encoding="utf-8"))
+    known[sid] = session_id
+    with contextlib.suppress(OSError):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(known), encoding="utf-8")
 
 
 class RpcError(Exception):
@@ -52,6 +81,9 @@ class Server:
         self.argv = argv or []
         self._build = build
         self.sessions: dict[str, object] = {}
+        self.pending: dict[str, str] = {}
+        self.modes: dict[str, str] = {}
+        self._starting = asyncio.Lock()
         self.running: dict[str, asyncio.Task] = {}
         self._next_id = 0
         self._waiting: dict[int, asyncio.Future] = {}
@@ -120,27 +152,50 @@ class Server:
                                       "promptCapabilities": {"embeddedContext": True}},
                 "authMethods": []}
 
-    async def _open(self, cwd: str, resume: str | None):
+    async def _open(self, sid: str, cwd: str, resume: str | None):
         from rlmagent.cli.main import _build_run_parser
 
-        if cwd:
-            os.chdir(cwd)
         ns = _build_run_parser().parse_args(self.argv)
         ns.resume = resume
+        ns.trust_ask = lambda request: self._ask_trust(sid, request)
         build = self._build
         if build is None:
             from rlmagent.runtime import build_session as build
-        try:
-            session = await build(ns)
-        except SystemExit as exc:
-            # Start-up failures exit the terminal app; here they answer this request only.
-            raise RpcError(-32603, f"could not start a session (exit {exc.code}); "
-                                   "see the agent's stderr") from None
+        # Start-up reads the process's working folder, so sessions start one at a time.
+        async with self._starting:
+            if cwd:
+                os.chdir(cwd)
+            try:
+                session = await build(ns)
+            except SystemExit as exc:
+                # Start-up failures exit the terminal app; here they answer this request only.
+                raise RpcError(-32603, f"could not start a session (exit {exc.code}); "
+                                       "see the agent's stderr") from None
         tree = getattr(session, "agent_tree", None)
         if tree is not None and tree.approver.policy == "ask":
-            tree.approver.ask = lambda request: self._ask(session.session_id, request)
-        self.sessions[session.session_id] = session
+            tree.approver.ask = lambda request: self._ask(sid, request)
+        if self.modes.get(sid) == "plan":
+            session.set_plan_mode(True)
+        self.sessions[sid] = session
+        if session.session_id != sid:
+            _remember(sid, session.session_id)
         return session
+
+    async def _ask_trust(self, sid: str, request):
+        from rlmagent.runtime import trust_choices, trust_question
+
+        menu = dict((choice.value, choice) for choice, _ in trust_choices(request))
+        options = [{"optionId": choice.value, "name": label,
+                    "kind": ("reject_" if choice.value.startswith("distrust") else "allow_")
+                    + ("once" if choice.value.endswith("once") else "always")}
+                   for choice, label in trust_choices(request)]
+        reply = await self.request("session/request_permission", {
+            "sessionId": sid,
+            "toolCall": {"toolCallId": "project-trust", "title": trust_question(request),
+                         "kind": "other", "status": "pending"},
+            "options": options})
+        outcome = reply.get("outcome", {})
+        return menu.get(outcome.get("optionId")) if outcome.get("outcome") == "selected" else None
 
     async def _ask(self, session_id: str, request) -> str:
         reply = await self.request("session/request_permission", {
@@ -152,25 +207,55 @@ class Server:
         outcome = reply.get("outcome", {})
         return outcome.get("optionId", DENY) if outcome.get("outcome") == "selected" else DENY
 
+    def _modes(self, sid: str) -> dict:
+        return {"currentModeId": self.modes.get(sid, "default"), "availableModes": MODES}
+
     async def on_session_new(self, params: dict) -> dict:
-        session = await self._open(params.get("cwd", ""), None)
-        return {"sessionId": session.session_id}
+        # The session starts with its first prompt, so the folder-trust question (if any)
+        # reaches the editor while a prompt is running, where editors show permission requests.
+        sid = uuid.uuid4().hex[:12]
+        self.pending[sid] = params.get("cwd", "")
+        return {"sessionId": sid, "modes": self._modes(sid)}
 
     async def on_session_load(self, params: dict) -> dict:
         sid = params["sessionId"]
-        session = await self._open(params.get("cwd", ""), sid)
+        session = await self._open(sid, params.get("cwd", ""), _recall(sid))
         for update in updates.replay(session.transcript):
             self.notify("session/update", {"sessionId": sid, "update": update})
+        return {"modes": self._modes(sid)}
+
+    async def on_session_set_mode(self, params: dict) -> dict:
+        sid, mode = params.get("sessionId", ""), params.get("modeId", "")
+        if mode not in {m["id"] for m in MODES}:
+            raise RpcError(-32602, f"unknown mode: {mode}")
+        if sid not in self.sessions and sid not in self.pending:
+            raise RpcError(-32602, f"unknown session: {sid}")
+        self.modes[sid] = mode
+        if sid in self.sessions:
+            self.sessions[sid].set_plan_mode(mode == "plan")
+        self.notify("session/update", {"sessionId": sid, "update": {
+            "sessionUpdate": "current_mode_update", "currentModeId": mode}})
         return {}
 
     async def on_session_prompt(self, params: dict) -> dict:
+        from rlmagent.tools._shared import set_workspace
+
         sid = params["sessionId"]
-        session = self.sessions.get(sid)
-        if session is None:
-            raise RpcError(-32602, f"unknown session: {sid}")
         if sid in self.running:
             raise RpcError(-32602, "a prompt is already running in this session")
         self.running[sid] = asyncio.current_task()
+        try:
+            if sid in self.pending:
+                await self._open(sid, self.pending.pop(sid), None)
+            session = self.sessions.get(sid)
+            if session is None:
+                raise RpcError(-32602, f"unknown session: {sid}")
+            set_workspace(session.cwd)  # this task's file tools stay in this session's folder
+            return await self._prompt(sid, session, params)
+        finally:
+            self.running.pop(sid, None)
+
+    async def _prompt(self, sid: str, session, params: dict) -> dict:
         translator = updates.Translator()
         watcher = asyncio.create_task(self._watch_plan(sid, session))
         messages: list = []
@@ -182,7 +267,6 @@ class Server:
                     messages = event.messages
         finally:
             watcher.cancel()
-            self.running.pop(sid, None)
         return {"stopReason": updates.stop_reason(messages)}
 
     async def _watch_plan(self, sid: str, session) -> None:
