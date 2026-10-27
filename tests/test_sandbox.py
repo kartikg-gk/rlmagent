@@ -160,3 +160,32 @@ def test_the_cli_defaults_to_the_sandbox():
 
 
 __all__ = ["asyncio"]
+
+
+@needs_wasm
+async def test_a_networked_sandbox_can_install_and_fetch(tmp_path):
+    provider = ReplayProvider([])
+    tree = AgentTree(provider=provider, provider_name="replay", model="m", cwd=str(tmp_path),
+                     allowance=Allowance(max_cost=10.0), sessions_dir=None,
+                     system_for=lambda n, t: "s", first_message_for=lambda n: n.task,
+                     kernel="wasm", approver=Approver("deny"), network=True)
+    await tree.start()
+    kernel = tree.root_kernel()
+    try:
+        out = await kernel.run("import js, httpx, micropip\nprint('ready')")
+        if "network set-up failed" in out.output:
+            pytest.skip("no internet here")
+        assert "ready" in out.output, (out.output, out.error)
+        out = await kernel.run(
+            "async with httpx.AsyncClient() as c:\n"
+            "    print((await c.get('https://example.com')).status_code)")
+        assert "200" in out.output, (out.output, out.error)
+    finally:
+        await tree.close()
+
+
+def test_the_guide_says_whether_the_sandbox_is_online():
+    from rlmagent.agents.prompts import kernel_guide
+
+    assert "micropip" in kernel_guide(True, True) and "no network" in kernel_guide(True, False)
+    assert "read_file" not in kernel_guide(False)

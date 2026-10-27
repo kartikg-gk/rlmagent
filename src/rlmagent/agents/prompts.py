@@ -14,7 +14,7 @@ or with subprocess. Print summaries (lengths, counts, a few lines) rather than \
 whole files or large objects; long output is cut to its start and end."""
 
 SANDBOX_GUIDE = """## Your kernel
-The python tool runs code in one sandboxed kernel (Python compiled to WebAssembly) that stays alive for the whole task: variables, imports and functions you define remain available in later calls. The sandbox has its own empty filesystem, no network and no pip; `open()` does not see the project. Reach the project only through these functions (await them):
+The python tool runs code in one sandboxed kernel (Python compiled to WebAssembly) that stays alive for the whole task: variables, imports and functions you define remain available in later calls. The sandbox has its own empty filesystem; `open()` does not see the project.{network} Reach the project only through these functions (await them):
 
     text  = await read_file("src/app.py")
     paths = await list_files("**/*.py")
@@ -91,17 +91,31 @@ pass `shared=True` when the user says to remember it always, in every future \
 session, or for every project. `await playbook()` lists entries."""
 
 
+ONLINE = (" It can reach the internet: use httpx (async, `async with httpx.AsyncClient()`) "
+          "or `pyodide.http.pyfetch`; requests does not work here. Install pure-Python packages "
+          "with `await micropip.install(...)`; numpy, pandas and other compiled packages with "
+          "`await pyodide_js.loadPackage(...)`.")
+OFFLINE = " It has no network and no pip."
+
+
+def kernel_guide(sandboxed: bool, network: bool = False) -> str:
+    if not sandboxed:
+        return KERNEL_GUIDE
+    return SANDBOX_GUIDE.replace("{network}", ONLINE if network else OFFLINE)
+
+
 def root_system(base: str, can_delegate: bool, playbook: bool = False,
-                sandboxed: bool = False) -> str:
-    guide = SANDBOX_GUIDE if sandboxed else KERNEL_GUIDE
+                sandboxed: bool = False, network: bool = False) -> str:
+    guide = kernel_guide(sandboxed, network)
     parts = [base, guide, DELEGATION_GUIDE if can_delegate else LEAF_NOTE]
     if playbook:
         parts.append(PLAYBOOK_GUIDE)
     return "\n\n".join(parts)
 
 
-def child_system(base: str, node: AgentNode, can_delegate: bool, sandboxed: bool = False) -> str:
-    guide = SANDBOX_GUIDE if sandboxed else KERNEL_GUIDE
+def child_system(base: str, node: AgentNode, can_delegate: bool, sandboxed: bool = False,
+                 network: bool = False) -> str:
+    guide = kernel_guide(sandboxed, network)
     parts = [base, guide, CHILD_ROLE, DELEGATION_GUIDE if can_delegate else LEAF_NOTE]
     return "\n\n".join(parts)
 

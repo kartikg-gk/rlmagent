@@ -64,6 +64,7 @@ class Trace:
 class KernelSpec:
     kind: str = "local"
     approve: str = "deny"
+    network: bool = False
 
 
 @dataclass(frozen=True)
@@ -131,7 +132,7 @@ def parse_contract(doc: object) -> Contract:
     kernel = KernelSpec()
     if isinstance(doc, dict) and "kernel" in doc:
         # Optional, so contracts written before it still run the same way.
-        k = _fields(doc["kernel"], "kernel", {"kind": (str,), "approve": (str,)})
+        k = _fields(doc["kernel"], "kernel", {"kind": (str,), "approve": (str,), "network": (bool,)})
         if k["kind"] not in ("wasm", "local"):
             raise ContractError(f"kernel.kind: {k['kind']!r} is not 'wasm' or 'local'")
         if k["approve"] not in ("deny", "auto"):

@@ -59,7 +59,8 @@ async def build_contract_session(c: Contract, *, provider=None):
     def system_for(node, tools) -> str:
         delegates = node.depth < lim.max_depth
         added = c.prompt.append_sub_agent if delegates else c.prompt.append_leaf
-        return child_system(base(tools), node, delegates, sandboxed=sandboxed) + extra(added)
+        return child_system(base(tools), node, delegates, sandboxed=sandboxed,
+                            network=c.kernel.network) + extra(added)
 
     sandboxed = c.kernel.kind == "wasm"
     if sandboxed:
@@ -79,14 +80,14 @@ async def build_contract_session(c: Contract, *, provider=None):
         allowance=allowance, sessions_dir=sessions_dir, system_for=system_for,
         first_message_for=child_first_message, cell_timeout=lim.cell_timeout,
         max_agents=lim.max_agents, tracer=tracer,
-        kernel=c.kernel.kind, approver=Approver(c.kernel.approve),
+        kernel=c.kernel.kind, approver=Approver(c.kernel.approve), network=c.kernel.network,
     )
     tree.tool_filter = lambda kernel: _tools(c, kernel)
     await tree.start()
     kernel = tree.root_kernel()
     tools = _tools(c, kernel)
     system = root_system(base(tools), can_delegate=lim.max_depth > 0,
-                         sandboxed=sandboxed) + extra(c.prompt.append)
+                         sandboxed=sandboxed, network=c.kernel.network) + extra(c.prompt.append)
     session = await CodingSession.create(
         provider=tree.provider_for("root"), provider_name=c.model.provider, model=c.model.name,
         system=system, tools=tools, sessions_dir=sessions_dir, cwd=workdir,

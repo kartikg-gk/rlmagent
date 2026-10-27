@@ -117,16 +117,16 @@ def test_the_kernel_section_is_optional_and_strict(tmp_path):
 
     assert _contract(tmp_path).kernel.kind == "local"
     assert _contract(tmp_path).kernel.approve == "deny"
-    c = _contract(tmp_path, kernel={"kind": "wasm", "approve": "auto"}, tools=["python", "Read"])
-    assert (c.kernel.kind, c.kernel.approve) == ("wasm", "auto")
-    for bad, named in [({"kind": "docker", "approve": "deny"}, "kernel.kind"),
-                       ({"kind": "wasm", "approve": "ask"}, "kernel.approve"),
+    c = _contract(tmp_path, kernel={"kind": "wasm", "approve": "auto", "network": True}, tools=["python", "Read"])
+    assert (c.kernel.kind, c.kernel.approve, c.kernel.network) == ("wasm", "auto", True)
+    for bad, named in [({"kind": "docker", "approve": "deny", "network": False}, "kernel.kind"),
+                       ({"kind": "wasm", "approve": "ask", "network": False}, "kernel.approve"),
                        ({"kind": "wasm"}, "kernel.approve"),
-                       ({"kind": "wasm", "approve": "deny", "x": 1}, "kernel.x")]:
+                       ({"kind": "wasm", "approve": "deny", "network": False, "x": 1}, "kernel.x")]:
         with pytest.raises(ContractError, match=named):
             _contract(tmp_path, kernel=bad)
     with pytest.raises(ContractError, match="Write and Edit"):
-        _contract(tmp_path, kernel={"kind": "wasm", "approve": "deny"})
+        _contract(tmp_path, kernel={"kind": "wasm", "approve": "deny", "network": False})
 
 
 async def test_a_wasm_contract_runs_sandboxed(tmp_path, monkeypatch):
@@ -136,7 +136,7 @@ async def test_a_wasm_contract_runs_sandboxed(tmp_path, monkeypatch):
     if not available():
         pytest.skip("sandbox not set up")
     session = await _session(tmp_path, monkeypatch, tools=["python", "Read"],
-                             kernel={"kind": "wasm", "approve": "deny"})
+                             kernel={"kind": "wasm", "approve": "deny", "network": False})
     try:
         tree = session.agent_tree
         assert isinstance(tree.root_kernel(), WasmKernel) and tree.approver.policy == "deny"

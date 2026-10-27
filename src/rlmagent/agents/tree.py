@@ -84,8 +84,10 @@ class AgentTree:
         tracer: Tracer | None = None,
         kernel: str = "local",
         approver: Approver | None = None,
+        network: bool = False,
     ) -> None:
         self.kernel_kind = kernel
+        self.network = network
         self.approver = approver or Approver("deny")
         self.provider = BudgetedProvider(with_external(provider), allowance)
         self.provider_name = provider_name
@@ -167,7 +169,8 @@ class AgentTree:
 
         kernel = WasmKernel(
             cwd=self.cwd, bridges={"_rlmagent": call, **workspace.functions()},
-            startup_code=wasm_api(self._can_delegate(node), node.parent_id is not None),
+            startup_code=wasm_api(self._can_delegate(node), node.parent_id is not None,
+                                  network=self.network),
             timeout=self.cell_timeout, on_final=final,
         )
         self.kernels[node.id] = kernel

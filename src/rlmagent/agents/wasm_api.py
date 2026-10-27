@@ -80,5 +80,21 @@ CONTEXT = await _rlmagent("context", {})
 '''
 
 
-def wasm_api(can_delegate: bool, is_child: bool) -> str:
-    return CORE + (DELEGATE if can_delegate else "") + (CHILD if is_child else "")
+NETWORK = r'''
+import sys as _sys
+for _m in ("js", "pyodide_js", "pyodide.http", "pyodide.ffi.wrappers"):
+    _sys.modules.pop(_m, None)
+del _sys, _m
+import pyodide_js
+try:
+    await pyodide_js.loadPackage("micropip")
+    import micropip
+    await micropip.install(["httpx"])
+except Exception as _e:
+    print(f"[network set-up failed: {_e}]")
+'''
+
+
+def wasm_api(can_delegate: bool, is_child: bool, network: bool = False) -> str:
+    return ((NETWORK if network else "") + CORE + (DELEGATE if can_delegate else "")
+            + (CHILD if is_child else ""))
