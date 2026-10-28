@@ -1,4 +1,4 @@
-"""Any agent that speaks the Agent Client Protocol, as a model."""
+"""An agent reached over the Agent Client Protocol, used as the model."""
 
 from __future__ import annotations
 
@@ -183,5 +183,5 @@ async def answer(name: str, sub: str | None, prompt: str, cwd: Path,
         pump.cancel()
     if result.get("stopReason") == "refusal":
         raise ValueError(f"{name} refused")
-    # Agents report no usage over the protocol, so accounting is zero; --max-calls is the budget.
+    # ACP replies carry no token counts, so cost stays 0; --max-calls is what limits a run.
     return "".join(conn.text), UsageStats()

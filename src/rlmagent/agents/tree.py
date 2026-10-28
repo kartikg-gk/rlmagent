@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
+import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,11 +62,43 @@ class ChildRecord:
     inbox: asyncio.Queue = field(default_factory=asyncio.Queue)
     outbox: list = field(default_factory=list)
     changed: asyncio.Event = field(default_factory=asyncio.Event)
+    confirm: tuple[int, int] | None = None
 
     def set(self, status: str) -> None:
         self.status = status
         self.changed.set()
         self.changed = asyncio.Event()
+
+
+GUARD_MIN_CHARS = 5000
+GUARD_RATIO = 0.6
+
+CONFIRM = (
+    "Before starting, check this hand-off. Your CONTEXT holds {child:,} characters; the agent "
+    "that started you holds {parent:,}, so you got {pct}% of it. Handing on nearly everything "
+    "usually means the work of narrowing it down was skipped.\n"
+    "Answer with YES or NO as the very first word. YES: this hand-off makes sense as it is "
+    "(for example, the same step applied to one piece). NO: the starting agent should narrow "
+    "the data before handing it on. After a NO, say why in one sentence and add a short "
+    "```python cell that agent could run on its own data to narrow it (pick the relevant part, "
+    "search, split) for this task.")
+CONFIRM_BATCH = (
+    "Before these {n} sub-agents start together, check the hand-off. Your data holds "
+    "{parent:,} characters, and each would get:\n{lines}\nFor {flagged} of them that is most of "
+    "your data, barely narrowed.\n"
+    "Answer with YES or NO as the very first word (YES lets all of them start), then one "
+    "sentence on why.")
+REJECTED = (
+    "Sub-agent not started: it would have received {pct}% of your data, barely narrowed. "
+    "Narrow it in your own kernel and hand on only the part the task needs. "
+    "The check said:\n{reason}")
+BATCH_REJECTED = (
+    "gather_rlm not started: some jobs would have received most of your data, barely "
+    "narrowed. Narrow each one in your own kernel first. The check said:\n{reason}")
+
+
+def _size(value: object) -> int:
+    return len(value) if isinstance(value, str) else len(json.dumps(value, default=repr))
 
 
 class AgentTree:
@@ -85,7 +119,9 @@ class AgentTree:
         kernel: str = "local",
         approver: Approver | None = None,
         network: bool = False,
+        guard: bool = True,
     ) -> None:
+        self.guard = guard
         self.kernel_kind = kernel
         self.network = network
         self.approver = approver or Approver("deny")
@@ -231,8 +267,9 @@ class AgentTree:
             jobs = [(str(task), context) for task, context in args.get("jobs", [])]
             children = []
             try:
+                await self._confirm_batch(node, jobs)
                 for task, context in jobs:
-                    children.append(self.records[self.spawn(agent_id, task, context)])
+                    children.append(self.records[self.spawn(agent_id, task, context, confirm=False)])
                 async with self._waiting_on_children(node):
                     return await self._gather(children)
             except BaseException:
@@ -309,7 +346,7 @@ class AgentTree:
             self._live.release()
 
     def spawn(self, parent_id: str, task: str, context: object, keep: bool = False,
-              role: str | None = None, model: str | None = None) -> str:
+              role: str | None = None, model: str | None = None, confirm: bool = True) -> str:
         parent = self.nodes[parent_id]
         role_text = self._role(role) if role else ""
         if is_external(model):
@@ -329,7 +366,8 @@ class AgentTree:
             model=model or parent.model,
         )
         self.nodes[node.id] = node
-        rec = ChildRecord(node=node, keep=keep)
+        rec = ChildRecord(node=node, keep=keep,
+                          confirm=self._barely_compressed(parent, context) if confirm else None)
         self.records[node.id] = rec
         self._kids.setdefault(parent_id, []).append(node.id)
         self.tracer.spawned(parent_id, node.id)
@@ -384,6 +422,8 @@ class AgentTree:
         try:
             await self._acquire(rec)
             rec.set("running")
+            if rec.confirm is not None:
+                await self._confirm(node, *rec.confirm)
             kernel = self._kernel_for(node)
             tools = (self.tool_filter or build_tool_registry)(kernel)
             session = await CodingSession.create(
@@ -436,6 +476,56 @@ class AgentTree:
                 if "RLM_AGENT_BRIDGE_TOKEN" in kernel.env:
                     self._bridge.revoke(kernel.env["RLM_AGENT_BRIDGE_TOKEN"])
                 await kernel.shutdown()
+
+    # -- delegation guard: a sub-agent handed most of its parent's context confirms first --
+
+    def _barely_compressed(self, parent: AgentNode, context: object) -> tuple[int, int] | None:
+        if not self.guard or parent.context is None:
+            return None
+        parent_chars, child_chars = _size(parent.context), _size(context)
+        if parent_chars >= GUARD_MIN_CHARS and child_chars >= GUARD_RATIO * parent_chars:
+            return child_chars, parent_chars
+        return None
+
+    async def _judge(self, node: AgentNode, question: str) -> tuple[bool, str]:
+        """One tool-less call with the sub-agent's own instructions; only an explicit NO refuses."""
+        from rlmagent.conversation import CodingSession
+
+        session = await CodingSession.create(
+            provider=self.provider_for(node.id), provider_name=self.provider_name,
+            model=node.model or self.model, system=self.system_for(node, []), tools=[],
+            sessions_dir=None, cwd=self.cwd)
+        try:
+            async for _event in session.submit(question):
+                pass
+            reply = _last_text(session).strip()
+        finally:
+            await session.shutdown()
+        if self.provider.refusal is not None:
+            raise AllowanceSpent(self.provider.refusal)
+        word = re.search(r"[A-Za-z]+", reply)
+        return (word is None or word.group().upper() != "NO"), reply or "(no reason given)"
+
+    async def _confirm(self, node: AgentNode, child_chars: int, parent_chars: int) -> None:
+        pct = round(100 * child_chars / max(1, parent_chars))
+        ok, reason = await self._judge(node, self.first_message_for(node) + "\n\n" + CONFIRM.format(
+            child=child_chars, pct=pct, parent=parent_chars))
+        if not ok:
+            raise RuntimeError(REJECTED.format(pct=pct, reason=reason))
+
+    async def _confirm_batch(self, parent: AgentNode, jobs: list[tuple[str, object]]) -> None:
+        """One check for a whole gather_rlm, and only if some job gets most of the parent's context."""
+        flagged = [self._barely_compressed(parent, context) for _, context in jobs]
+        if not any(flagged):
+            return
+        parent_chars = _size(parent.context)
+        lines = "\n".join(
+            f"  [{i}] {_size(c):,} chars ({round(100 * _size(c) / max(1, parent_chars))}% of the "
+            f"parent's context): {task[:140]}" for i, (task, c) in enumerate(jobs, 1))
+        ok, reason = await self._judge(parent, CONFIRM_BATCH.format(
+            n=len(jobs), parent=parent_chars, lines=lines, flagged=sum(1 for f in flagged if f)))
+        if not ok:
+            raise RuntimeError(BATCH_REJECTED.format(reason=reason))
 
     async def _round(self, session, node: AgentNode, message: str) -> object:
         for _ in range(2):

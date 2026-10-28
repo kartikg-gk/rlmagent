@@ -46,7 +46,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     provider = _resolve_provider(getattr(ns, "provider", None))
 
     verbose = getattr(ns, "verbose", False)
-    await settle_project_trust(ns)
+    await settle_project_trust(ns, ask=getattr(ns, "trust_ask", None))
 
     no_session = getattr(ns, "no_session", False)
     sessions_dir = None if no_session else _sessions_dir(getattr(ns, "session_dir", None))

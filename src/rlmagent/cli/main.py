@@ -624,7 +624,10 @@ async def _run_one_shot(
 async def _run_interactive(session: CodingSession) -> int:
     """Run the interactive prompt loop until the user exits."""
     loop = asyncio.get_running_loop()
-    _info("Type /help for commands, /quit to exit.\n")
+    _info("Type /help for commands, /auto to toggle auto-accept, /quit to exit.\n")
+    tree = getattr(session, "agent_tree", None)
+    if tree is not None and tree.approver.policy in ("ask", "auto"):
+        tree.approver.ask = _ask_on_console
 
     while True:
         try:
@@ -643,6 +646,11 @@ async def _run_interactive(session: CodingSession) -> int:
             break
         if text == "/version":
             _info(f"rlm-agent v{get_version()}")
+            continue
+        if text == "/auto" and tree is not None:
+            on = tree.approver.toggle_auto()
+            _info("auto-accept on: file changes and commands go ahead unasked" if on
+                  else "auto-accept off: writes and commands ask first")
             continue
 
         # Resuming yields an event stream rather than a string, so it cannot go
@@ -691,6 +699,27 @@ async def _run_interactive(session: CodingSession) -> int:
         await _consume_events(events, print_mode=False)
 
     return 0
+
+
+APPROVAL_KEYS = {"y": "once", "a": "always", "t": "auto", "n": "deny"}
+
+
+async def _ask_on_console(request) -> str:
+    """Line-mode approval: show what would change and read one key."""
+    from rlmagent.agents.approval import DENY
+
+    always = "this command" if request.kind == "run" else "this file"
+    _info(f"\nThe agent wants to:\n{request.describe()}")
+    question = f"Allow? [y] once  [a] always {always}  [t] and auto-accept the rest  [n] deny: "
+    loop = asyncio.get_running_loop()
+    while True:
+        try:
+            answer = await loop.run_in_executor(None, input, question)
+        except (EOFError, KeyboardInterrupt):
+            return DENY
+        choice = APPROVAL_KEYS.get(answer.strip().lower()[:1])
+        if choice is not None:
+            return choice
 
 
 def _prompt_user() -> str | None:
@@ -793,6 +822,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     args = list(argv if argv is not None else sys.argv[1:])
+
+    if "--acp" in args:
+        from rlmagent.acp.server import run as serve_acp
+
+        args.remove("--acp")
+        return serve_acp(args)
 
     # Subcommand dispatch (checked before argparse to avoid positional conflicts)
     if args and args[0] in _SUBCOMMANDS:

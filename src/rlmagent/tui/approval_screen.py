@@ -7,7 +7,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Label, ListItem, ListView, Static
 
-from rlmagent.agents.approval import ALWAYS, DENY, ONCE, Request
+from rlmagent.agents.approval import ALWAYS, AUTO, DENY, ONCE, Request
 
 
 class _Choice(ListItem):
@@ -17,7 +17,7 @@ class _Choice(ListItem):
 
 
 class ApprovalScreen(ModalScreen[str]):
-    BINDINGS = [("escape", "deny", "Deny")]
+    BINDINGS = [("escape", "deny", "Deny"), ("shift+tab", "auto", "Auto-accept")]
 
     def __init__(self, request: Request) -> None:
         super().__init__()
@@ -31,6 +31,7 @@ class ApprovalScreen(ModalScreen[str]):
             yield ListView(
                 _Choice("Allow once", ONCE),
                 _Choice(f"Always allow {always} this session", ALWAYS),
+                _Choice("Allow, and auto-accept the rest of this session", AUTO),
                 _Choice("Deny", DENY),
                 id="approval-list",
             )
@@ -40,6 +41,9 @@ class ApprovalScreen(ModalScreen[str]):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         self.dismiss(event.item.value)
+
+    def action_auto(self) -> None:
+        self.dismiss(AUTO)
 
     def action_deny(self) -> None:
         self.dismiss(DENY)

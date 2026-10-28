@@ -22,7 +22,7 @@ _DESCRIPTION = (
 
 _PARAMETERS: Mapping[str, JValue] = {
     "type": "object",
-    "properties": {"code": {"type": "string", "description": "Python code to run."}},
+    "properties": {"code": {"type": "string", "description": "The cell to execute in the kernel."}},
     "required": ["code"],
 }
 

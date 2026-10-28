@@ -21,12 +21,12 @@ THINKING_LEVELS: tuple[ThinkingLevel, ...] = (
 DEFAULT_THINKING_LEVEL: ThinkingLevel = "medium"
 
 THINKING_DESCRIPTIONS: dict[ThinkingLevel, str] = {
-    "off": "No reasoning",
-    "minimal": "Very brief reasoning",
-    "low": "Light reasoning",
-    "medium": "Standard reasoning",
-    "high": "Extended reasoning",
-    "xhigh": "Maximum reasoning",
+    "off": "Thinking off",
+    "minimal": "Think a little",
+    "low": "Think briefly",
+    "medium": "Think normally",
+    "high": "Think hard",
+    "xhigh": "Think as long as allowed",
 }
 
 _LEVEL_SET: frozenset[str] = frozenset(THINKING_LEVELS)

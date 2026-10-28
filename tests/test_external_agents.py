@@ -231,13 +231,13 @@ async def test_an_acp_agent_that_exits_is_an_error_not_a_hang(tmp_path, monkeypa
 
 
 def test_a_bridge_preset_needs_acp_install_first(tmp_path, monkeypatch):
-    from rlmagent.model.external.acp_install import bridge_spec, marker_path
+    from rlmagent.model.external.acp_install import bridge_spec, pin_file
 
     monkeypatch.setenv("RLM_AGENT_HOME", str(tmp_path))
     with pytest.raises(ValueError, match="rlm-agent acp install"):
         bridge_spec("codex")
-    marker_path().write_text(json.dumps({"marker_version": 1, "bridges": {"codex": "2.2.2"},
-                                         "bridge_packages": {"codex": "@acme/codex-bridge"}}))
+    pin_file().write_text(json.dumps({"format": 1, "pins": {
+        "codex": {"package": "@acme/codex-bridge", "version": "2.2.2"}}}))
     assert bridge_spec("codex") == "@acme/codex-bridge@2.2.2"
     assert bridge_spec("claude-code") == "@agentclientprotocol/claude-agent-acp"
 
@@ -252,12 +252,13 @@ def test_install_keeps_recorded_versions_unless_asked_to_update(tmp_path, monkey
         calls.append(args)
         return "9.9.9" if args[0] == "view" else "ok"
     monkeypatch.setattr(acp_install, "_npm", fake_npm)
-    assert acp_install.install()["bridges"] == {"claude-code": "9.9.9", "codex": "9.9.9"}
-    marker = json.loads(acp_install.marker_path().read_text())
-    marker["bridges"]["codex"] = "1.0.0"
-    acp_install.marker_path().write_text(json.dumps(marker))
-    assert acp_install.install()["bridges"]["codex"] == "1.0.0"
-    assert acp_install.install(update=True)["bridges"]["codex"] == "9.9.9"
+    assert {a: p["version"] for a, p in acp_install.install().items()} == {
+        "claude-code": "9.9.9", "codex": "9.9.9"}
+    saved = json.loads(acp_install.pin_file().read_text())
+    saved["pins"]["codex"]["version"] = "1.0.0"
+    acp_install.pin_file().write_text(json.dumps(saved))
+    assert acp_install.install()["codex"]["version"] == "1.0.0"
+    assert acp_install.install(update=True)["codex"]["version"] == "9.9.9"
     assert ("cache", "add", "@agentclientprotocol/codex-acp@9.9.9") in calls
 
 
