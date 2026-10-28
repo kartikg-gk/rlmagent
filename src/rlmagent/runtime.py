@@ -52,6 +52,12 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
 
     # The root agent and every sub-agent share one tree: one budget, one
     # channel back from the kernels, one place that shuts them all down.
+    from rlmagent.tools._shared import set_workspace
+
+    set_workspace(os.getcwd())
+    from rlmagent.plugins import rlm_agent_home
+    from rlmagent.undo import Shadow
+
     tree = make_agent_tree(ns, provider, provider_name, model, sessions_dir, cwd=os.getcwd())
     await tree.start()
     kernel = tree.root_kernel()
@@ -111,6 +117,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
         )
 
     session.agent_tree = tree
+    session.shadow = Shadow(session.cwd, rlm_agent_home())
     tree.attach(tree.root_id(), session)
     from rlmagent.playbook.improver import Improver
     from rlmagent.plugins import rlm_agent_home

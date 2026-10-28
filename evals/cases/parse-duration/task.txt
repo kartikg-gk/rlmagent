@@ -1,0 +1,2 @@
+Implement parse_duration in duration.py. Units are h, m and s, in that order, each optional
+but at least one present. Raise ValueError for anything else (empty text, unknown units, "1x").
