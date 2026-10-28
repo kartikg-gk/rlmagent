@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from rlmagent_harness.contracts.tooling import ToolOutcome, ToolSpec
-from rlmagent_harness.contracts.transcript import (
+from rlmagent.harness.contracts.tooling import ToolOutcome, ToolSpec
+from rlmagent.harness.contracts.transcript import (
     CallBlock,
     HumanEntry,
     ModelEntry,
     TextSegment,
     ToolOutcomeEntry,
 )
-from rlmagent_harness.provider.wire import (
+from rlmagent.harness.provider.wire import (
     CallChunkEvent,
     CallCloseEvent,
     CallOpenEvent,
@@ -26,7 +26,7 @@ from rlmagent_harness.provider.wire import (
     StreamFaultEvent,
     StreamOpenEvent,
 )
-from rlmagent_model._oai.helpers import (
+from rlmagent.model._oai.helpers import (
     build_reasoning_extra,
     extract_usage,
     map_halt_reason,
@@ -35,8 +35,8 @@ from rlmagent_model._oai.helpers import (
     pick_endpoint,
     try_parse_json,
 )
-from rlmagent_model._oai.normalize import EventAssembler
-from rlmagent_model._oai.parsers import (
+from rlmagent.model._oai.normalize import EventAssembler
+from rlmagent.model._oai.parsers import (
     CallArgFragment,
     CallBegin,
     CallResolved,
@@ -48,9 +48,9 @@ from rlmagent_model._oai.parsers import (
     ResponsesDecoder,
     TextChunk,
 )
-from rlmagent_model._oai.payloads import build_chat_payload, build_responses_payload
-from rlmagent_model._oai.transport import HttpStreamError, MalformedPayload
-from rlmagent_model.settings import ReasoningPolicy
+from rlmagent.model._oai.payloads import build_chat_payload, build_responses_payload
+from rlmagent.model._oai.transport import HttpStreamError, MalformedPayload
+from rlmagent.model.settings import ReasoningPolicy
 
 # ===========================================================================
 # helpers.py

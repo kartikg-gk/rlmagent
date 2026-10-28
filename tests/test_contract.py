@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from rlmagent_app.contract import ContractError, load_contract, parse_contract
+from rlmagent.contract import ContractError, load_contract, parse_contract
 
 VALID = {
     "format": "rlmagent.run/1",

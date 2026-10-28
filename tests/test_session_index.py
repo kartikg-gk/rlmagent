@@ -8,7 +8,7 @@ from time import time
 
 import pytest
 
-from rlmagent_harness.session.index import (
+from rlmagent.harness.session.index import (
     SessionCatalog,
     SessionMeta,
     _wire_to_meta,
@@ -21,7 +21,6 @@ async def _begin(session) -> None:
     async def _no_title() -> str:
         return ""
 
-    session.auto_name = _no_title
     async for _ in session.submit("hello"):
         pass
 
@@ -293,14 +292,14 @@ class TestCodingSessionIntegration:
 
     @pytest.mark.asyncio
     async def test_create_indexes_session(self, tmp_path: Path) -> None:
-        from rlmagent_app.conversation import CodingSession
-        from rlmagent_harness.contracts.transcript import ModelEntry, TextSegment
-        from rlmagent_harness.contracts.transcript.diagnostics import (
+        from rlmagent.conversation import CodingSession
+        from rlmagent.harness.contracts.transcript import ModelEntry, TextSegment
+        from rlmagent.harness.contracts.transcript.diagnostics import (
             CostBreakdown,
             UsageStats,
         )
-        from rlmagent_harness.provider.wire import StreamCloseEvent
-        from rlmagent_model.scripted import ReplayProvider
+        from rlmagent.harness.provider.wire import StreamCloseEvent
+        from rlmagent.model.scripted import ReplayProvider
 
         reply = ModelEntry(
             model="test-model",
@@ -335,14 +334,14 @@ class TestCodingSessionIntegration:
 
     @pytest.mark.asyncio
     async def test_resume_touches_catalog(self, tmp_path: Path) -> None:
-        from rlmagent_app.conversation import CodingSession
-        from rlmagent_harness.contracts.transcript import ModelEntry, TextSegment
-        from rlmagent_harness.contracts.transcript.diagnostics import (
+        from rlmagent.conversation import CodingSession
+        from rlmagent.harness.contracts.transcript import ModelEntry, TextSegment
+        from rlmagent.harness.contracts.transcript.diagnostics import (
             CostBreakdown,
             UsageStats,
         )
-        from rlmagent_harness.provider.wire import StreamCloseEvent
-        from rlmagent_model.scripted import ReplayProvider
+        from rlmagent.harness.provider.wire import StreamCloseEvent
+        from rlmagent.model.scripted import ReplayProvider
 
         reply = ModelEntry(
             model="test-model",
@@ -398,14 +397,14 @@ class TestCodingSessionIntegration:
 
     @pytest.mark.asyncio
     async def test_cmd_name_syncs_to_catalog(self, tmp_path: Path) -> None:
-        from rlmagent_app.conversation import CodingSession
-        from rlmagent_harness.contracts.transcript import ModelEntry, TextSegment
-        from rlmagent_harness.contracts.transcript.diagnostics import (
+        from rlmagent.conversation import CodingSession
+        from rlmagent.harness.contracts.transcript import ModelEntry, TextSegment
+        from rlmagent.harness.contracts.transcript.diagnostics import (
             CostBreakdown,
             UsageStats,
         )
-        from rlmagent_harness.provider.wire import StreamCloseEvent
-        from rlmagent_model.scripted import ReplayProvider
+        from rlmagent.harness.provider.wire import StreamCloseEvent
+        from rlmagent.model.scripted import ReplayProvider
 
         reply = ModelEntry(
             model="test-model",
@@ -438,8 +437,8 @@ class TestCodingSessionIntegration:
 
     @pytest.mark.asyncio
     async def test_ephemeral_session_has_no_catalog(self) -> None:
-        from rlmagent_app.conversation import CodingSession
-        from rlmagent_model.scripted import ReplayProvider
+        from rlmagent.conversation import CodingSession
+        from rlmagent.model.scripted import ReplayProvider
 
         session = await CodingSession.create(
             provider=ReplayProvider([]),

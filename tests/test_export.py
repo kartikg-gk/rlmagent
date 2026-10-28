@@ -11,7 +11,7 @@ sys.path.insert(0, str(__file__.rsplit("test_export.py", 1)[0]))
 
 from _session_helpers import _make_session, _text_turn  # noqa: E402
 
-from rlmagent_app.conversation import parse_export_arg  # noqa: E402
+from rlmagent.conversation import parse_export_arg  # noqa: E402
 
 
 async def _session_with_history(tmp_path):

@@ -1,4 +1,4 @@
-"""Tests for rlmagent_app.ui.render."""
+"""Tests for rlmagent.ui.render."""
 
 from __future__ import annotations
 
@@ -7,22 +7,22 @@ import json
 
 import pytest
 
-from rlmagent_app.ui.render import (
+from rlmagent.ui.render import (
     FinalTextRenderer,
     JsonRenderer,
     OutputMode,
     TranscriptRenderer,
     make_renderer,
 )
-from rlmagent_harness.contracts.stream import (
+from rlmagent.harness.contracts.stream import (
     MessageEndEvent,
     MessageUpdateEvent,
     RunStartEvent,
     ToolRunEndEvent,
     ToolRunStartEvent,
 )
-from rlmagent_harness.contracts.tooling import ToolOutcome
-from rlmagent_harness.contracts.transcript import ModelEntry, TextSegment
+from rlmagent.harness.contracts.tooling import ToolOutcome
+from rlmagent.harness.contracts.transcript import ModelEntry, TextSegment
 
 
 def _model_entry(text: str = "hello", **kw) -> ModelEntry:

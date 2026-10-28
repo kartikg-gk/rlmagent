@@ -4,8 +4,8 @@ from _scripted import code_turn, text_turn
 from test_improve import PROPOSAL, SKILL, _setup, _submit
 from test_playbook_auto import YES, _auto
 
-from rlmagent_app.playbook.digest import render
-from rlmagent_app.playbook.store import Entry
+from rlmagent.playbook.digest import render
+from rlmagent.playbook.store import Entry
 
 
 async def test_compaction_only_marks_a_check_that_runs_at_the_next_boundary(tmp_path):

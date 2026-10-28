@@ -1,16 +1,16 @@
-"""Tests for rlmagent_harness.driver."""
+"""Tests for rlmagent.harness.driver."""
 
 from __future__ import annotations
 
 import pytest
 
-from rlmagent_harness.contracts.transcript import (
+from rlmagent.harness.contracts.transcript import (
     CallBlock,
     HumanEntry,
     ModelEntry,
     ToolOutcomeEntry,
 )
-from rlmagent_harness.driver import (
+from rlmagent.harness.driver import (
     ManualCancelFlag,
     PendingBatch,
     RuntimeConfig,

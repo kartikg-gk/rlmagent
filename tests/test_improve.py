@@ -3,11 +3,11 @@ import json
 from _scripted import code_turn, text_turn
 from rlmness import Allowance
 
-from rlmagent_app.agents.tree import AgentTree
-from rlmagent_app.conversation import CodingSession
-from rlmagent_app.playbook.improver import Improver
-from rlmagent_app.tools import build_tool_registry
-from rlmagent_model.scripted import ReplayProvider
+from rlmagent.agents.tree import AgentTree
+from rlmagent.conversation import CodingSession
+from rlmagent.playbook.improver import Improver
+from rlmagent.tools import build_tool_registry
+from rlmagent.model.scripted import ReplayProvider
 
 PROPOSAL = json.dumps({
     "summary": "keep the test command", "rationale": "user said so", "expected": "fewer retries",
@@ -107,7 +107,7 @@ async def test_kernel_reads_entries_and_loads_skills(tmp_path):
 
 
 def test_root_prompt_mentions_improve_only_when_the_playbook_is_on():
-    from rlmagent_app.agents.prompts import root_system
+    from rlmagent.agents.prompts import root_system
 
     assert "improve(" in root_system("B", can_delegate=True, playbook=True)
     assert "improve(" not in root_system("B", can_delegate=True)
@@ -116,7 +116,7 @@ def test_root_prompt_mentions_improve_only_when_the_playbook_is_on():
 def test_the_app_attaches_an_improver():
     import inspect
 
-    from rlmagent_app import runtime
+    from rlmagent import runtime
 
     source = inspect.getsource(runtime.build_session)
     assert "Improver(" in source and "show_digest()" in source and "playbook=True" in source

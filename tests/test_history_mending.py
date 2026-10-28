@@ -4,21 +4,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rlmagent_app.conversation import CodingSession
-from rlmagent_harness.contracts.transcript import (
+from rlmagent.conversation import CodingSession
+from rlmagent.harness.contracts.transcript import (
     CallBlock,
     HumanEntry,
     ModelEntry,
     TextSegment,
     ToolOutcomeEntry,
 )
-from rlmagent_harness.driver import RuntimeConfig, RuntimeHarness
-from rlmagent_harness.mending import INTERRUPTED_RESULT_TEXT, mend_tool_history
-from rlmagent_harness.provider.wire import StreamCloseEvent
-from rlmagent_harness.session.records import ExtensionRecord, TipRecord, TranscriptRecord
-from rlmagent_harness.session.replay import find_tip
-from rlmagent_harness.session.store import JsonlVault
-from rlmagent_model.scripted import ReplayProvider
+from rlmagent.harness.driver import RuntimeConfig, RuntimeHarness
+from rlmagent.harness.mending import INTERRUPTED_RESULT_TEXT, mend_tool_history
+from rlmagent.harness.provider.wire import StreamCloseEvent
+from rlmagent.harness.session.records import ExtensionRecord, TipRecord, TranscriptRecord
+from rlmagent.harness.session.replay import find_tip
+from rlmagent.harness.session.store import JsonlVault
+from rlmagent.model.scripted import ReplayProvider
 
 
 def _calls(*ids: str) -> ModelEntry:

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from rlmagent_app.conversation import CodingSession, SessionStats
-from rlmagent_harness.contracts.stream import (
+from rlmagent.conversation import CodingSession, SessionStats
+from rlmagent.harness.contracts.stream import (
     AgentEvent,
     MessageEndEvent,
     MessageStartEvent,
@@ -17,16 +17,16 @@ from rlmagent_harness.contracts.stream import (
     TurnEndEvent,
     TurnStartEvent,
 )
-from rlmagent_harness.contracts.tooling import ToolSpec
-from rlmagent_harness.contracts.transcript import (
+from rlmagent.harness.contracts.tooling import ToolSpec
+from rlmagent.harness.contracts.transcript import (
     HumanEntry,
     ModelEntry,
     PruneSummaryEntry,
     TextSegment,
 )
-from rlmagent_harness.contracts.transcript.diagnostics import CostBreakdown, UsageStats
-from rlmagent_harness.provider.wire import StreamCloseEvent
-from rlmagent_harness.session.records import (
+from rlmagent.harness.contracts.transcript.diagnostics import CostBreakdown, UsageStats
+from rlmagent.harness.provider.wire import StreamCloseEvent
+from rlmagent.harness.session.records import (
     ModelSwapRecord,
     PruneRecord,
     ReasoningLevelRecord,
@@ -36,9 +36,9 @@ from rlmagent_harness.session.records import (
     TipRecord,
     TranscriptRecord,
 )
-from rlmagent_harness.session.replay import find_tip, project_records
-from rlmagent_harness.session.store import JsonlVault
-from rlmagent_model.scripted import ReplayProvider
+from rlmagent.harness.session.replay import find_tip, project_records
+from rlmagent.harness.session.store import JsonlVault
+from rlmagent.model.scripted import ReplayProvider
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
@@ -47,7 +47,6 @@ async def _begin(session) -> None:
     async def _no_title() -> str:
         return ""
 
-    session.auto_name = _no_title
     async for _ in session.submit("hello"):
         pass
 
@@ -632,7 +631,7 @@ async def test_branch_with_summary(tmp_path: Path) -> None:
 
     vault = JsonlVault(tmp_path / f"{session.session_id}.jsonl")
     records = await vault.read_all()
-    from rlmagent_harness.session.records import ForkSummaryRecord
+    from rlmagent.harness.session.records import ForkSummaryRecord
 
     forks = [r for r in records if isinstance(r, ForkSummaryRecord)]
     assert len(forks) == 1
@@ -1042,7 +1041,6 @@ def test_find_tip() -> None:
 async def test_multiple_submits_accumulate() -> None:
     replies = [
         _make_reply("R1", input_tokens=100, output_tokens=50, cost=0.001),
-        _make_reply("Auto Title", input_tokens=10, output_tokens=5, cost=0.0),
         _make_reply("R2", input_tokens=200, output_tokens=80, cost=0.002),
     ]
     provider = _make_provider(replies)
@@ -1053,7 +1051,6 @@ async def test_multiple_submits_accumulate() -> None:
         system="You are helpful.",
     )
 
-    # First submit triggers auto-naming (consumes an extra stream)
     await _collect_events(session.submit("First"))
     await _collect_events(session.submit("Second"))
 
@@ -1126,7 +1123,7 @@ async def test_context_estimation() -> None:
 class TestThinkingLevelReachesProvider:
     class _RecordingProvider:
         def __init__(self) -> None:
-            from rlmagent_model.settings import ReasoningPolicy
+            from rlmagent.model.settings import ReasoningPolicy
 
             self.policy = ReasoningPolicy()
 
@@ -1137,7 +1134,7 @@ class TestThinkingLevelReachesProvider:
             raise NotImplementedError
 
     async def _session(self, tmp_path: Path):  # noqa: ANN202
-        from rlmagent_app.conversation import CodingSession
+        from rlmagent.conversation import CodingSession
 
         provider = self._RecordingProvider()
         session = await CodingSession.create(
@@ -1171,7 +1168,7 @@ class TestThinkingLevelReachesProvider:
     async def test_provider_without_set_reasoning_is_tolerated(
         self, tmp_path: Path,
     ) -> None:
-        from rlmagent_app.conversation import CodingSession
+        from rlmagent.conversation import CodingSession
 
         class Bare:
             def stream_response(self, **kwargs):  # noqa: ANN003, ANN201
@@ -1191,8 +1188,8 @@ class TestThinkingLevelReachesProvider:
 
 class TestPromptTemplatesAreLoaded:
     async def test_templates_load_and_expand(self, tmp_path: Path) -> None:
-        from rlmagent_app.cli.main import _load_prompt_templates
-        from rlmagent_app.conversation import CodingSession
+        from rlmagent.cli.main import _load_prompt_templates
+        from rlmagent.conversation import CodingSession
 
         prompts_dir = tmp_path / ".rlm-agent" / "prompts"
         prompts_dir.mkdir(parents=True)
@@ -1218,7 +1215,7 @@ class TestPromptTemplatesAreLoaded:
         assert "the auth module" in expanded
 
     async def test_non_template_command_not_swallowed(self, tmp_path: Path) -> None:
-        from rlmagent_app.conversation import CodingSession
+        from rlmagent.conversation import CodingSession
 
         session = await CodingSession.create(
             provider=_make_provider(),

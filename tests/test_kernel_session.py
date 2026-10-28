@@ -1,6 +1,6 @@
 import pytest
 
-from rlmagent_app.kernel.session import KernelSession, clip
+from rlmagent.kernel.session import KernelSession, clip
 
 
 
@@ -97,7 +97,7 @@ async def test_setup_code_errors_are_reported(tmp_path):
 
 
 async def test_a_kernel_that_cannot_start_is_shut_down_and_reported(tmp_path, monkeypatch):
-    import rlmagent_app.kernel.session as module
+    import rlmagent.kernel.session as module
 
     shut = []
 

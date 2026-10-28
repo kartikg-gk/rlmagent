@@ -2,7 +2,7 @@ import argparse
 
 import pytest
 
-from rlmagent_app.agents.prompts import (
+from rlmagent.agents.prompts import (
     LEAF_NOTE,
     RESUMED_NOTICE,
     child_first_message,
@@ -10,7 +10,7 @@ from rlmagent_app.agents.prompts import (
     context_preview,
     root_system,
 )
-from rlmagent_app.agents.tree import AgentNode
+from rlmagent.agents.tree import AgentNode
 
 
 def test_root_prompt_explains_delegation():
@@ -43,7 +43,7 @@ def test_resumed_notice_mentions_lost_variables():
 
 
 def test_cli_accepts_budget_flags():
-    from rlmagent_app.cli.main import _build_run_parser
+    from rlmagent.cli.main import _build_run_parser
 
     ns = _build_run_parser().parse_args(
         ["--max-depth", "1", "--max-cost", "0.5", "--max-calls", "9", "--cell-timeout", "30"]
@@ -55,10 +55,10 @@ def test_cli_accepts_budget_flags():
 async def test_session_shutdown_closes_the_tree(tmp_path, monkeypatch):
     from rlmness import Allowance
 
-    from rlmagent_app.agents.tree import AgentTree
-    from rlmagent_app.conversation import CodingSession
-    from rlmagent_app.tools import build_tool_registry
-    from rlmagent_model.scripted import ReplayProvider
+    from rlmagent.agents.tree import AgentTree
+    from rlmagent.conversation import CodingSession
+    from rlmagent.tools import build_tool_registry
+    from rlmagent.model.scripted import ReplayProvider
 
     tree = AgentTree(
         provider=ReplayProvider([]), provider_name="replay", model="m", cwd=str(tmp_path),
@@ -85,8 +85,8 @@ async def test_parent_session_records_its_sub_agent_sessions(tmp_path):
     from _scripted import code_turn, text_turn
     from rlmness import Allowance
 
-    from rlmagent_app.agents.tree import AgentTree
-    from rlmagent_model.scripted import ReplayProvider
+    from rlmagent.agents.tree import AgentTree
+    from rlmagent.model.scripted import ReplayProvider
 
     tree = AgentTree(
         provider=ReplayProvider([code_turn("FINAL(1)"), text_turn("ok")]), provider_name="replay",
@@ -106,9 +106,9 @@ async def test_parent_session_records_its_sub_agent_sessions(tmp_path):
 async def test_compaction_summary_says_the_kernel_is_still_running():
     from test_coding_session import _collect_events, _make_provider, _make_reply
 
-    from rlmagent_app.agents.prompts import COMPACTION_NOTE
-    from rlmagent_app.conversation import CodingSession
-    from rlmagent_harness.provider.wire import StreamCloseEvent
+    from rlmagent.agents.prompts import COMPACTION_NOTE
+    from rlmagent.conversation import CodingSession
+    from rlmagent.harness.provider.wire import StreamCloseEvent
 
     provider = _make_provider([_make_reply(f"Reply {i}") for i in range(6)])
     session = await CodingSession.create(
@@ -126,7 +126,7 @@ async def test_compaction_summary_says_the_kernel_is_still_running():
 async def test_a_resumed_session_tells_the_model_its_kernel_is_new(tmp_path):
     from test_coding_session import _collect_events, _make_provider
 
-    from rlmagent_app.conversation import CodingSession
+    from rlmagent.conversation import CodingSession
 
     session = await CodingSession.create(
         provider=_make_provider(), provider_name="test", model="test-model", system="s",
@@ -149,9 +149,9 @@ async def test_a_resumed_session_tells_the_model_its_kernel_is_new(tmp_path):
 
 @pytest.mark.asyncio
 async def test_agent_tree_follows_the_command_line_limits(tmp_path):
-    from rlmagent_app.cli.main import _build_run_parser
-    from rlmagent_app.runtime import make_agent_tree
-    from rlmagent_model.scripted import ReplayProvider
+    from rlmagent.cli.main import _build_run_parser
+    from rlmagent.runtime import make_agent_tree
+    from rlmagent.model.scripted import ReplayProvider
 
     ns = _build_run_parser().parse_args(
         ["--max-depth", "1", "--max-calls", "9", "--max-cost", "0.5", "--max-live", "3",
@@ -177,9 +177,9 @@ async def test_root_kernel_from_make_agent_tree_reaches_the_bridge(tmp_path):
     sys.path.insert(0, "tests")
     from _scripted import code_turn, text_turn
 
-    from rlmagent_app.cli.main import _build_run_parser
-    from rlmagent_app.runtime import make_agent_tree
-    from rlmagent_model.scripted import ReplayProvider
+    from rlmagent.cli.main import _build_run_parser
+    from rlmagent.runtime import make_agent_tree
+    from rlmagent.model.scripted import ReplayProvider
 
     ns = _build_run_parser().parse_args(["--cell-timeout", "40"])
     provider = ReplayProvider([code_turn("FINAL(5)"), text_turn("ok")])
@@ -204,10 +204,10 @@ def test_child_first_message_says_only_final_returns_the_answer():
 async def test_switching_provider_or_model_keeps_the_budget_and_reaches_sub_agents(tmp_path):
     from rlmness import Allowance
 
-    from rlmagent_app.agents.budget import BudgetedProvider
-    from rlmagent_app.agents.tree import AgentTree
-    from rlmagent_app.conversation import CodingSession
-    from rlmagent_model.scripted import ReplayProvider
+    from rlmagent.agents.budget import BudgetedProvider
+    from rlmagent.agents.tree import AgentTree
+    from rlmagent.conversation import CodingSession
+    from rlmagent.model.scripted import ReplayProvider
 
     allowance = Allowance(max_cost=10.0)
     tree = AgentTree(
@@ -236,7 +236,7 @@ async def test_switching_provider_or_model_keeps_the_budget_and_reaches_sub_agen
 async def test_sub_agent_records_survive_resume(tmp_path):
     from test_coding_session import _collect_events, _make_provider
 
-    from rlmagent_app.conversation import CodingSession
+    from rlmagent.conversation import CodingSession
 
     session = await CodingSession.create(
         provider=_make_provider(), provider_name="test", model="test-model", system="s",
@@ -257,9 +257,9 @@ async def test_sub_agent_records_survive_resume(tmp_path):
 
 
 def test_cli_accepts_max_agents_and_the_tree_uses_it(tmp_path):
-    from rlmagent_app.cli.main import _build_run_parser
-    from rlmagent_app.runtime import make_agent_tree
-    from rlmagent_model.scripted import ReplayProvider
+    from rlmagent.cli.main import _build_run_parser
+    from rlmagent.runtime import make_agent_tree
+    from rlmagent.model.scripted import ReplayProvider
 
     ns = _build_run_parser().parse_args(["--max-agents", "7"])
     assert make_agent_tree(ns, ReplayProvider([]), "r", "m", None, cwd=str(tmp_path)).max_agents == 7

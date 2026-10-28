@@ -6,18 +6,18 @@ from collections.abc import Mapping
 
 import pytest
 
-from rlmagent_app.conversation import CodingSession
-from rlmagent_app.planning import (
+from rlmagent.conversation import CodingSession
+from rlmagent.planning import (
     PLAN_MODE_INSTRUCTIONS,
     plan_system_prompt,
     restrict_tools,
 )
-from rlmagent_harness.contracts.tooling import ToolOutcome, ToolSpec
-from rlmagent_harness.contracts.transcript import ModelEntry, TextSegment
-from rlmagent_harness.contracts.transcript.diagnostics import CostBreakdown, UsageStats
-from rlmagent_harness.contracts.values import JValue
-from rlmagent_harness.provider.wire import StreamCloseEvent
-from rlmagent_model.scripted import ReplayProvider
+from rlmagent.harness.contracts.tooling import ToolOutcome, ToolSpec
+from rlmagent.harness.contracts.transcript import ModelEntry, TextSegment
+from rlmagent.harness.contracts.transcript.diagnostics import CostBreakdown, UsageStats
+from rlmagent.harness.contracts.values import JValue
+from rlmagent.harness.provider.wire import StreamCloseEvent
+from rlmagent.model.scripted import ReplayProvider
 
 # ── helpers ────────────────────────────────────────────────────────────────
 

@@ -4,21 +4,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rlmagent_app.conversation import CodingSession
-from rlmagent_harness.contracts.stream import RunEndEvent
-from rlmagent_harness.contracts.transcript import (
+from rlmagent.conversation import CodingSession
+from rlmagent.harness.contracts.stream import RunEndEvent
+from rlmagent.harness.contracts.transcript import (
     HumanEntry,
     ModelEntry,
     PruneSummaryEntry,
     TextSegment,
     ThoughtSegment,
 )
-from rlmagent_harness.provider.wire import StreamCloseEvent, StreamFaultEvent
-from rlmagent_harness.session.records import TranscriptRecord
-from rlmagent_harness.session.store import JsonlVault
-from rlmagent_model._oai.normalize import EventAssembler
-from rlmagent_model._oai.parsers import ChatDecoder
-from rlmagent_model.scripted import ReplayProvider
+from rlmagent.harness.provider.wire import StreamCloseEvent, StreamFaultEvent
+from rlmagent.harness.session.records import TranscriptRecord
+from rlmagent.harness.session.store import JsonlVault
+from rlmagent.model._oai.normalize import EventAssembler
+from rlmagent.model._oai.parsers import ChatDecoder
+from rlmagent.model.scripted import ReplayProvider
 
 # ---------------------------------------------------------------------------
 # Session files survive Unicode line separators in message text
@@ -69,7 +69,7 @@ def test_alternating_fragments_do_not_split_sentences() -> None:
 
 def test_responses_api_keeps_sequential_blocks() -> None:
     assembler = EventAssembler(model="m", provider="p", api="responses")
-    from rlmagent_model._oai.parsers import ReasoningChunk, TextChunk
+    from rlmagent.model._oai.parsers import ReasoningChunk, TextChunk
 
     for signal in (ReasoningChunk("a"), TextChunk("b"), ReasoningChunk("c")):
         assembler.accept(signal)
@@ -103,7 +103,6 @@ async def _session(tmp_path: Path, streams: list) -> tuple[CodingSession, Replay
     async def no_title() -> str:
         return ""
 
-    session.auto_name = no_title  # type: ignore[method-assign]
     return session, provider
 
 
@@ -134,7 +133,7 @@ async def test_overflow_with_nothing_to_compact_surfaces_the_error(tmp_path: Pat
 
 
 async def test_oversized_image_is_refused_not_attached(tmp_path: Path) -> None:
-    from rlmagent_app.tools.files import make_read_tool
+    from rlmagent.tools.files import make_read_tool
 
     big = tmp_path / "shot.png"
     big.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 5_100_000)
@@ -149,9 +148,9 @@ async def test_oversized_image_is_refused_not_attached(tmp_path: Path) -> None:
 
 
 async def test_unused_session_leaves_nothing_behind(tmp_path: Path) -> None:
-    from rlmagent_app.conversation import CodingSession
-    from rlmagent_harness.session.index import SessionCatalog
-    from rlmagent_model.scripted import ReplayProvider
+    from rlmagent.conversation import CodingSession
+    from rlmagent.harness.session.index import SessionCatalog
+    from rlmagent.model.scripted import ReplayProvider
 
     session = await CodingSession.create(
         provider=ReplayProvider([]), provider_name="t", model="m", system="s",
@@ -164,10 +163,10 @@ async def test_unused_session_leaves_nothing_behind(tmp_path: Path) -> None:
 
 
 async def test_first_record_saves_header_and_index_row(tmp_path: Path) -> None:
-    from rlmagent_app.conversation import CodingSession
-    from rlmagent_harness.session.index import SessionCatalog
-    from rlmagent_harness.session.records import SessionMetaRecord
-    from rlmagent_model.scripted import ReplayProvider
+    from rlmagent.conversation import CodingSession
+    from rlmagent.harness.session.index import SessionCatalog
+    from rlmagent.harness.session.records import SessionMetaRecord
+    from rlmagent.model.scripted import ReplayProvider
 
     session = await CodingSession.create(
         provider=ReplayProvider([]), provider_name="t", model="m", system="s",

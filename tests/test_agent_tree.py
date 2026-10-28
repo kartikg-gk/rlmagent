@@ -1,9 +1,9 @@
 import pytest
 from rlmness import Allowance
 
-from rlmagent_app.agents.tree import NEVER_FINAL, AgentTree
-from rlmagent_app.tools import build_tool_registry
-from rlmagent_model.scripted import ReplayProvider
+from rlmagent.agents.tree import NEVER_FINAL, AgentTree
+from rlmagent.tools import build_tool_registry
+from rlmagent.model.scripted import ReplayProvider
 from _scripted import code_turn, text_turn
 
 
@@ -176,8 +176,8 @@ async def test_waiting_on_a_sub_agent_does_not_count_against_the_cell_timeout(tm
 
 
 async def test_each_session_file_lists_the_sub_agents_it_started(tmp_path):
-    from rlmagent_app.conversation import CodingSession
-    from rlmagent_app.tools import build_tool_registry
+    from rlmagent.conversation import CodingSession
+    from rlmagent.tools import build_tool_registry
 
     tree = _tree(tmp_path, [
         code_turn("x = await rlm('grandchild')\nFINAL(x)"),   # child

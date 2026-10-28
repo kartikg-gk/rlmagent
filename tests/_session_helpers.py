@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from rlmagent_app.conversation import CodingSession
-from rlmagent_harness.contracts.transcript import CallBlock, ModelEntry, TextSegment
-from rlmagent_harness.provider.wire import (
+from rlmagent.conversation import CodingSession
+from rlmagent.harness.contracts.transcript import CallBlock, ModelEntry, TextSegment
+from rlmagent.harness.provider.wire import (
     CallCloseEvent,
     ContentChunkEvent,
     StreamCloseEvent,
 )
-from rlmagent_model.scripted import ReplayProvider
+from rlmagent.model.scripted import ReplayProvider
 
 
 def _text_turn(chunks: list[str]) -> list:
@@ -37,7 +37,7 @@ def _tool_turn(path: str) -> list:
 
 
 async def _make_session(tmp_path, streams) -> CodingSession:
-    from rlmagent_app.tools import build_tool_registry
+    from rlmagent.tools import build_tool_registry
 
     return await CodingSession.create(
         provider=ReplayProvider(streams),

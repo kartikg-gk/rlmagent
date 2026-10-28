@@ -1,4 +1,4 @@
-"""Tests for rlmagent_app.tools.files (Read, Write, Edit tools)."""
+"""Tests for rlmagent.tools.files (Read, Write, Edit tools)."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from rlmagent_app.tools.files import file_tools, make_edit_tool, make_read_tool, make_write_tool
-from rlmagent_harness.contracts.transcript import ImageSegment
+from rlmagent.tools.files import file_tools, make_edit_tool, make_read_tool, make_write_tool
+from rlmagent.harness.contracts.transcript import ImageSegment
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -402,12 +402,12 @@ class TestEditTool:
 
 class TestSharedHelpers:
     def test_truncate_output_short(self):
-        from rlmagent_app.tools._shared import truncate_output
+        from rlmagent.tools._shared import truncate_output
         text = "a\nb\nc"
         assert truncate_output(text, max_lines=10) == text
 
     def test_truncate_output_long(self):
-        from rlmagent_app.tools._shared import truncate_output
+        from rlmagent.tools._shared import truncate_output
         text = "\n".join(f"line {i}" for i in range(100))
         result = truncate_output(text, max_lines=5)
         assert "line 0" in result
@@ -416,7 +416,7 @@ class TestSharedHelpers:
         assert "truncated" in result.lower()
 
     def test_format_with_line_numbers(self):
-        from rlmagent_app.tools._shared import format_with_line_numbers
+        from rlmagent.tools._shared import format_with_line_numbers
         text = "alpha\nbeta\ngamma"
         result = format_with_line_numbers(text, start=1)
         lines = result.split("\n")
@@ -426,54 +426,54 @@ class TestSharedHelpers:
         assert "gamma" in lines[2]
 
     def test_format_with_line_numbers_offset(self):
-        from rlmagent_app.tools._shared import format_with_line_numbers
+        from rlmagent.tools._shared import format_with_line_numbers
         result = format_with_line_numbers("a\nb", start=42)
         assert "42" in result
         assert "43" in result
 
     def test_validate_file_path_absolute(self, tmp_path):
-        from rlmagent_app.tools._shared import validate_file_path
+        from rlmagent.tools._shared import validate_file_path
         p = validate_file_path(str(tmp_path / "test.txt"))
         assert p.is_absolute()
 
     def test_validate_file_path_relative_rejected(self):
-        from rlmagent_app.tools._shared import validate_file_path
+        from rlmagent.tools._shared import validate_file_path
         with pytest.raises(ValueError, match="absolute"):
             validate_file_path("relative/path.txt")
 
     def test_validate_file_path_empty_rejected(self):
-        from rlmagent_app.tools._shared import validate_file_path
+        from rlmagent.tools._shared import validate_file_path
         with pytest.raises(ValueError, match="empty"):
             validate_file_path("  ")
 
     def test_require_str_present(self):
-        from rlmagent_app.tools._shared import require_str
+        from rlmagent.tools._shared import require_str
         assert require_str({"key": "val"}, "key") == "val"
 
     def test_require_str_missing(self):
-        from rlmagent_app.tools._shared import require_str
+        from rlmagent.tools._shared import require_str
         with pytest.raises(ValueError):
             require_str({}, "key")
 
     def test_optional_int(self):
-        from rlmagent_app.tools._shared import optional_int
+        from rlmagent.tools._shared import optional_int
         assert optional_int({"n": 42}, "n") == 42
         assert optional_int({"n": 3.0}, "n") == 3
         assert optional_int({}, "n") is None
         assert optional_int({"n": "nope"}, "n") is None
 
     def test_optional_bool(self):
-        from rlmagent_app.tools._shared import optional_bool
+        from rlmagent.tools._shared import optional_bool
         assert optional_bool({"b": True}, "b") is True
         assert optional_bool({"b": False}, "b") is False
         assert optional_bool({}, "b") is None
 
     def test_fault_outcome(self):
-        from rlmagent_app.tools._shared import fault
+        from rlmagent.tools._shared import fault
         result = fault("something broke")
         assert result.text == "something broke"
 
     def test_text_outcome(self):
-        from rlmagent_app.tools._shared import text_outcome
+        from rlmagent.tools._shared import text_outcome
         result = text_outcome("hello")
         assert result.text == "hello"
