@@ -19,7 +19,7 @@ from rlmagent.model.settings import (
 # Known provider identifiers
 # ---------------------------------------------------------------------------
 
-_KNOWN_PROVIDERS = ("anthropic", "openai", "openrouter", "ollama", "huggingface", "scripted")
+_KNOWN_PROVIDERS = ("anthropic", "openai", "openrouter", "ollama", "huggingface", "scripted", "cli")
 
 # OpenAI-compatible backends reuse the OpenAI adapter with a different base URL.
 _OPENAI_COMPATIBLE = ("openai", "openrouter", "ollama", "huggingface")
@@ -105,6 +105,11 @@ def resolve_provider(name: str | None = None) -> ModelProvider:
         # "openrouter" or "ollama" rather than the shared adapter's "openai".
         profile = replace(load_openai_profile(), name=resolved)
         return _build_openai(profile)
+
+    if resolved == "cli":
+        from rlmagent.model.external import ExternalAgentProvider
+
+        return ExternalAgentProvider()  # type: ignore[return-value]
 
     if resolved == "scripted":
         from rlmagent.model.scripted import ReplayProvider

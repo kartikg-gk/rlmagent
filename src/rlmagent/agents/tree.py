@@ -17,6 +17,7 @@ from rlmagent.agents.bridge import BridgeServer, kernel_env
 from rlmagent.agents.kernel_api import KERNEL_API
 from rlmagent.kernel import KernelSession
 from rlmagent.tools import build_tool_registry
+from rlmagent.model.external import is_external, parse_model, with_external
 from rlmagent.harness.contracts.tooling import ToolSpec
 
 NUDGE = (
@@ -39,6 +40,7 @@ class AgentNode:
     final_given: bool = False
     final_note: str = ""
     role_text: str = ""
+    model: str | None = None
 
 
 @dataclass
@@ -77,7 +79,7 @@ class AgentTree:
         max_agents: int = 50,
         tracer: Tracer | None = None,
     ) -> None:
-        self.provider = BudgetedProvider(provider, allowance)
+        self.provider = BudgetedProvider(with_external(provider), allowance)
         self.provider_name = provider_name
         self.model = model
         self.cwd = cwd
@@ -112,7 +114,7 @@ class AgentTree:
 
     def use_provider(self, provider, provider_name: str) -> BudgetedProvider:
         """Switch every agent, from the next call on, to `provider`, under the same budget."""
-        self.provider = BudgetedProvider(provider, self.allowance)
+        self.provider = BudgetedProvider(with_external(provider), self.allowance)
         self.provider_name = provider_name
         return self.provider
 
@@ -182,13 +184,13 @@ class AgentTree:
         if op == "spawn":
             return self.spawn(
                 agent_id, str(args.get("task", "")), args.get("context"), bool(args.get("keep")),
-                role=args.get("role"),
+                role=args.get("role"), model=args.get("model"),
             )
         if op == "children":
             return list(self._kids.get(agent_id, []))
         if op == "rlm":
             child = self.records[self.spawn(agent_id, str(args.get("task", "")), args.get("context"),
-                                            role=args.get("role"))]
+                                            role=args.get("role"), model=args.get("model"))]
             async with self._waiting_on_children(node):
                 try:
                     return await self._result(child, None)
@@ -277,9 +279,11 @@ class AgentTree:
             self._live.release()
 
     def spawn(self, parent_id: str, task: str, context: object, keep: bool = False,
-              role: str | None = None) -> str:
+              role: str | None = None, model: str | None = None) -> str:
         parent = self.nodes[parent_id]
         role_text = self._role(role) if role else ""
+        if is_external(model):
+            parse_model(model)
         if not self._can_delegate(parent):
             raise RuntimeError("sub-agents are not available at this depth")
         if self._agents_started >= self.max_agents:
@@ -292,6 +296,7 @@ class AgentTree:
             task=task,
             context=context,
             role_text=role_text,
+            model=model or parent.model,
         )
         self.nodes[node.id] = node
         rec = ChildRecord(node=node, keep=keep)
@@ -354,7 +359,7 @@ class AgentTree:
             session = await CodingSession.create(
                 provider=self.provider_for(node.id),
                 provider_name=self.provider_name,
-                model=self.model,
+                model=node.model or self.model,
                 system=self.system_for(node, tools) + (f"\n\n{node.role_text}" if node.role_text else ""),
                 tools=tools,
                 sessions_dir=self.sessions_dir,
