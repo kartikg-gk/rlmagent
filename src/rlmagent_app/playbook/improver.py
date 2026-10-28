@@ -91,8 +91,9 @@ class Improver:
 
     async def _auto(self, trigger: str) -> None:
         self._last_check = time.monotonic()
-        tail = self._conversation()[-CHECK_CHARS:]
-        worth_it, focus = parse_check(await self.session._utility_completion(tail, CHECK_SYSTEM))
+        kept = "\n".join(f"- {e.id}: {e.title}: {e.content}" for e in self.entries()) or "(empty)"
+        prompt = f"Current playbook:\n{kept}\n\nRecent conversation:\n{self._conversation()[-CHECK_CHARS:]}"
+        worth_it, focus = parse_check(await self.session._utility_completion(prompt, CHECK_SYSTEM))
         if worth_it:
             instructions = f"{AUTO_NOTE}\nFocus: {focus}" if focus else AUTO_NOTE
             await self.improve(instructions, trigger=trigger)

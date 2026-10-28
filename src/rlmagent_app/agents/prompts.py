@@ -73,8 +73,9 @@ You keep a playbook of rules, memories, skills and sub-agent roles across \
 sessions. When something is worth keeping (a correction from the user, a \
 mistake you repeated, a procedure you did twice, a lasting fact), call \
 `await improve("what to keep")` in the python tool; the playbook is updated \
-when the turn ends. Use `shared=True` only for what every future project \
-should know. `await playbook()` lists entries."""
+when the turn ends. Without `shared=True` it is kept for this session only; \
+pass `shared=True` when the user says to remember it always, in every future \
+session, or for every project. `await playbook()` lists entries."""
 
 
 def root_system(base: str, can_delegate: bool, playbook: bool = False) -> str:
