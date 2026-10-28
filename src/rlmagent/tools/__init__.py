@@ -21,8 +21,12 @@ from rlmagent.tools.kernel import make_python_tool
 
 def build_tool_registry(kernel=None) -> list[ToolSpec]:
     """File tools, plus the python tool when the agent has a kernel."""
+    from rlmagent.kernel.wasm import WasmKernel
+
     tools: list[ToolSpec] = []
-    tools.extend(file_tools())
+    # A sandboxed agent changes files only through its approved workspace functions.
+    sandboxed = isinstance(kernel, WasmKernel)
+    tools.extend(t for t in file_tools() if not sandboxed or t.name == "Read")
     if kernel is not None:
         tools.append(make_python_tool(kernel))
     return tools

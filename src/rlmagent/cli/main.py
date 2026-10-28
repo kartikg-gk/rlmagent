@@ -142,6 +142,14 @@ def _build_run_parser() -> argparse.ArgumentParser:
                    help="Check whether to update the playbook every N assistant turns (default 20).")
     p.add_argument("--improve-cooldown", type=float, default=900.0,
                    help="Seconds between automatic playbook checks (default 900).")
+    p.add_argument("--kernel", choices=("wasm", "local"), default="wasm",
+                   help="Where the python tool runs: a WebAssembly sandbox (default) or a "
+                        "local IPython kernel.")
+    p.add_argument("--no-network", dest="network", action="store_false",
+                   help="Keep the sandbox offline: no internet, no package installs.")
+    p.add_argument("--auto-approve", action="store_true",
+                   help="Let the sandbox write files and run commands without asking. "
+                        "Only for scratch folders.")
     p.add_argument(
         "--contract", metavar="FILE", default=None,
         help="Run with exactly the settings in this run contract (JSON); needs -p.",

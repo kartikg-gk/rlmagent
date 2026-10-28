@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -70,6 +71,8 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
         _resolve_system(getattr(ns, "system_prompt", None), tools=tools, skills=skills),
         can_delegate=tree.allowance.max_depth > 0,
         playbook=True,
+        sandboxed=tree.kernel_kind == "wasm",
+        network=tree.network,
     )
 
     def _tools_loader():
@@ -158,9 +161,26 @@ def make_agent_tree(ns, provider, provider_name, model, sessions_dir, *, cwd):
         max_seconds=getattr(ns, "max_seconds", None),
     )
 
+    from rlmagent.agents.approval import Approver
+    from rlmagent.kernel.wasm import available
+
+    kind = getattr(ns, "kernel", "local")
+    if kind == "wasm" and not available():
+        print("rlm-agent: the WebAssembly sandbox is not set up (run `rlmness --setup`); "
+              "using the local kernel.", file=sys.stderr)
+        kind = "local"
+    network = getattr(ns, "network", True)
+    if getattr(ns, "auto_approve", False):
+        policy = "auto"
+    elif getattr(ns, "print_mode", False) or getattr(ns, "prompt", None) is not None:
+        policy = "deny"
+    else:
+        policy = "ask"
+
     def system_for(node, tools):
         base = _resolve_system(None, tools=tools, skills=[])
-        return child_system(base, node, node.depth < allowance.max_depth)
+        return child_system(base, node, node.depth < allowance.max_depth, sandboxed=kind == "wasm",
+                            network=network)
 
     tree = AgentTree(
         provider=provider,
@@ -173,6 +193,9 @@ def make_agent_tree(ns, provider, provider_name, model, sessions_dir, *, cwd):
         first_message_for=child_first_message,
         cell_timeout=getattr(ns, "cell_timeout", 300.0),
         max_agents=getattr(ns, "max_agents", 50),
+        kernel=kind,
+        approver=Approver(policy),
+        network=network,
     )
     return tree
 

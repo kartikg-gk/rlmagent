@@ -13,6 +13,17 @@ Its working directory is the project root. Run shell commands with a leading `!`
 or with subprocess. Print summaries (lengths, counts, a few lines) rather than \
 whole files or large objects; long output is cut to its start and end."""
 
+SANDBOX_GUIDE = """## Your kernel
+The python tool runs code in one sandboxed kernel (Python compiled to WebAssembly) that stays alive for the whole task: variables, imports and functions you define remain available in later calls. The sandbox has its own empty filesystem; `open()` does not see the project.{network} Reach the project only through these functions (await them):
+
+    text  = await read_file("src/app.py")
+    paths = await list_files("**/*.py")
+    await write_file("src/app.py", text)          # asks the user first
+    await edit_file("src/app.py", old, new)       # old must occur exactly once
+    r = await run("python -m pytest -q")          # {"exit": 0, "output": "..."}; asks first
+
+Paths are relative to the project root. Run tests, builds and installs with run(); it executes on the user's machine. A refused write or command raises RuntimeError: tell the user what you wanted to do instead of retrying. Print summaries rather than whole files; long output is cut to its start and end."""
+
 DELEGATION_GUIDE = """## Sub-agents
 Inside the kernel you can hand work to sub-agents, which are agents like you \
 with their own kernel and the same tools:
@@ -80,15 +91,32 @@ pass `shared=True` when the user says to remember it always, in every future \
 session, or for every project. `await playbook()` lists entries."""
 
 
-def root_system(base: str, can_delegate: bool, playbook: bool = False) -> str:
-    parts = [base, KERNEL_GUIDE, DELEGATION_GUIDE if can_delegate else LEAF_NOTE]
+ONLINE = (" It can reach the internet: use httpx (async, `async with httpx.AsyncClient()`) "
+          "or `pyodide.http.pyfetch`; requests does not work here. Install pure-Python packages "
+          "with `await micropip.install(...)`; numpy, pandas and other compiled packages with "
+          "`await pyodide_js.loadPackage(...)`.")
+OFFLINE = " It has no network and no pip."
+
+
+def kernel_guide(sandboxed: bool, network: bool = False) -> str:
+    if not sandboxed:
+        return KERNEL_GUIDE
+    return SANDBOX_GUIDE.replace("{network}", ONLINE if network else OFFLINE)
+
+
+def root_system(base: str, can_delegate: bool, playbook: bool = False,
+                sandboxed: bool = False, network: bool = False) -> str:
+    guide = kernel_guide(sandboxed, network)
+    parts = [base, guide, DELEGATION_GUIDE if can_delegate else LEAF_NOTE]
     if playbook:
         parts.append(PLAYBOOK_GUIDE)
     return "\n\n".join(parts)
 
 
-def child_system(base: str, node: AgentNode, can_delegate: bool) -> str:
-    parts = [base, KERNEL_GUIDE, CHILD_ROLE, DELEGATION_GUIDE if can_delegate else LEAF_NOTE]
+def child_system(base: str, node: AgentNode, can_delegate: bool, sandboxed: bool = False,
+                 network: bool = False) -> str:
+    guide = kernel_guide(sandboxed, network)
+    parts = [base, guide, CHILD_ROLE, DELEGATION_GUIDE if can_delegate else LEAF_NOTE]
     return "\n\n".join(parts)
 
 

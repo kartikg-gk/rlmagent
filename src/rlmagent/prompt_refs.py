@@ -50,7 +50,8 @@ def note(refs: dict) -> str:
     """The line added to the prompt so the agent knows what is waiting in its kernel."""
     parts = []
     if refs["files"]:
-        parts.append("PROMPT['files'] holds " + ", ".join(f["path"] for f in refs["files"]))
+        parts.append("PROMPT['files'] is a list of {'path', 'content'} dicts for "
+                     + ", ".join(f["path"] for f in refs["files"]))
     if refs["links"]:
         parts.append("PROMPT['links'] holds the links")
     return f"\n\n[Preloaded in the python kernel: {'; '.join(parts)}.]" if parts else ""

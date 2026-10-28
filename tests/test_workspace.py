@@ -91,7 +91,7 @@ async def test_named_files_are_waiting_in_the_kernel(tmp_path):
         code_turn("print(PROMPT['files'][0]['content'])"), text_turn("ok")])
     try:
         await _submit(session, "fix calc.py")
-        assert "PROMPT['files'] holds calc.py" in json.dumps([str(m) for m in provider.calls[0][2]])
+        assert "PROMPT['files'] is a list" in json.dumps([str(m) for m in provider.calls[0][2]])
         outputs = [m.text for m in session.transcript if getattr(m, "role", "") == "toolResult"]
         assert "return a - b" in outputs[0]
     finally:
