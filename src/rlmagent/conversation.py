@@ -98,7 +98,7 @@ COMMAND_REGISTRY = build_default_registry()
 _RUNNABLE_COMMANDS: frozenset[str] = frozenset({
     "branch", "branches", "compact", "continue", "create-skill", "diag",
     "export", "help", "model", "name", "plan", "provider", "quit", "reload",
-    "rewind", "session", "shell", "skills", "stats", "system", "think", "undo", "version",
+    "refine", "rewind", "session", "shell", "skills", "stats", "system", "think", "undo", "version",
 })
 
 _RUNNABLE_COMMAND_TABLE: tuple[tuple[str, str], ...] = tuple(
@@ -624,6 +624,9 @@ class CodingSession:
 
     def submit(self, text: str) -> AsyncIterator[AgentEvent]:
         """Submit a user prompt and stream agent events."""
+        refinement = getattr(self, "refinement", None)
+        if refinement is not None:
+            refinement.at_boundary()
         # Name the session from its first prompt straight away, so listings
         # never show a bare id while waiting on the model-generated title.
         if not self._title:
@@ -694,6 +697,9 @@ class CodingSession:
 
     def abort(self) -> None:
         """Cancel the currently running agent loop."""
+        refinement = getattr(self, "refinement", None)
+        if refinement is not None:
+            refinement.cancel()
         improver = getattr(self, "improver", None)
         if improver is not None:
             improver.drop_pending()
@@ -704,6 +710,9 @@ class CodingSession:
 
     async def shutdown(self) -> None:
         """Flush pending state and release resources."""
+        refinement = getattr(self, "refinement", None)
+        if refinement is not None:
+            await refinement.close()
         backend = getattr(self, "backend", None)
         if backend is not None:
             await backend.close()
@@ -741,6 +750,9 @@ class CodingSession:
 
     async def switch_model(self, model: str) -> None:
         """Switch to a different model identifier (takes effect next turn)."""
+        refinement = getattr(self, "refinement", None)
+        if refinement is not None:
+            refinement.cancel()
         self._model = model
         tree = getattr(self, "agent_tree", None)
         if tree is not None:
@@ -759,6 +771,9 @@ class CodingSession:
         model: str | None = None,
     ) -> None:
         """Replace the active model provider (takes effect next turn)."""
+        refinement = getattr(self, "refinement", None)
+        if refinement is not None:
+            refinement.cancel()
         tree = getattr(self, "agent_tree", None)
         if tree is not None:
             budgeted = tree.use_provider(provider, provider_name)
@@ -1012,6 +1027,7 @@ class CodingSession:
             "plan": self._cmd_plan,
             "compact": self._cmd_compact,
             "improve": self._cmd_improve,
+            "refine": self._cmd_refine,
             "undo": self._cmd_undo,
             "stats": self._cmd_stats,
             "name": self._cmd_name,
@@ -1129,6 +1145,9 @@ class CodingSession:
 
     async def rewind(self, entry_id: str) -> None:
         """Rewind the session to a previous point in the conversation tree."""
+        refinement = getattr(self, "refinement", None)
+        if refinement is not None:
+            refinement.cancel()
         if self._vault is None:
             raise RuntimeError("Rewind requires a persistent session.")
 
@@ -1231,7 +1250,7 @@ class CodingSession:
         base = sessions_dir
         if base is None and self._vault:
             base = self._vault.path.parent
-        return await CodingSession.create(
+        replacement = await CodingSession.create(
             provider=self._provider,
             provider_name=self._provider_name,
             model=self._model,
@@ -1242,13 +1261,17 @@ class CodingSession:
             skills_loader=self._skills_loader,
             templates_loader=self._templates_loader,
         )
+        refinement = getattr(self, 'refinement', None)
+        if refinement is not None:
+            refinement.transfer(replacement)
+        return replacement
 
     async def replace_session(self, session_id: str) -> CodingSession:
         """Switch to a different existing session."""
         if self._vault is None:
             raise RuntimeError("Replace requires a persistent session.")
         await self.shutdown()
-        return await CodingSession.resume(
+        replacement = await CodingSession.resume(
             session_id,
             provider=self._provider,
             provider_name=self._provider_name,
@@ -1260,6 +1283,10 @@ class CodingSession:
             skills_loader=self._skills_loader,
             templates_loader=self._templates_loader,
         )
+        refinement = getattr(self, 'refinement', None)
+        if refinement is not None:
+            refinement.transfer(replacement)
+        return replacement
 
     # ── extensions and hot reload ──────────────────────────────────────
 
@@ -1309,6 +1336,10 @@ class CodingSession:
         """Re-read skills from disk, returning how many are now loaded."""
         if self._skills_loader is not None:
             self._skills = list(self._skills_loader())
+        refinement = getattr(self, "refinement", None)
+        if refinement is not None:
+            refinement.installed = list(self._skills)
+            refinement._apply_active()
         return len(self._skills)
 
     def expand_skill(self, text: str) -> str | None:
@@ -1573,6 +1604,9 @@ class CodingSession:
 
     async def _post_run(self) -> None:
         """Housekeeping after a completed agent run."""
+        refinement = getattr(self, "refinement", None)
+        if refinement is not None:
+            refinement.at_boundary()
         improver = getattr(self, "improver", None)
         if improver is not None:
             try:
@@ -1717,6 +1751,12 @@ class CodingSession:
                 "Use /plan off to resume editing."
             )
         return "Plan mode off — editing tools restored."
+
+    async def _cmd_refine(self, arg: str) -> str:
+        refinement = getattr(self, "refinement", None)
+        if refinement is None:
+            return "Manual refinement is not enabled for this session."
+        return await refinement.command(arg)
 
     async def _cmd_improve(self, arg: str) -> str:
         improver = getattr(self, "improver", None)

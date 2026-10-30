@@ -157,6 +157,13 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
 
     _install_hooks(session.harness, verbose=verbose)
     _install_safety(session.harness, ApprovalPolicy.AUTO)
+    from rlmagent.refinement.controller import attach
+
+    try:
+        attach(session, rlm_agent_home(), persist=not no_session)
+    except Exception:
+        await session.shutdown()
+        raise
     attach_logger(session)
     return session
 

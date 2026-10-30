@@ -596,6 +596,13 @@ def build_default_registry() -> CommandRegistry:
             search_terms=("revert", "restore", "rollback"),
         ),
         SlashCommand(
+            name="refine",
+            description="Review reusable guidance in a background job",
+            handler=_cmd_improve,
+            usage="/refine [focus] | status | cancel",
+            search_terms=("harness", "workflow", "guidance"),
+        ),
+        SlashCommand(
             name="improve",
             description="Update the playbook from this conversation",
             handler=_cmd_improve,

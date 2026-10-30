@@ -2,6 +2,9 @@
 local kernel has, reached through the `_rlmagent` bridge instead of a socket."""
 
 CORE = r'''
+async def guidance(id=None):
+    return await _rlmagent("guidance", {"id": id})
+
 async def improve(instructions=None, shared=False):
     """Ask for the playbook to be updated from this conversation when the turn ends."""
     return await _rlmagent("improve", {"instructions": instructions, "shared": bool(shared)})

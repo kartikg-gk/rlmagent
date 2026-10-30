@@ -106,6 +106,10 @@ async def improve(instructions=None, shared=False):
     return await _rlmagent_call("improve", {"instructions": instructions, "shared": bool(shared)})
 
 
+async def guidance(id=None):
+    return await _rlmagent_call("guidance", {"id": id})
+
+
 async def playbook(id=None):
     """One playbook entry in full, or a list of all of them."""
     return await _rlmagent_call("playbook", {"id": id})

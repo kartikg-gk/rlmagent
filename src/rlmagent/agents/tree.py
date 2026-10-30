@@ -234,6 +234,11 @@ class AgentTree:
             node.final_note = str(args.get("note") or "")
             node.final_given = True
             return None
+        if op == "guidance":
+            refinement = getattr(self, "refinement", None)
+            if refinement is None:
+                raise RuntimeError("No refined guidance is attached to this run")
+            return refinement.read_guidance(args.get("id"))
         if op in ("improve", "playbook"):
             improver = self._improver_of(node)
             if improver is None:

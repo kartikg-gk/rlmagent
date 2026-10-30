@@ -143,3 +143,57 @@ verify ADC refresh; remote model discovery is unavailable for this endpoint, so
 enter a compatible model identifier. Model access still requires a live completion.
 
 Workspace commands execute through non-login Bash, with a default 120-second timeout and a maximum of 1,800 seconds.
+
+## Manual harness refinement
+
+Use `/refine` when a conversation contains a correction or procedure worth
+retaining. It starts a bounded background review and returns immediately:
+
+```text
+/refine Remember the repository's focused validation command
+/refine status
+/refine cancel
+```
+
+Only one review may be pending per session. The refiner can inspect saved guidance
+and stage create, update, or delete operations. It cannot execute Python, run
+commands, modify project files, or replace the base system instructions. A review
+may make no changes. Its limits are 12 model steps, 8 edit attempts, and 300 seconds;
+the normal provider and tree budget also apply.
+
+There are three entry kinds:
+
+| Kind | Purpose |
+| --- | --- |
+| `prompt` | A focused behavioral note |
+| `skill` | A Markdown workflow with YAML `name` and `description` metadata |
+| `subagent` | Guidance for assigning and executing delegated tasks |
+
+Workflow metadata must match its stable entry id. Individual entries are limited
+to 32 KiB. Existing Python-function playbook skills keep their original meaning.
+Installed skill files are never overwritten by refinement.
+
+The completed proposal waits for a turn boundary before it is saved or activated.
+If the session is idle when review finishes, it can commit immediately.
+`/refine status` distinguishes a running review, a proposal awaiting activation,
+completion, cancellation, and failure. Beginning the next submission or finishing
+the current turn services that boundary. Updated guidance then applies to the
+root and newly created child agents. Running children keep their existing prompt.
+Workflow names and descriptions appear in the prompt; the full procedure is
+available through `await guidance("entry-id")` in Python or `/skill:entry-id`.
+
+Saved guidance is project-scoped under
+`~/.rlm-agent/harness/<project-path-hash>/state.json`, so later sessions in the
+same workspace inherit it. Read/modify/write operations are locked across
+processes and reject proposals based on superseded state. Invalid state is
+reported rather than replaced with an empty harness. The saved history includes
+the evidence, expected benefit, and edits for each committed proposal.
+
+`--no-session` keeps this harness in memory. Plan mode prevents changes, and abort,
+rewind, inference-route changes, or shutdown discard pending work. Contract runs
+do not load this ambient harness or enable `/refine`.
+
+This mechanism runs only when explicitly requested. Existing `/improve` and its
+automatic playbook scheduling are separate. A committed refinement means its
+structure and persistence checks passed; its expected benefit has not been
+established by a performance benchmark.

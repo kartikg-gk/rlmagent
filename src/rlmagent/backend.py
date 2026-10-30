@@ -292,6 +292,10 @@ class BackendProvider:
                         raise Refused("network access is disabled")
                     return await fetch_text(url, max_chars=max_chars)
 
+                async def guidance(id=None):
+                    refinement = getattr(tree, "refinement", None)
+                    return refinement.read_guidance(id) if refinement is not None else []
+                joined["guidance"] = wrap(guidance)
                 joined.update(
                     playbook=wrap(playbook), improve=wrap(improve), fetch_url=wrap(fetch_url)
                 )
