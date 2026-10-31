@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import queue
 import threading
@@ -57,6 +58,7 @@ class Client:
         self.instructions = instructions
         self.background = background
         self.accounting, self.record = accounting, record
+        self.host_context = contextvars.copy_context()
 
     def complete(self, messages, *, model):
         agent = getattr(self.context, "agent", "root")
@@ -107,7 +109,9 @@ class Client:
                     )
             raise RuntimeError("model returned no completion")
 
-        future = asyncio.run_coroutine_threadsafe(request(), self.loop)
+        future = self.host_context.copy().run(
+            asyncio.run_coroutine_threadsafe, request(), self.loop
+        )
         self.pending.add(future)
         try:
             return wait_for_host(future, agent, self.background)
@@ -175,6 +179,7 @@ class BackendProvider:
 
         async with self._serial:
             loop = asyncio.get_running_loop()
+            host_context = contextvars.copy_context()
             tree = self.tree
             from rlmagent.model.external import with_external
 
@@ -252,7 +257,9 @@ class BackendProvider:
                             )
                             return value
 
-                        future = asyncio.run_coroutine_threadsafe(invoke(), loop)
+                        future = host_context.copy().run(
+                            asyncio.run_coroutine_threadsafe, invoke(), loop
+                        )
                         self.pending.add(future)
                         try:
                             return wait_for_host(future, agent, self.background)

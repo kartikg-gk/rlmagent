@@ -121,3 +121,36 @@ async def test_default_backend_uses_integrated_manual_guidance(tmp_path, monkeyp
         assert session.transcript[-1].text == entry["content"]
     finally:
         await session.shutdown()
+
+
+async def test_host_callbacks_preserve_frontend_context(tmp_path, monkeypatch):
+    import contextvars
+    from _scripted import text_turn
+    from rlmness import Allowance
+    from rlmagent.agents.approval import Approver
+    from rlmagent.agents.workspace import Workspace
+    from rlmagent.backend import BackendProvider
+    from rlmagent.harness.contracts.transcript import HumanEntry
+    from rlmagent.harness.provider.wire import StreamCloseEvent
+    from rlmagent.model.scripted import ReplayProvider
+    marker = contextvars.ContextVar('frontend-test-context', default='missing')
+    observed = []
+    async def read_file(self, path):
+        observed.append(marker.get())
+        return marker.get()
+    monkeypatch.setattr(Workspace, 'read_file', read_file)
+    token = marker.set('frontend-present')
+    provider = ReplayProvider([text_turn("```python\nFINAL(await read_file('fixture'))\n```")])
+    tree = SimpleNamespace(cwd=str(tmp_path), approver=Approver('deny'), network=False,
+                           cell_timeout=30, allowance=Allowance(max_calls=4, max_cost=1))
+    backend = BackendProvider(provider, provider, tree)
+    try:
+        events = [event async for event in backend.stream_response(model='fixture', system='',
+            messages=[HumanEntry(content='Local callback context check')],
+            tools=[SimpleNamespace(name='python')])]
+        assert isinstance(events[-1], StreamCloseEvent), events[-1]
+        assert events[-1].message.text == 'frontend-present'
+        assert observed == ['frontend-present']
+    finally:
+        await backend.close()
+        marker.reset(token)
