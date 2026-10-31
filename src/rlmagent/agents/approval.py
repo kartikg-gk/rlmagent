@@ -15,9 +15,11 @@ AUTO = "auto"  # allow this one and stop asking for the rest of the session
 
 @dataclass(frozen=True)
 class Request:
-    kind: str            # "write", "edit" or "run"
-    target: str          # the path, or the command for "run"
+    kind: str  # "write", "edit" or "run"
+    target: str  # the path, or the command for "run"
     payload: tuple = ()  # what will be written: content, or (old, new)
+
+    preview: str | None = None
 
     @property
     def digest(self) -> str:
@@ -27,7 +29,7 @@ class Request:
     def describe(self, limit: int = 2000) -> str:
         if self.kind == "run":
             return f"Run: {self.target}"
-        body = "\n".join(str(p) for p in self.payload)
+        body = self.preview if self.preview is not None else "\n".join(str(p) for p in self.payload)
         if len(body) > limit:
             body = body[:limit] + f"\n... ({len(body) - limit} more characters)"
         return f"{self.kind.capitalize()} {self.target}\n{body}"
@@ -57,8 +59,10 @@ class Approver:
         if self.policy == "auto" or (request.kind, request.target) in self._always:
             return request.digest
         if self.policy != "ask" or self.ask is None:
-            raise Refused(f"refused: {request.kind} {request.target} needs approval "
-                          "(run with --auto-approve, or interactively)")
+            raise Refused(
+                f"refused: {request.kind} {request.target} needs approval "
+                "(run with --auto-approve, or interactively)"
+            )
         answer = await self.ask(request)
         if answer == DENY:
             raise Refused(f"the user refused: {request.kind} {request.target}")

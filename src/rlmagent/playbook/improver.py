@@ -25,6 +25,7 @@ from rlmagent.playbook.store import Playbook, load, merged, save
 
 class Improver:
     def __init__(self, session, local_path: Path | None, shared_path: Path | None) -> None:
+        self.writable = True
         self.session = session
         self.paths = {"local": local_path, "global": shared_path}
         self.local = load(local_path)
@@ -54,6 +55,8 @@ class Improver:
         raise KeyError(f"no playbook entry {entry_id!r}")
 
     def request(self, instructions: str | None, shared: bool = False, trigger: str = "agent") -> None:
+        if not self.writable:
+            raise RuntimeError("playbook is read-only")
         self._pending.append((instructions, shared, trigger))
 
     async def run_pending(self) -> list[str]:
@@ -100,6 +103,8 @@ class Improver:
 
     async def improve(self, instructions: str | None, *, shared: bool = False,
                       trigger: str = "user") -> str:
+        if not self.writable:
+            return "Playbook is read-only."
         scope = "global" if shared else "local"
         target = self._store(scope)
         baseline = {k: e.version for k, e in target.entries.items()}
@@ -130,6 +135,8 @@ class Improver:
 
     def apply(self, edits: list[dict], *, trigger: str, scope: str = "local",
               baseline: dict | None = None, summary: str = "", rationale: str = "") -> dict:
+        if not self.writable:
+            raise RuntimeError("playbook is read-only")
         target = self._store(scope)
         if baseline is None:
             baseline = {k: e.version for k, e in target.entries.items()}

@@ -59,10 +59,16 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     from rlmagent.plugins import rlm_agent_home
     from rlmagent.undo import Shadow
 
-    tree = make_agent_tree(ns, provider, provider_name, model, sessions_dir, cwd=os.getcwd())
+    tree = make_agent_tree(ns, provider, provider_name, model, sessions_dir, cwd=os.getcwd(),
+                           backend=getattr(ns, "engine", "session") == "rlmness")
     await tree.start()
     kernel = tree.root_kernel()
+    raw_provider = provider
     provider = tree.provider_for("root")
+    if getattr(ns, "engine", "session") == "rlmness":
+        from rlmagent.backend import BackendProvider
+        from rlmagent.model.external import with_external
+        provider = BackendProvider(with_external(raw_provider), provider, tree)
 
     _load_extensions(verbose=verbose)
     tools = _load_tools(verbose=verbose, kernel=kernel)
@@ -119,6 +125,16 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
             templates_loader=_templates_loader,
         )
 
+    if getattr(ns, "engine", "session") == "rlmness":
+        from rlmness.session import Session as BackendState
+        provider.instructions = _resolve_system(
+            getattr(ns, "system_prompt", None), tools=[], skills=skills)
+        if sessions_dir is not None:
+            provider.event_path = sessions_dir / f"{session.session_id}.backend.events.jsonl"
+            provider.state = BackendState.load(
+                sessions_dir / f"{session.session_id}.backend.json")
+    if getattr(ns, "engine", "session") == "rlmness":
+        session.backend = provider
     session.agent_tree = tree
     session.shadow = Shadow(session.cwd, rlm_agent_home())
     tree.attach(tree.root_id(), session)
@@ -145,7 +161,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     return session
 
 
-def make_agent_tree(ns, provider, provider_name, model, sessions_dir, *, cwd):
+def make_agent_tree(ns, provider, provider_name, model, sessions_dir, *, cwd, backend=False):
     """Build the tree of agents a run uses, with the limits from the command line."""
     from rlmness import Allowance
 
@@ -182,7 +198,12 @@ def make_agent_tree(ns, provider, provider_name, model, sessions_dir, *, cwd):
         return child_system(base, node, node.depth < allowance.max_depth, sandboxed=kind == "wasm",
                             network=network)
 
-    tree = AgentTree(
+    if backend:
+        from rlmagent.backend_context import BackendContext
+        tree_type = BackendContext
+    else:
+        tree_type = AgentTree
+    tree = tree_type(
         provider=provider,
         provider_name=provider_name,
         model=model,
@@ -194,6 +215,7 @@ def make_agent_tree(ns, provider, provider_name, model, sessions_dir, *, cwd):
         cell_timeout=getattr(ns, "cell_timeout", 300.0),
         max_agents=getattr(ns, "max_agents", 50),
         kernel=kind,
+        restore_kernel=getattr(ns, "restore_kernel", False),
         approver=Approver(policy),
         network=network,
     )

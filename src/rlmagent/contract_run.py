@@ -35,7 +35,7 @@ def _tools(c: Contract, kernel) -> list:
     return [t for t in build_tool_registry(kernel) if t.name in c.tools]
 
 
-async def build_contract_session(c: Contract, *, provider=None):
+async def build_contract_session(c: Contract, *, provider=None, engine="session"):
     from rlmagent.conversation import CodingSession
 
     provider = provider or _provider(c)
@@ -75,12 +75,17 @@ async def build_contract_session(c: Contract, *, provider=None):
     from rlmagent.tools._shared import set_workspace
 
     set_workspace(workdir)
-    tree = AgentTree(
+    if engine == "rlmness":
+        from rlmagent.backend_context import BackendContext
+        tree_type = BackendContext
+    else:
+        tree_type = AgentTree
+    tree = tree_type(
         provider=provider, provider_name=c.model.provider, model=c.model.name, cwd=workdir,
         allowance=allowance, sessions_dir=sessions_dir, system_for=system_for,
         first_message_for=child_first_message, cell_timeout=lim.cell_timeout,
         max_agents=lim.max_agents, tracer=tracer,
-        kernel=c.kernel.kind, approver=Approver(c.kernel.approve), network=c.kernel.network,
+        kernel=c.kernel.kind, restore_kernel=c.kernel.restore, approver=Approver(c.kernel.approve), network=c.kernel.network,
     )
     tree.tool_filter = lambda kernel: _tools(c, kernel)
     await tree.start()
@@ -88,14 +93,37 @@ async def build_contract_session(c: Contract, *, provider=None):
     tools = _tools(c, kernel)
     system = root_system(base(tools), can_delegate=lim.max_depth > 0,
                          sandboxed=sandboxed, network=c.kernel.network) + extra(c.prompt.append)
+    session_provider = tree.provider_for("root")
+    if engine == "rlmness":
+        from rlmagent.backend import BackendProvider
+        from rlmagent.model.external import with_external
+        session_provider = BackendProvider(with_external(provider), session_provider, tree)
+        session_provider.instructions = base([]) + extra(c.prompt.append)
+        session_provider.event_path = Path(str(c.trace.file) + ".backend.events.jsonl")
     session = await CodingSession.create(
-        provider=tree.provider_for("root"), provider_name=c.model.provider, model=c.model.name,
+        provider=session_provider, provider_name=c.model.provider, model=c.model.name,
         system=system, tools=tools, sessions_dir=sessions_dir, cwd=workdir,
     )
     await session.set_name("contract run")
+    if engine == "rlmness":
+        from rlmness.session import Session as BackendState
+        session.backend = session_provider
+        if sessions_dir is not None:
+            session_provider.state = BackendState.load(sessions_dir / f"{session.session_id}.backend.json")
     session.agent_tree = tree
     tree.attach(tree.root_id(), session)
-    session.on_compacted = lambda: tracer.compacted("root")
+    if c.playbook is not None:
+        from rlmagent.playbook.improver import Improver
+        path = Path(c.playbook["file"])
+        if not path.is_absolute():
+            path = Path(workdir) / path
+        session.improver = tree.improver = Improver(session, path, None)
+        tree.playbook_writable = c.playbook["update"]
+        session.improver.auto = c.playbook["update"]
+        session.improver.writable = c.playbook["update"]
+        session.improver.show_digest()
+    session.on_compacted = lambda: (tracer.compacted("root"),
+        session.improver.compacted() if getattr(session, "improver", None) else None)
     return session
 
 
@@ -110,7 +138,7 @@ async def run_contract(ns) -> int:
     try:
         contract = load_contract(ns.contract)
         contract.api_key()
-        session = await build_contract_session(contract)
+        session = await build_contract_session(contract, engine=contract.engine)
     except (ContractError, OSError) as exc:
         print(f"rlm-agent: {exc}", file=sys.stderr)
         return 2

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Provider metadata (plain data — the set of backends rlm-agent can talk to)
+# Provider metadata (plain data â€” the set of backends rlm-agent can talk to)
 # ---------------------------------------------------------------------------
 
 
@@ -69,6 +69,8 @@ PROVIDERS: tuple[ProviderInfo, ...] = (
             "moonshotai/Kimi-K2-Instruct",
         ),
     ),
+    ProviderInfo(key="vertex", label="Google Vertex", key_env="GOOGLE_CLOUD_PROJECT",
+                 base_url="", models=("google/gemini-3.5-flash",), needs_key=False),
 )
 
 
@@ -203,7 +205,7 @@ def save_config(config: RlmAgentConfig) -> Path:
     try:
         path.chmod(0o600)
     except OSError:
-        pass  # best effort — some filesystems (e.g. FAT) reject chmod
+        pass  # best effort â€” some filesystems (e.g. FAT) reject chmod
     return path
 
 

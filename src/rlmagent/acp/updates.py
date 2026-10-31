@@ -99,6 +99,13 @@ def stop_reason(messages: list) -> str:
 def plan(tree) -> list[dict]:
     """Every sub-agent as one plan entry, nested ones indented by depth."""
     entries = []
+    for agent in list(getattr(tree, "backend_agents", {}).values()):
+        if agent.get("depth", 0) == 0:
+            continue
+        entries.append({"content": "  " * max(agent.get("depth", 1) - 1, 0)
+                        + str(agent.get("instruction") or agent["run_id"])[:120],
+                        "priority": "medium", "status": "in_progress"
+                        if agent["status"] == "running" else "completed"})
     for rec in tree.records.values():
         node = rec.node
         status = PLAN_STATUS.get(rec.status, "completed")

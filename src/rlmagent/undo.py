@@ -39,7 +39,8 @@ class Shadow:
     def _git(self, *args: str) -> str:
         out = subprocess.run(
             ["git", f"--git-dir={self.git_dir}", f"--work-tree={self.workspace}", *args],
-            capture_output=True, text=True, cwd=self.workspace, timeout=120,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            cwd=self.workspace, timeout=120,
         )
         if out.returncode != 0:
             raise RuntimeError(out.stderr.strip() or f"git {args[0]} failed")

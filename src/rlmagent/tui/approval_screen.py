@@ -27,7 +27,7 @@ class ApprovalScreen(ModalScreen[str]):
         always = "this command" if self.request.kind == "run" else "this file"
         with Vertical(id="approval-dialog"):
             yield Label("The agent wants to:", id="approval-title")
-            yield Static(self.request.describe(), id="approval-body")
+            yield Static(self.request.describe(), id="approval-body", markup=False)
             yield ListView(
                 _Choice("Allow once", ONCE),
                 _Choice(f"Always allow {always} this session", ALWAYS),

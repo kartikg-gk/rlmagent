@@ -297,7 +297,7 @@ class RlmAgentApp(App[None]):
         transcript = self.query_one(TranscriptView)
         try:
             summary = await self._bridge.apply_model_choice(
-                choice.provider, choice.model, choice.api_key,
+                choice.provider, choice.model, choice.api_key, **({"base_url": choice.base_url} if choice.base_url else {}),
             )
         except Exception as exc:  # noqa: BLE001 - a bad key must not kill the UI
             transcript.add_notice(f"Could not switch: {exc}", error=True)

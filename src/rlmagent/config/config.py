@@ -19,7 +19,7 @@ from rlmagent.model.settings import (
 # Known provider identifiers
 # ---------------------------------------------------------------------------
 
-_KNOWN_PROVIDERS = ("anthropic", "openai", "openrouter", "ollama", "huggingface", "scripted", "cli")
+_KNOWN_PROVIDERS = ("anthropic", "openai", "openrouter", "ollama", "huggingface", "scripted", "cli", "vertex")
 
 # OpenAI-compatible backends reuse the OpenAI adapter with a different base URL.
 _OPENAI_COMPATIBLE = ("openai", "openrouter", "ollama", "huggingface")
@@ -106,6 +106,10 @@ def resolve_provider(name: str | None = None) -> ModelProvider:
         profile = replace(load_openai_profile(), name=resolved)
         return _build_openai(profile)
 
+    if resolved == "vertex":
+        from rlmagent.model.vertex import build_vertex
+        return build_vertex()
+
     if resolved == "cli":
         from rlmagent.model.external import ExternalAgentProvider
 
@@ -184,6 +188,11 @@ def setup_provider() -> None:
         "  OPENAI_TIMEOUT          (seconds, default: 120)\n"
         "  OPENAI_ORG_ID           (optional)\n"
         "  OPENAI_EXTRA_HEADERS    (semicolon-separated Key: Value pairs)\n"
+        "\n"
+        "Google Vertex:\n"
+        "  Install rlmagent[vertex]; configure Application Default Credentials.\n"
+        "  GOOGLE_CLOUD_PROJECT  (required unless ADC supplies a project)\n"
+        "  GOOGLE_CLOUD_LOCATION (default: global)\n"
         "\n"
         "Shared:\n"
         "  RLM_AGENT_PROVIDER          (anthropic | openai | scripted)\n"

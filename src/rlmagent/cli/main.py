@@ -145,6 +145,10 @@ def _build_run_parser() -> argparse.ArgumentParser:
     p.add_argument("--kernel", choices=("wasm", "local"), default="wasm",
                    help="Where the python tool runs: a WebAssembly sandbox (default) or a "
                         "local IPython kernel.")
+    p.add_argument("--engine", choices=("session", "rlmness"), default="rlmness",
+                   help="Execution backend (default rlmness; session reads the previous engine).")
+    p.add_argument("--restore-kernel", action="store_true",
+                   help="Recover the last sandbox checkpoint after a restart (WASM only).")
     p.add_argument("--no-network", dest="network", action="store_false",
                    help="Keep the sandbox offline: no internet, no package installs.")
     p.add_argument("--auto-approve", action="store_true",
@@ -193,6 +197,9 @@ def _build_provider_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="action", required=True)
     sub.add_parser("list", help="List configured providers.")
     sub.add_parser("setup", help="Interactive provider setup.")
+    for action in ("models", "test"):
+        remote = sub.add_parser(action, help="Query the provider model endpoint.")
+        remote.add_argument("name")
     sel = sub.add_parser("select", help="Set the active provider.")
     sel.add_argument("name", help="Provider name to activate.")
     return p
@@ -252,6 +259,8 @@ def _resolve_model(override: str | None, provider_name: str = "anthropic") -> st
         return _DEFAULT_OPENAI_MODEL
     if provider_name == "cli":
         return "cli:claude-code"
+    if provider_name == "vertex":
+        return "google/gemini-3.5-flash"
     return _DEFAULT_ANTHROPIC_MODEL
 
 
@@ -506,6 +515,23 @@ async def _session_stats(base: Path, sid: str | None, out: TextIO) -> None:
 def _handle_provider(argv: list[str]) -> int:
     ns = _build_provider_parser().parse_args(argv)
 
+    if ns.action in ("models", "test"):
+        from rlmagent.model.discovery import discover_models, check_provider
+        try:
+            if ns.action == "test":
+                _info(asyncio.run(check_provider(ns.name)))
+                return 0
+            models = asyncio.run(discover_models(ns.name))
+        except Exception as error:
+            # HTTP errors can contain endpoint details; never include authentication headers.
+            _info(f"Provider check failed: {type(error).__name__}")
+            return 1
+        if ns.action == "models":
+            for model in models:
+                print(model)
+        else:
+            _info(f"Provider model endpoint accepted credentials; {len(models)} models returned")
+        return 0
     if ns.action == "list":
         from rlmagent.config.config import list_providers
         list_providers()

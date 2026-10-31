@@ -212,7 +212,7 @@ class SessionBridge:
         self._streamed = 0
 
     async def apply_model_choice(
-        self, provider: str, model: str, api_key: str | None,
+        self, provider: str, model: str, api_key: str | None, base_url: str | None = None,
     ) -> str:
         """Persist credentials, rebuild the provider, and switch the session."""
         from rlmagent.config.config import resolve_provider
@@ -231,6 +231,8 @@ class SessionBridge:
         config = load_config()
         if api_key:
             config.api_keys[provider] = api_key
+        if base_url is not None:
+            config.base_urls[provider] = base_url
         config.provider = provider
         config.model = model
         save_config(config)
@@ -245,15 +247,16 @@ class SessionBridge:
         else:
             key_var, url_var = "OPENAI_API_KEY", "OPENAI_BASE_URL"
 
-        key = api_key or config.api_keys.get(provider) or os.environ.get(info.key_env)
+        key = None if provider == "vertex" else api_key or config.api_keys.get(provider) or os.environ.get(info.key_env)
         if key:
             os.environ[key_var] = key
-        elif not info.needs_key:
+        elif not info.needs_key and provider != "vertex":
             os.environ[key_var] = provider  # e.g. Ollama needs a placeholder
-        os.environ[url_var] = config.base_urls.get(provider) or info.base_url
+        if provider != "vertex":
+            os.environ[url_var] = config.base_urls.get(provider) or info.base_url
         apply_config(provider, config)
 
-        if provider == self._session.provider_name:
+        if provider == self._session.provider_name and base_url is None:
             await self._session.switch_model(model)
         else:
             await self._session.switch_provider(

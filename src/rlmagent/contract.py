@@ -65,6 +65,7 @@ class KernelSpec:
     kind: str = "local"
     approve: str = "deny"
     network: bool = False
+    restore: bool = False
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,8 @@ class Contract:
     trace: Trace
     raw: dict
     kernel: KernelSpec = KernelSpec()
+    playbook: dict | None = None
+    engine: str = "session"
 
     def api_key(self) -> str:
         if self.model.provider in _KEYLESS and self.model.api_key_env is None:
@@ -129,15 +132,34 @@ N = type(None)
 
 def parse_contract(doc: object) -> Contract:
     original = doc
+    engine = "session"
+    if isinstance(doc, dict) and "engine" in doc:
+        engine = _check(doc["engine"], (str,), "engine")
+        if engine not in ("session", "rlmness"):
+            raise ContractError("engine: expected session or rlmness")
+        doc = {key: value for key, value in doc.items() if key != "engine"}
+    playbook = None
+    if isinstance(doc, dict) and "playbook" in doc:
+        playbook = _fields(doc["playbook"], "playbook", {"file": (str,), "update": (bool,)})
+        if not playbook["file"].strip():
+            raise ContractError("playbook.file: must not be empty")
+        doc = {key: value for key, value in doc.items() if key != "playbook"}
     kernel = KernelSpec()
     if isinstance(doc, dict) and "kernel" in doc:
         # Optional, so contracts written before it still run the same way.
-        k = _fields(doc["kernel"], "kernel", {"kind": (str,), "approve": (str,), "network": (bool,)})
+        kernel_doc = doc["kernel"]
+        restore = False
+        if isinstance(kernel_doc, dict) and "restore" in kernel_doc:
+            restore = _check(kernel_doc["restore"], (bool,), "kernel.restore")
+            kernel_doc = {key: value for key, value in kernel_doc.items() if key != "restore"}
+        k = _fields(kernel_doc, "kernel", {"kind": (str,), "approve": (str,), "network": (bool,)})
         if k["kind"] not in ("wasm", "local"):
             raise ContractError(f"kernel.kind: {k['kind']!r} is not 'wasm' or 'local'")
         if k["approve"] not in ("deny", "auto"):
             raise ContractError(f"kernel.approve: {k['approve']!r} is not 'deny' or 'auto'")
-        kernel = KernelSpec(**k)
+        if restore and k["kind"] != "wasm":
+            raise ContractError("kernel.restore: requires kernel.kind 'wasm'")
+        kernel = KernelSpec(**k, restore=restore)
         doc = {key: value for key, value in doc.items() if key != "kernel"}
     top = _fields(doc, "", {
         "format": (str,), "model": (dict,), "limits": (dict,), "prompt": (dict,),
@@ -180,6 +202,8 @@ def parse_contract(doc: object) -> Contract:
         trace=Trace(**tr),
         raw=original,
         kernel=kernel,
+        playbook=playbook,
+        engine=engine,
     )
 
 

@@ -616,7 +616,8 @@ class CodingSession:
             session._apply_route()
         await session._mend_stored_history()
         # A kernel cannot be saved, so a resumed session starts a fresh one.
-        session.inject(RESUMED_NOTICE)
+        if not getattr(provider, "is_backend", False):
+            session.inject(RESUMED_NOTICE)
         return session
 
     # ── run lifecycle ──────────────────────────────────────────────────
@@ -653,6 +654,10 @@ class CodingSession:
         from rlmagent.prompt_refs import note, references
 
         refs = references(text, self.cwd)
+        backend = getattr(self, "backend", None)
+        if backend is not None:
+            backend.prompt_context = refs
+            return note(refs)
         # What the root works from; the delegation guard compares sub-agent contexts to it.
         tree.nodes[tree.root_id()].context = refs if refs["files"] else text
         if not refs["files"] and not refs["links"]:
@@ -692,10 +697,16 @@ class CodingSession:
         improver = getattr(self, "improver", None)
         if improver is not None:
             improver.drop_pending()
+        backend = getattr(self, "backend", None)
+        if backend is not None:
+            backend.cancel()
         self._harness.abort()
 
     async def shutdown(self) -> None:
         """Flush pending state and release resources."""
+        backend = getattr(self, "backend", None)
+        if backend is not None:
+            await backend.close()
         self._unsubscribe()
         tree = getattr(self, "agent_tree", None)
         if tree is not None:

@@ -20,6 +20,7 @@ class ModelChoice:
     label: str
     model: str
     api_key: str | None
+    base_url: str | None = None
 
 
 class _Row(ListItem):
@@ -33,7 +34,12 @@ class _Row(ListItem):
 class ModelScreen(ModalScreen[ModelChoice | None]):
     """Small centred dialog: pick a provider, a model, and a key if needed."""
 
-    BINDINGS = [("escape", "cancel", "Cancel")]
+    BINDINGS = [
+        ("escape", "cancel", "Cancel"),
+        ("ctrl+f", "discover", "Fetch models"),
+        ("ctrl+t", "test", "Test credentials"),
+        ("ctrl+e", "endpoint", "Endpoint"),
+    ]
 
     def __init__(self, current_provider: str = "", current_model: str = "") -> None:
         super().__init__()
@@ -41,6 +47,8 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
         self._current_model = current_model
         self._info: ProviderInfo | None = None
         self._model: str = ""
+        self._input_mode = "key"
+        self._endpoint = None
 
     # -- composition --------------------------------------------------------
 
@@ -77,12 +85,63 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
         for name in info.models:
             marker = "●" if name == self._current_model else " "
             listing.append(_Row(f"{marker} {name}", name))
+        listing.append(_Row("Enter a model identifier…", "__custom__"))
         listing.index = 0
         listing.focus()
+        self.query_one("#model-hint", Label).update(
+            "Ctrl+F fetch models · Ctrl+T test credentials · Ctrl+E endpoint"
+        )
+
+    def _input(self, mode, title, placeholder, password=False):
+        self._input_mode = mode
+        self.query_one("#model-list", ListView).display = False
+        field = self.query_one("#model-key", Input)
+        field.password, field.placeholder, field.value = password, placeholder, ""
+        field.display = True
+        self.query_one("#model-title", Label).update(title)
+        field.focus()
+
+    async def _remote(self, show_models):
+        if self._info is None:
+            return
+        from rlmagent.model.discovery import discover_models, check_provider
+
+        hint = self.query_one("#model-hint", Label)
+        hint.update("Checking provider…")
+        try:
+            if not show_models:
+                hint.update(await check_provider(self._info.key, base_url=self._endpoint))
+                return
+            models = await discover_models(self._info.key, base_url=self._endpoint)
+        except Exception as error:
+            hint.update(
+                f"Provider check failed ({type(error).__name__}). Check credentials and endpoint."
+            )
+            return
+        hint.update(f"Model endpoint accepted credentials; {len(models)} models returned.")
+        if show_models:
+            listing = self.query_one("#model-list", ListView)
+            listing.clear()
+            for model in models:
+                listing.append(_Row(model, model))
+            listing.append(_Row("Enter a model identifier…", "__custom__"))
+            listing.index = 0
+
+    def action_discover(self):
+        self.run_worker(self._remote(True), exclusive=True, group="provider-check")
+
+    def action_test(self):
+        self.run_worker(self._remote(False), exclusive=True, group="provider-check")
+
+    def action_endpoint(self):
+        if self._info is not None and self._info.key != "vertex":
+            self._input("endpoint", "Compatible API base URL", "https://host/v1")
 
     def _show_key_prompt(self) -> None:
         """Step 3 — ask for an API key, only when none is stored."""
         assert self._info is not None
+        self._input_mode = "key"
+        self.query_one("#model-key", Input).password = True
         self.query_one("#model-list", ListView).display = False
         field = self.query_one("#model-key", Input)
         field.display = True
@@ -116,6 +175,9 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
 
     def _on_model_chosen(self, model: str) -> None:
         assert self._info is not None
+        if model == "__custom__":
+            self._input("model", "Model identifier", "provider/model")
+            return
         self._model = model
         if not self._info.needs_key or self._stored_key(self._info):
             self._finish(None)
@@ -125,6 +187,30 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
         key = event.value.strip()
+        if self._input_mode in ("model", "endpoint"):
+            if not key:
+                return
+            if self._input_mode == "endpoint":
+                from urllib.parse import urlsplit
+
+                parsed = urlsplit(key)
+                if (
+                    parsed.scheme not in ("http", "https")
+                    or not parsed.netloc
+                    or parsed.username
+                    or parsed.password
+                ):
+                    self.query_one("#model-hint", Label).update(
+                        "Enter an HTTP(S) base URL without credentials."
+                    )
+                    return
+                self._endpoint = key.rstrip("/")
+            self.query_one("#model-key", Input).display = False
+            self.query_one("#model-list", ListView).display = True
+            self._show_models(self._info)
+            if self._input_mode == "model":
+                self._on_model_chosen(key)
+            return
         if not key:
             self.query_one("#model-hint", Label).update("API key must not be empty.")
             return
@@ -138,6 +224,7 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
                 label=self._info.label,
                 model=self._model,
                 api_key=api_key,
+                base_url=self._endpoint,
             )
         )
 

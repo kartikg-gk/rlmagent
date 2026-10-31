@@ -1,6 +1,7 @@
 [project]
 name = "rlmagent"
 version = "0.1.0"
+readme = "README.md"
 description = "A terminal coding agent with a persistent Python kernel and recursive sub-agents."
 requires-python = ">=3.12"
 license = "MIT"
@@ -22,8 +23,11 @@ dependencies = [
     "textual>=8.2.8",
     "ipykernel>=6.29",
     "jupyter_client>=8.6",
-    "rlmness>=0.2.1",
+    "rlmness>=0.2.2",
 ]
+
+[project.optional-dependencies]
+vertex = ["google-auth[requests]>=2.0"]
 
 [project.urls]
 Homepage = "https://github.com/kartikg-gk/rlmagent"
@@ -48,7 +52,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.sdist]
 # Ship only what a consumer needs.
-include = ["/src/rlmagent", "/LICENSE", "/pyproject.toml"]
+include = ["/src/rlmagent", "/LICENSE", "/README.md", "/pyproject.toml"]
 exclude = ["__pycache__", "*.pyc"]
 
 [tool.hatch.build.targets.wheel]

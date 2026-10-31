@@ -25,7 +25,7 @@ def build_tool_registry(kernel=None) -> list[ToolSpec]:
 
     tools: list[ToolSpec] = []
     # A sandboxed agent changes files only through its approved workspace functions.
-    sandboxed = isinstance(kernel, WasmKernel)
+    sandboxed = isinstance(kernel, WasmKernel) or getattr(kernel, "kernel_kind", None) == "wasm"
     tools.extend(t for t in file_tools() if not sandboxed or t.name == "Read")
     if kernel is not None:
         tools.append(make_python_tool(kernel))

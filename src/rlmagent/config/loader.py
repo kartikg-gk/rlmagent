@@ -58,6 +58,8 @@ def apply_config(provider: str, config: RlmAgentConfig | None = None) -> None:
     except KeyError:
         return
 
+    if provider == "vertex":
+        return
     cfg = load_config() if config is None else config
     key = cfg.api_keys.get(provider)
     base_url = cfg.base_urls.get(provider) or info.base_url

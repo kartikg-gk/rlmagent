@@ -120,8 +120,10 @@ class AgentTree:
         approver: Approver | None = None,
         network: bool = False,
         guard: bool = True,
+        restore_kernel: bool = False,
     ) -> None:
         self.guard = guard
+        self.restore_kernel = restore_kernel
         self.kernel_kind = kernel
         self.network = network
         self.approver = approver or Approver("deny")
@@ -195,6 +197,7 @@ class AgentTree:
         return kernel
 
     def _sandbox_for(self, node: AgentNode) -> WasmKernel:
+        """Give each recursive agent a private interpreter in the shared Node host."""
         workspace = Workspace(self.cwd, self.approver)
 
         async def call(op, args):
@@ -207,7 +210,7 @@ class AgentTree:
             cwd=self.cwd, bridges={"_rlmagent": call, **workspace.functions()},
             startup_code=wasm_api(self._can_delegate(node), node.parent_id is not None,
                                   network=self.network),
-            timeout=self.cell_timeout, on_final=final,
+            timeout=self.cell_timeout, on_final=final, restore=self.restore_kernel,
         )
         self.kernels[node.id] = kernel
         return kernel
@@ -564,6 +567,10 @@ class AgentTree:
              "status": r.status, "session": getattr(r.session, "session_id", None)}
             for r in self.records.values()
         ]
+        agents += [{"agent": key, "parent": item.get("parent_run_id"),
+                    "task": item.get("instruction"), "status": item.get("status"), "session": None}
+                   for key, item in getattr(self, "backend_agents", {}).items()
+                   if item.get("depth", 0) > 0]
         return self.tracer.finish(agents, self.provider.refusal, complete)
 
 

@@ -36,6 +36,7 @@ class WasmKernel:
         timeout: float = 300.0,
         on_final: Callable[[object], Awaitable[None]] | None = None,
         output_limit: int = 20_000,
+        restore: bool = False,
     ) -> None:
         self.cwd = cwd
         self.env: dict[str, str] = {}
@@ -44,6 +45,10 @@ class WasmKernel:
         self.timeout = timeout
         self.on_final = on_final
         self.output_limit = output_limit
+        self.restore = restore
+        self._checkpoint: dict = {}
+        self._owned: set[str] | None = None
+        self._recovery_note = ""
         self._runtime = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._lock = asyncio.Lock()
@@ -69,12 +74,42 @@ class WasmKernel:
 
         self._loop = asyncio.get_running_loop()
         bridges = {name: self._blocking(fn) for name, fn in self.bridges.items()}
-        self._runtime = await asyncio.to_thread(WasmRuntime, None, bridges, self.timeout)
+        options = {"session": self._checkpoint} if self.restore else {}
+        self._runtime = await asyncio.to_thread(WasmRuntime, None, bridges, self.timeout, **options)
         if self.startup_code:
             outcome = await asyncio.to_thread(self._runtime.execute, self.startup_code)
             if outcome.error:
                 return outcome.error
+        if self.restore:
+            if self._owned is None:
+                initial = await asyncio.to_thread(self._runtime.sweep)
+                self._owned = {name for entries in initial.values() for name in entries}
+                self._owned.update(("CONTEXT", "PROMPT", "FINAL", "commit"))
+            if self._checkpoint:
+                failed = self._runtime.restore_failed
+                saved = set().union(*(self._checkpoint.get(k, {}) for k in
+                                      ("variables", "functions", "modules")))
+                restored = sorted(saved - failed)
+                missing = sorted(set(self._checkpoint.get("dropped", {})) | failed)
+                self._recovery_note = ("[Sandbox checkpoint restored: "
+                                       + (", ".join(restored) or "no values")
+                                       + "; unavailable: " + (", ".join(missing) or "none")
+                                       + ". Changes in the interrupted cell were not recovered.]\n")
         return None
+
+    async def _save_checkpoint(self, code: str) -> None:
+        state = await asyncio.to_thread(self._runtime.sweep, code)
+        if state:
+            self._checkpoint = {kind: {name: value for name, value in entries.items()
+                                      if name not in self._owned}
+                                for kind, entries in state.items()}
+
+    def _lost(self, why: str) -> str:
+        if not self.restore:
+            return LOST.format(why=why)
+        return (f"[The sandbox was replaced ({why}). The next cell will restore the last "
+                "completed checkpoint; changes from the interrupted cell are lost. "
+                "External side effects may already have happened.]")
 
     async def _drop(self) -> None:
         runtime, self._runtime = self._runtime, None
@@ -98,13 +133,16 @@ class WasmKernel:
 
                 self._runtime = None
                 await asyncio.to_thread(reset_host)
-                return CellResult(output=LOST.format(why=f"no answer within {self.timeout:.0f}s; "
+                return CellResult(output=self._lost(why=f"no answer within {self.timeout:.0f}s; "
                                                      "every agent's sandbox was restarted"),
                                   timed_out=True, restarted=True)
             except RuntimeGone:
                 await self._drop()
-                return CellResult(output=LOST.format(why="it stopped"), restarted=True)
-        output = outcome.stdout
+                return CellResult(output=self._lost(why="it stopped"), restarted=True)
+            if self.restore and not outcome.error:
+                await self._save_checkpoint(code)
+            recovery_note, self._recovery_note = self._recovery_note, ""
+        output = recovery_note + outcome.stdout
         if outcome.final_given and self.on_final is not None:
             await self.on_final(outcome.final)
             output += "FINAL recorded.\n"
@@ -120,3 +158,4 @@ class WasmKernel:
 
     async def shutdown(self) -> None:
         await self._drop()
+        self._checkpoint = {}

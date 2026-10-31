@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
+import os
+import shutil
 from pathlib import Path
 
-from rlmagent.agents.approval import Approver, Request, check
+from rlmagent.agents.approval import Approver, Request, Refused, check
 
 MAX_READ = 2_000_000
 MAX_OUTPUT = 50_000
@@ -45,9 +48,14 @@ class Workspace:
 
     async def write_file(self, path: str, content: str) -> str:
         target = self._path(path)
-        request = Request("write", self._rel(target), (content,))
+        before = target.read_text(encoding="utf-8") if target.exists() else None
+        preview = self._diff(path, before or "", content)
+        request = Request("write", self._rel(target), (content,), preview=preview)
         approved = await self.approver.approve(request)
         check(approved, Request("write", self._rel(target), (content,)))
+        current = target.read_text(encoding="utf-8") if target.exists() else None
+        if current != before:
+            raise Refused(f"{path} changed while approval was pending; read it again")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         return f"wrote {self._rel(target)} ({len(content)} characters)"
@@ -58,20 +66,44 @@ class Workspace:
         count = text.count(old)
         if count != 1:
             raise ValueError(f"old text found {count} times in {path}; it must be exactly once")
-        request = Request("edit", self._rel(target), (old, new))
+        request = Request(
+            "edit",
+            self._rel(target),
+            (old, new),
+            preview=self._diff(path, text, text.replace(old, new, 1)),
+        )
         approved = await self.approver.approve(request)
         check(approved, Request("edit", self._rel(target), (old, new)))
+        if target.read_text(encoding="utf-8") != text:
+            raise Refused(f"{path} changed while approval was pending; read it again")
         target.write_text(text.replace(old, new, 1), encoding="utf-8")
         return f"edited {self._rel(target)}"
 
     async def run(self, cmd: str, timeout: float = 120.0) -> dict:
         approved = await self.approver.approve(Request("run", cmd))
         check(approved, Request("run", cmd))
-        proc = await asyncio.create_subprocess_shell(
-            cmd, cwd=str(self.root), stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT)
+        bash = shutil.which("bash")
+        if bash is None and os.name == "nt":
+            candidate = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe"
+            if candidate.is_file():
+                bash = str(candidate)
+        if bash is None:
+            raise OSError("Bash is required for workspace commands")
+        timeout = max(0.1, min(float(timeout), 1800.0))
+        proc = await asyncio.create_subprocess_exec(
+            bash, "--noprofile", "--norc", "-c", cmd,
+            cwd=str(self.root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
         try:
             out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+        except asyncio.CancelledError:
+            from rlmagent.model.external.cli import kill_tree
+
+            kill_tree(proc)
+            await proc.wait()
+            raise
         except asyncio.TimeoutError:
             from rlmagent.model.external.cli import kill_tree
 
@@ -83,7 +115,46 @@ class Workspace:
             text = f"... ({len(text) - MAX_OUTPUT} characters cut)\n" + text[-MAX_OUTPUT:]
         return {"exit": proc.returncode, "output": text}
 
-    def functions(self) -> dict:
-        return {"read_file": self.read_file, "list_files": self.list_files,
-                "write_file": self.write_file, "edit_file": self.edit_file, "run": self.run}
+    @staticmethod
+    def _diff(path: str, before: str, after: str) -> str:
+        return "\n".join(
+            difflib.unified_diff(
+                before.splitlines(),
+                after.splitlines(),
+                fromfile=f"a/{path}",
+                tofile=f"b/{path}",
+                lineterm="",
+            )
+        )
 
+    async def instruction_docs(self, path: str | None = None):
+        """Discover project instruction files, or read a selected file."""
+        names = {"AGENTS.md", "AGENTS.override.md", "CLAUDE.md", "SKILL.md"}
+        if path is not None:
+            target = self._path(path)
+            if target.name not in names:
+                raise ValueError("choose an instruction file from instruction_docs()")
+            return await self.read_file(path)
+        import os
+
+        found = []
+        for folder, dirs, files in os.walk(self.root, followlinks=False):
+            dirs[:] = sorted(
+                d for d in dirs if d not in SKIP_DIRS | {"dist", "build", ".hg", ".svn"}
+            )
+            for name in sorted(names.intersection(files)):
+                target = self._path(str(Path(folder) / name))
+                found.append(self._rel(target))
+                if len(found) >= MAX_LIST:
+                    return found
+        return found
+
+    def functions(self) -> dict:
+        return {
+            "read_file": self.read_file,
+            "list_files": self.list_files,
+            "write_file": self.write_file,
+            "edit_file": self.edit_file,
+            "run": self.run,
+            "instruction_docs": self.instruction_docs,
+        }
