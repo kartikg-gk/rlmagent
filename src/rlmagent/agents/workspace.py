@@ -11,7 +11,7 @@ from pathlib import Path
 from rlmagent.agents.approval import Approver, Request, Refused, check
 
 MAX_READ = 2_000_000
-MAX_OUTPUT = 50_000
+MAX_OUTPUT = 50 * 1024
 MAX_LIST = 2_000
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".rlm-agent"}
 
@@ -84,36 +84,64 @@ class Workspace:
         check(approved, Request("run", cmd))
         bash = shutil.which("bash")
         if bash is None and os.name == "nt":
-            candidate = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe"
+            candidate = (
+                Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe"
+            )
             if candidate.is_file():
                 bash = str(candidate)
         if bash is None:
             raise OSError("Bash is required for workspace commands")
         timeout = max(0.1, min(float(timeout), 1800.0))
         proc = await asyncio.create_subprocess_exec(
-            bash, "--noprofile", "--norc", "-c", cmd,
+            bash,
+            "--noprofile",
+            "--norc",
+            "-c",
+            cmd,
             cwd=str(self.root),
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
+        from rlmagent.agents.output import OutputTail
+
+        tail = OutputTail()
+
+        async def drain():
+            while chunk := await proc.stdout.read(8192):
+                tail.feed(chunk)
+            await proc.wait()
+
+        reader = asyncio.create_task(drain())
         try:
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+            await asyncio.wait_for(asyncio.shield(reader), timeout)
         except asyncio.CancelledError:
             from rlmagent.model.external.cli import kill_tree
 
             kill_tree(proc)
             await proc.wait()
+            reader.cancel()
+            await asyncio.gather(reader, return_exceptions=True)
             raise
         except asyncio.TimeoutError:
             from rlmagent.model.external.cli import kill_tree
 
             kill_tree(proc)
             await proc.wait()
-            return {"exit": None, "output": f"timed out after {timeout:.0f}s"}
-        text = out.decode("utf-8", errors="replace")
-        if len(text) > MAX_OUTPUT:
-            text = f"... ({len(text) - MAX_OUTPUT} characters cut)\n" + text[-MAX_OUTPUT:]
-        return {"exit": proc.returncode, "output": text}
+            reader.cancel()
+            await asyncio.gather(reader, return_exceptions=True)
+            return {
+                "exit": None,
+                "output": tail.text(),
+                "timed_out": True,
+                "message": f"timed out after {timeout:.0f}s",
+            }
+        return {
+            "exit": proc.returncode,
+            "output": tail.text(),
+            "truncated": tail.truncated,
+            "output_bytes": tail.total,
+        }
 
     @staticmethod
     def _diff(path: str, before: str, after: str) -> str:

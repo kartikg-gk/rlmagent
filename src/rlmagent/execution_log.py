@@ -10,7 +10,7 @@ def records(event, history):
         "run_failed": "agent_end",
         "run_completed": "agent_end",
         "code_generated": "code_generated",
-        "output_received": "execution_result",
+        "step": "execution_result",
     }
     if kind not in mapping:
         return []
@@ -28,11 +28,31 @@ def records(event, history):
     }
     if start.get("parent_run_id"):
         row["parent_run_id"] = start["parent_run_id"]
+    # Keep separate root executions distinct when a saved session appends turns.
+    start_index = next(
+        (i for i in range(len(history) - 1, -1, -1) if history[i] is start), len(history) - 1
+    )
+    root = next(
+        (
+            item
+            for item in reversed(history[: start_index + 1])
+            if item["kind"] == "run_started" and not item.get("parent_run_id")
+        ),
+        None,
+    )
+    if root is not None and "timestamp" in root:
+        prefix = f"run-{int(root['timestamp'] * 1_000_000)}:"
+        row["run_id"] = prefix + agent
+        if row.get("parent_run_id"):
+            row["parent_run_id"] = prefix + row["parent_run_id"]
     for field in ("step", "code", "output", "usage", "reasoning", "timestamps"):
         if field in event:
             row[field] = event[field]
-    if kind == "output_received":
+    if kind == "step":
         row["hasError"] = bool(event.get("error", False))
+    if kind == "run_failed":
+        row["hasError"] = True
+        row["error"] = event.get("error")
     result = []
     if kind == "run_completed":
         result.append(

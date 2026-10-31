@@ -149,6 +149,7 @@ class BackendProvider:
                 with path.open("a", encoding="utf-8") as stream:
                     stream.write(json.dumps(event, default=encode, ensure_ascii=False) + "\n")
                 from rlmagent.execution_log import records
+
                 compatible = path.with_name(path.stem + ".run.jsonl")
                 for row in records(event, self.events):
                     with compatible.open("a", encoding="utf-8") as stream:
@@ -295,6 +296,7 @@ class BackendProvider:
                 async def guidance(id=None):
                     refinement = getattr(tree, "refinement", None)
                     return refinement.read_guidance(id) if refinement is not None else []
+
                 joined["guidance"] = wrap(guidance)
                 joined.update(
                     playbook=wrap(playbook), improve=wrap(improve), fetch_url=wrap(fetch_url)
@@ -306,7 +308,9 @@ class BackendProvider:
                     if getattr(tree, "kernel_kind", "wasm") == "wasm"
                     else SubprocessRuntime
                 )
-                runtime = runtime_type(prompt, joined, timeout, tools, **kwargs)
+                # Host startup and helper installation have their own bounded window.
+                # The requested cell deadline still applies to every model-written cell.
+                runtime = runtime_type(prompt, joined, max(30.0, timeout), tools, **kwargs)
                 runtimes.append(runtime)
                 runtime.execute(
                     "async def skill(id):\n"
@@ -322,6 +326,7 @@ class BackendProvider:
                     if outcome.error:
                         runtime.close()
                         raise RuntimeError(outcome.error)
+                runtime.timeout = timeout
                 return runtime
 
             factory.SEALED = True

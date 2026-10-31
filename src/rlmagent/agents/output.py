@@ -21,7 +21,7 @@ class OutputTail:
         lines = self.data.count(b"\n") + bool(self.data and self.data[-1] != 10)
         limit = LINE_LIMIT - 1 if self.truncated else LINE_LIMIT
         while lines > limit:
-            del self.data[:self.data.index(10) + 1]
+            del self.data[: self.data.index(10) + 1]
             lines -= 1
             self.truncated = True
             limit = LINE_LIMIT - 1

@@ -135,8 +135,9 @@ identifier. The CLI offers `rlm-agent provider models openrouter` and
 `rlm-agent provider test openrouter`. A successful model-list check establishes
 access to that endpoint; it does not prove permission to generate with every model.
 
-For Google Vertex, install `rlmagent[vertex]`, configure Application Default
-Credentials, and set `GOOGLE_CLOUD_PROJECT` and optionally `GOOGLE_CLOUD_LOCATION`
+For Google Vertex, install `rlmagent[vertex]`. Vertex support is experimental: mocked authentication checks pass,
+but a live completion with a configured cloud account has not been verified.
+Configure Application Default Credentials, and set `GOOGLE_CLOUD_PROJECT` and optionally `GOOGLE_CLOUD_LOCATION`
 (default `us-central1`). Select `--provider vertex --model google/MODEL_ID`.
 Credentials refresh when needed and remain in memory. Vertex credential checks
 verify ADC refresh; remote model discovery is unavailable for this endpoint, so
