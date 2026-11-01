@@ -204,3 +204,15 @@ async def test_several_answers_can_be_requested(tmp_path):
     workspace.approver.question = answer
     assert await workspace.ask_user("q", ["a", "b"], multiple=True) == ["a", "b"]
     assert await workspace.ask_user("q", ["a", "b"]) == "a"
+
+
+async def test_edits_keep_each_files_line_endings(tmp_path):
+    (tmp_path / "unix.py").write_bytes(b"a\nb\n")
+    (tmp_path / "dos.py").write_bytes(b"a\r\nb\r\n")
+    workspace = Workspace(tmp_path, Approver("auto"))
+    await workspace.edit_file("unix.py", "a\nb", "a\nc")
+    await workspace.edit_file("dos.py", "a\nb", "a\nc")
+    await workspace.write_file("new.py", "x\n")
+    assert (tmp_path / "unix.py").read_bytes() == b"a\nc\n"
+    assert (tmp_path / "dos.py").read_bytes() == b"a\r\nc\r\n"
+    assert (tmp_path / "new.py").read_bytes() == b"x\n"

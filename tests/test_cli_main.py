@@ -275,7 +275,7 @@ def test_session_export_jsonl(capsys):
         ):
             main(["-p", "--session-dir", td, "test"])
 
-        files = list(Path(td).glob("*.jsonl"))
+        files = [p for p in Path(td).glob("*.jsonl") if p.name != "index.jsonl"]
         assert files
         sid = files[0].stem
 

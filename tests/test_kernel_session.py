@@ -1,3 +1,4 @@
+import sys
 import pytest
 
 from rlmagent.kernel.session import KernelSession, clip
@@ -37,6 +38,7 @@ async def test_timeout_interrupts_and_keeps_state(kernel):
     assert after.output.strip() == "7"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="elsewhere a blocking sleep obeys the interrupt")
 async def test_cell_that_ignores_the_interrupt_gets_a_fresh_kernel(tmp_path):
     # A blocking call such as a long sleep cannot always be interrupted
     # (on Windows it never is); the kernel is restarted instead of wedging.

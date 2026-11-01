@@ -21,6 +21,17 @@ MAX_INSTRUCTIONS = 200
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".rlm-agent"}
 
 
+def _load(path: Path) -> str:
+    """A file's exact text: line endings are not translated."""
+    with open(path, encoding="utf-8", newline="") as f:
+        return f.read()
+
+
+def _save(path: Path, text: str) -> None:
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+
+
 class Workspace:
     def __init__(self, root: str | Path, approver: Approver) -> None:
         self.root = Path(root).resolve()
@@ -57,21 +68,25 @@ class Workspace:
 
     async def write_file(self, path: str, content: str) -> str:
         target = self._path(path)
-        before = target.read_text(encoding="utf-8") if target.exists() else None
+        before = _load(target) if target.exists() else None
         preview = self._diff(path, before or "", content)
         request = Request("write", self._rel(target), (content,), preview=preview)
         approved = await self.approver.approve(request)
         check(approved, Request("write", self._rel(target), (content,)))
-        current = target.read_text(encoding="utf-8") if target.exists() else None
+        current = _load(target) if target.exists() else None
         if current != before:
             raise Refused(f"{path} changed while approval was pending; read it again")
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        _save(target, content)
         return f"wrote {self._rel(target)} ({len(content)} characters)"
 
     async def edit_file(self, path: str, old: str, new: str) -> str:
         target = self._path(path)
-        text = target.read_text(encoding="utf-8")
+        raw = _load(target)
+        crlf = "\r\n" in raw
+        text = raw.replace("\r\n", "\n") if crlf else raw
+        if crlf:
+            old, new = old.replace("\r\n", "\n"), new.replace("\r\n", "\n")
         count = text.count(old)
         if count != 1:
             raise ValueError(f"old text found {count} times in {path}; it must be exactly once")
@@ -83,9 +98,10 @@ class Workspace:
         )
         approved = await self.approver.approve(request)
         check(approved, Request("edit", self._rel(target), (old, new)))
-        if target.read_text(encoding="utf-8") != text:
+        if _load(target) != raw:
             raise Refused(f"{path} changed while approval was pending; read it again")
-        target.write_text(text.replace(old, new, 1), encoding="utf-8")
+        changed = text.replace(old, new, 1)
+        _save(target, changed.replace("\n", "\r\n") if crlf else changed)
         return f"edited {self._rel(target)}"
 
     async def apply_patch(self, diff: str) -> str:
@@ -99,14 +115,14 @@ class Workspace:
                 raise PatchError(f"{change.path} already exists")
             if change.old_path is not None and not exists:
                 raise PatchError(f"{change.path} does not exist")
-            text = target.read_text(encoding="utf-8") if exists else ""
+            text = _load(target) if exists else ""
             before[target] = text if exists else None
             after[target] = None if change.new_path is None else patched(text, change)
         names = ", ".join(self._rel(t) for t in after)
         approved = await self.approver.approve(Request("patch", names, (diff,), preview=diff))
         check(approved, Request("patch", names, (diff,)))
         for target, text in before.items():
-            current = target.read_text(encoding="utf-8") if target.exists() else None
+            current = _load(target) if target.exists() else None
             if current != text:
                 raise Refused(f"{self._rel(target)} changed while approval was pending; read it again")
         done: list[Path] = []
@@ -117,13 +133,13 @@ class Workspace:
                     target.unlink()
                 else:
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_text(text, encoding="utf-8")
+                    _save(target, text)
         except OSError:
             for target in done:
                 if before[target] is None:
                     target.unlink(missing_ok=True)
                 else:
-                    target.write_text(before[target], encoding="utf-8")
+                    _save(target, before[target])
             raise
         return f"patched {names}"
 
