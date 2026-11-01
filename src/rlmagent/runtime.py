@@ -94,6 +94,9 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     if resume:
         if sessions_dir is None:
             _die("Cannot use --resume together with --no-session.")
+        problem = await _resume_folder_problem(ns, resume, sessions_dir)
+        if problem:
+            _die(problem)
         try:
             session = await CodingSession.resume(
                 resume,
@@ -166,6 +169,27 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
         raise
     attach_logger(session)
     return session
+
+
+async def _resume_folder_problem(ns, session_id: str, sessions_dir) -> str | None:
+    """Why this session must not resume here: it was started for another project."""
+    from pathlib import Path
+
+    from rlmagent.harness.session.index import SessionCatalog
+
+    meta = SessionCatalog(sessions_dir).get(session_id)
+    if meta is None or not meta.cwd or getattr(ns, "resume_anywhere", False):
+        return None
+    if Path(meta.cwd).resolve() == Path(os.getcwd()).resolve():
+        return None
+    text = f"Session {session_id} belongs to {meta.cwd}, not {os.getcwd()}."
+    if not _is_interactive(ns):
+        return f"{text} Run it from that folder, or pass --resume-anywhere."
+    import asyncio
+
+    answer = await asyncio.get_running_loop().run_in_executor(
+        None, input, f"{text} Resume it here anyway? [y/N] ")
+    return None if answer.strip().lower().startswith("y") else "Resume cancelled."
 
 
 def make_agent_tree(ns, provider, provider_name, model, sessions_dir, *, cwd, backend=False):

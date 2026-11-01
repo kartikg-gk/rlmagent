@@ -2,8 +2,10 @@
 
 The repository lives under ~/.rlm-agent/shadow/, never inside the project, so the
 project's own git history is untouched. It honours the project's .gitignore and
-also skips dependency folders and files that usually hold secrets. Kernel state
-is not restored; only files and the conversation are.
+also skips dependency folders, files named like secrets (see EXCLUDES) and files
+over 5 MB, none of which come back on undo. Other files are copied there as they
+are, including any secret under an ordinary name. Snapshots of files survive a
+restart, but the list of turns to undo does not. Kernel state is not restored.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ class Shadow:
         key = hashlib.sha1(str(self.workspace).encode()).hexdigest()[:16]
         self.git_dir = home / "shadow" / f"{key}.git"
         self.available = shutil.which("git") is not None
+        self.skipped: set[str] = set()
 
     def _git(self, *args: str) -> str:
         out = subprocess.run(
@@ -62,6 +65,7 @@ class Shadow:
         for rel in filter(None, listed.split("\0")):
             path = self.workspace / rel
             if path.is_file() and path.stat().st_size > MAX_FILE_BYTES:
+                self.skipped.add(rel)
                 with open(self.git_dir / "info" / "exclude", "a", encoding="utf-8") as f:
                     f.write(f"/{rel}\n")
 
@@ -74,9 +78,12 @@ class Shadow:
         return self._git("rev-parse", "HEAD")
 
     def restore(self, commit: str) -> list[str]:
-        """Put the workspace back to `commit`; returns the paths that changed."""
+        """Put the workspace back to `commit` and check it; returns the paths that changed."""
         self.snapshot("before undo")
         changed = self._git("diff", "--name-only", commit, "HEAD").splitlines()
         self._git("read-tree", "-u", "--reset", commit)
+        wrong = self._git("diff", "--name-only", commit)
+        if wrong:
+            raise RuntimeError("these files did not come back: " + ", ".join(wrong.splitlines()[:10]))
         self._git("commit", "-q", "--allow-empty", "--no-verify", "-m", f"undo to {commit[:12]}")
         return changed

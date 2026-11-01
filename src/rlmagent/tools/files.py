@@ -93,6 +93,9 @@ async def _run_read(
             f"(extension: {path.suffix})"
         )
 
+    if _looks_binary(path):
+        return fault(f"Cannot read binary file: {path} (it contains NUL bytes)")
+
     # Text files → line-numbered output
     return _read_text(path, arguments)
 
@@ -118,6 +121,15 @@ def _read_image(path: Path) -> ToolOutcome:
     mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
     encoded = base64.b64encode(raw).decode("ascii")
     return ToolOutcome(content=[ImageSegment(mime_type=mime, data=encoded)])
+
+
+def _looks_binary(path: Path) -> bool:
+    """A NUL in the first 8 KB: binary, whatever the extension claims."""
+    try:
+        with path.open("rb") as f:
+            return b"\0" in f.read(8192)
+    except OSError:
+        return False  # the text read reports this properly
 
 
 def _read_text(path: Path, arguments: Mapping[str, JValue]) -> ToolOutcome:

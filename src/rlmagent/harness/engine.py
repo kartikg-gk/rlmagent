@@ -130,6 +130,33 @@ async def _stream_model_reply(
 
 # --- single tool invocation -------------------------------------------------
 
+_JSON_TYPES = {
+    "string": lambda v: isinstance(v, str),
+    "boolean": lambda v: isinstance(v, bool),
+    "integer": lambda v: not isinstance(v, bool) and (
+        isinstance(v, int) or (isinstance(v, float) and v == int(v))),
+    "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+    "array": lambda v: isinstance(v, list),
+    "object": lambda v: isinstance(v, dict),
+    "null": lambda v: v is None,
+}
+
+
+def argument_problem(schema, arguments) -> str | None:
+    """What is wrong with a call's arguments: missing required ones or wrong top-level types."""
+    for name in schema.get("required") or ():
+        if name not in arguments:
+            return f"missing required argument {name!r}"
+    properties = schema.get("properties") or {}
+    for name, value in arguments.items():
+        declared = (properties.get(name) or {}).get("type") if isinstance(properties, dict) else None
+        allowed = declared if isinstance(declared, list) else [declared] if declared else []
+        known = [t for t in allowed if t in _JSON_TYPES]
+        if known and not any(_JSON_TYPES[t](value) for t in known):
+            return f"{name!r} must be {' or '.join(known)}, got {type(value).__name__}"
+    return None
+
+
 
 async def _run_single_tool(
     spec: ToolSpec,
@@ -143,6 +170,10 @@ async def _run_single_tool(
     def _on_partial(snapshot: ToolOutcome) -> None:
         if alive:
             snapshots.append(snapshot.model_copy(deep=True))
+
+    problem = argument_problem(spec.parameters, invocation.arguments)
+    if problem:
+        return _make_abort_result(f"Invalid arguments for {spec.name}: {problem}"), True, snapshots
 
     try:
         result = await spec.execute(invocation.id, invocation.arguments, token, _on_partial)

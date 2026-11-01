@@ -140,6 +140,8 @@ async def answer(name: str, sub: str | None, prompt: str, cwd: Path,
         from rlmagent.model.external.acp_install import bridge_spec
 
         args = ["-y", bridge_spec(spec["bridge"]), *args]
+    from rlmagent.model.external.cli import own_group
+
     exe = shutil.which(spec["command"])
     if exe is None:
         raise ValueError(f"{spec['command']} not found on PATH")
@@ -147,7 +149,7 @@ async def answer(name: str, sub: str | None, prompt: str, cwd: Path,
         proc = await asyncio.create_subprocess_exec(
             exe, *args, cwd=str(cwd), limit=2**24,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=errors,
-            env={**os.environ, **(spec.get("env") or {})},
+            env={**os.environ, **(spec.get("env") or {})}, **own_group(),
         )
     conn = _Connection(proc, approve=bool(spec.get("approve")))
     pump = asyncio.create_task(conn.pump())

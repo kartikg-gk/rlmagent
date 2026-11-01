@@ -129,6 +129,10 @@ def _build_run_parser() -> argparse.ArgumentParser:
         "--resume", "-r", metavar="ID", default=None,
         help="Resume a previous session by its ID.",
     )
+    p.add_argument(
+        "--resume-anywhere", action="store_true",
+        help="Allow --resume in a folder other than the one the session started in.",
+    )
     p.add_argument("--session-dir", default=None, help="Session storage directory.")
     p.add_argument("--system-prompt", default=None, help="Override system prompt.")
     p.add_argument(

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -67,8 +69,15 @@ def kill_tree(proc) -> None:
         return
     if sys.platform == "win32":
         subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
+    elif os.getpgid(proc.pid) == proc.pid:
+        os.killpg(proc.pid, signal.SIGKILL)  # it leads its own group: see own_group()
     else:
         proc.kill()
+
+
+def own_group() -> dict:
+    """Spawn option giving a process its own group, so kill_tree reaches what it starts."""
+    return {} if sys.platform == "win32" else {"start_new_session": True}
 
 
 def _exe(name: str) -> str:
@@ -150,7 +159,7 @@ PRESETS = {"claude-code": (_claude, parse_claude), "codex": (_codex, parse_codex
 async def _run(argv: list[str], stdin: str, cwd: Path, signal: CancelToken | None) -> str:
     proc = await asyncio.create_subprocess_exec(
         *argv, cwd=str(cwd), stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **own_group(),
     )
     task = asyncio.ensure_future(proc.communicate(stdin.encode("utf-8")))
     try:

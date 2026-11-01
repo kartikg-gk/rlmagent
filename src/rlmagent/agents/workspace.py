@@ -9,6 +9,7 @@ import shutil
 from pathlib import Path
 
 from rlmagent.agents.approval import Approver, Request, Refused, check
+from rlmagent.model.external.cli import own_group
 
 MAX_READ = 2_000_000
 MAX_OUTPUT = 50 * 1024
@@ -34,7 +35,10 @@ class Workspace:
         target = self._path(path)
         if target.stat().st_size > MAX_READ:
             raise ValueError(f"{path} is larger than {MAX_READ} bytes")
-        return target.read_text(encoding="utf-8")
+        try:
+            return target.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            raise ValueError(f"{path} is a binary file, not UTF-8 text") from None
 
     async def list_files(self, pattern: str = "**/*") -> list[str]:
         found = []
@@ -102,6 +106,7 @@ class Workspace:
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            **own_group(),
         )
         from rlmagent.agents.output import OutputTail
 

@@ -8,6 +8,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -649,8 +650,11 @@ class CodingSession:
             try:
                 commit = await asyncio.to_thread(self.shadow.snapshot, f"before: {text[:80]}")
                 self._undo_stack.append((commit, self._tip_id, list(self._harness.transcript)))
-            except (RuntimeError, OSError, subprocess.TimeoutExpired):
-                pass
+                self._undo_problem = None
+            except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+                self._undo_problem = str(exc) or type(exc).__name__
+                print(f"rlm-agent: /undo will not cover this turn: {self._undo_problem}",
+                      file=sys.stderr)
         tree = getattr(self, "agent_tree", None)
         if tree is None or not self.cwd:
             return ""
@@ -673,14 +677,23 @@ class CodingSession:
         if not self._undo_stack:
             ready = self.shadow is not None and self.shadow.available
             return "Nothing to undo." if ready else "Undo needs git on PATH."
-        commit, tip, transcript = self._undo_stack.pop()
-        changed = await asyncio.to_thread(self.shadow.restore, commit)
+        if getattr(self, "_undo_problem", None):
+            return (f"The last turn has no snapshot ({self._undo_problem}), so undo would "
+                    "go back further than you expect. Nothing was changed.")
+        commit, tip, transcript = self._undo_stack[-1]
+        try:
+            changed = await asyncio.to_thread(self.shadow.restore, commit)
+        except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+            return f"Undo failed; the conversation was not rewound. {exc}"
+        self._undo_stack.pop()
         if tip is not None and self._vault is not None:
             await self.rewind(tip)
         else:
             self._harness.set_messages(transcript)
         files = ", ".join(changed[:10]) + (" ..." if len(changed) > 10 else "")
-        return (f"Undid the last turn. Files restored: {files or 'none changed'}. "
+        skipped = sorted(self.shadow.skipped)
+        missed = f" Not covered (over 5 MB): {', '.join(skipped[:5])}." if skipped else ""
+        return (f"Undid the last turn. Files restored: {files or 'none changed'}.{missed} "
                 "Kernel variables are not rolled back.")
 
     def set_provisional_title(self, text: str) -> None:

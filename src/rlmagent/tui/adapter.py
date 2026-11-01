@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 from time import time
 
 from rlmagent.conversation import CodingSession
@@ -175,7 +176,12 @@ class SessionBridge:
         if catalog is None:
             return []
         active = self._session.session_id
-        metas = sorted(catalog.list_all(), key=lambda m: m.created_at, reverse=True)
+        # A session belongs to the project it started in; never offer another project's here.
+        here = Path(self._session.cwd).resolve()
+        metas = sorted(
+            (m for m in catalog.list_all() if not m.cwd or Path(m.cwd).resolve() == here),
+            key=lambda m: m.created_at, reverse=True,
+        )
         entries = [
             SessionEntry(
                 session_id=meta.session_id,
