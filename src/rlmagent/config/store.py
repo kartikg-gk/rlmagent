@@ -129,6 +129,11 @@ def remember_model(provider: str, model: str) -> None:
         json.dumps(kept[:MAX_RECENT], indent=2), encoding="utf-8")
 
 
+def forget_model(provider: str, model: str) -> None:
+    kept = [r for r in recent_models() if r != {"provider": provider, "model": model}]
+    (config_dir() / "recent_models.json").write_text(json.dumps(kept, indent=2), encoding="utf-8")
+
+
 def config_dir() -> Path:
     """Directory holding rlm-agent's user configuration."""
     override = os.environ.get("RLM_AGENT_CONFIG_DIR")

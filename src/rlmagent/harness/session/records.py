@@ -22,6 +22,9 @@ def now_epoch() -> float:
     return time()
 
 
+FORMAT = 1  # raise when saved records change shape; older files have no field and count as 1
+
+
 class EntryBase(BaseModel):
     """Shared header present on every record in the session log."""
 
@@ -87,6 +90,7 @@ class SessionMetaRecord(EntryBase):
     """Top-level metadata stamped when a session is first created."""
 
     type: Literal["session_info"] = "session_info"
+    format: int = FORMAT
     created_at: float = Field(default_factory=now_epoch)
     cwd: str | None = None
     title: str | None = None

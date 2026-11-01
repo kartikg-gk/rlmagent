@@ -115,6 +115,9 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
             _die(f"Session not found: {resume}")
         if verbose:
             _info(f"Resumed {len(session.transcript)} messages from {resume}")
+        if session.interrupted:
+            _info("The last turn of this session did not finish; its work may be incomplete. "
+                  "Send a message, or /continue, to carry on.")
     else:
         session = await CodingSession.create(
             provider=provider,

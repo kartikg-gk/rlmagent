@@ -676,6 +676,17 @@ class CodingSession:
         await tree.root_kernel().run(f"import json as _j\nPROMPT = _j.loads({literal})\ndel _j")
         return note(refs)
 
+    @property
+    def interrupted(self) -> bool:
+        """The saved conversation stops mid-turn: the app quit or crashed, or the user stopped it."""
+        for entry in reversed(self._harness.transcript):
+            role = getattr(entry, "role", "")
+            if role == "assistant":
+                return entry.stop_reason in ("aborted", "toolUse")
+            if role in ("user", "toolResult"):
+                return True
+        return False
+
     async def _cmd_undo(self, arg: str) -> str:
         if not self._undo_stack:
             ready = self.shadow is not None and self.shadow.available

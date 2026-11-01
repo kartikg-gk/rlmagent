@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from pydantic import TypeAdapter, ValidationError
 
+from rlmagent.harness.session.records import FORMAT
 from rlmagent.harness.session.records import SessionRecord
 
 # ---------------------------------------------------------------------------
@@ -37,6 +38,8 @@ def deserialize_record(line: str, *, line_number: int | None = None) -> SessionR
     try:
         raw = json.loads(line)
         upgraded = _upgrade_entry(raw)
+        if upgraded.get("type") == "session_info" and upgraded.get("format", 1) > FORMAT:
+            raise ValueError("this session was saved by a newer rlm-agent; upgrade to open it")
         return _RECORD_ADAPTER.validate_python(upgraded)
     except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
         raise RecordParseError(f"Unreadable session record{location}: {exc}") from exc

@@ -216,3 +216,54 @@ async def test_edits_keep_each_files_line_endings(tmp_path):
     assert (tmp_path / "unix.py").read_bytes() == b"a\nc\n"
     assert (tmp_path / "dos.py").read_bytes() == b"a\r\nc\r\n"
     assert (tmp_path / "new.py").read_bytes() == b"x\n"
+
+
+def test_an_unfinished_conversation_is_noticed():
+    from types import SimpleNamespace as Entry
+
+    from rlmagent.conversation import CodingSession
+
+    def state(*entries):
+        return CodingSession.interrupted.fget(Entry(_harness=Entry(transcript=list(entries))))
+
+    assert not state()
+    assert not state(Entry(role="user"), Entry(role="assistant", stop_reason="stop"))
+    assert state(Entry(role="user"))
+    assert state(Entry(role="assistant", stop_reason="aborted"))
+    assert state(Entry(role="assistant", stop_reason="toolUse"), Entry(role="toolResult"))
+
+
+def test_provider_failures_say_what_to_change():
+    from types import SimpleNamespace as Fake
+
+    from rlmagent.tui.model_screen import _explain
+
+    def failure(status):
+        error = RuntimeError("x")
+        error.response = Fake(status_code=status)
+        return error
+
+    assert "key" in _explain(failure(401)) and "base URL" in _explain(failure(404))
+    assert "reach" in _explain(OSError("down"))
+
+
+def test_recent_models_can_be_removed(tmp_path, monkeypatch):
+    from rlmagent.config.store import forget_model, recent_models, remember_model
+
+    monkeypatch.setenv("RLM_AGENT_CONFIG_DIR", str(tmp_path))
+    remember_model("p", "a")
+    remember_model("p", "b")
+    forget_model("p", "a")
+    assert [r["model"] for r in recent_models()] == ["b"]
+
+
+def test_sessions_from_a_newer_version_are_refused_clearly():
+    import json
+
+    from rlmagent.harness.session.store import RecordParseError, deserialize_record
+
+    old = deserialize_record(json.dumps({"type": "session_info", "id": "a", "timestamp": 1.0}))
+    assert old.format == 1
+    with pytest.raises(RecordParseError, match="newer"):
+        deserialize_record(json.dumps({"type": "session_info", "id": "a", "timestamp": 1.0,
+                                       "format": 99}))

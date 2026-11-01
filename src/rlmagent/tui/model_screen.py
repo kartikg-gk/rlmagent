@@ -31,6 +31,18 @@ class _Row(ListItem):
         self.value = value
 
 
+def _explain(error: Exception) -> str:
+    """A failed provider check, in words that say what to change."""
+    status = getattr(getattr(error, "response", None), "status_code", None)
+    if status in (401, 403):
+        return f"The provider rejected this key ({status}). Check it and try again."
+    if status == 404:
+        return "Nothing at that endpoint (404). Check the base URL with Ctrl+E."
+    if status:
+        return f"The provider answered {status}. Try again, or check the endpoint."
+    return f"Could not reach the provider ({type(error).__name__}). Check the endpoint."
+
+
 class ModelScreen(ModalScreen[ModelChoice | None]):
     """Small centred dialog: pick a provider, a model, and a key if needed."""
 
@@ -40,6 +52,7 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
         ("ctrl+t", "test", "Test credentials"),
         ("ctrl+e", "endpoint", "Endpoint"),
         ("ctrl+r", "reveal", "Show key"),
+        ("ctrl+d", "forget", "Remove recent"),
     ]
 
     def __init__(self, current_provider: str = "", current_model: str = "") -> None:
@@ -121,9 +134,7 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
                 return
             models = await discover_models(self._info.key, base_url=self._endpoint)
         except Exception as error:
-            hint.update(
-                f"Provider check failed ({type(error).__name__}). Check credentials and endpoint."
-            )
+            hint.update(_explain(error))
             return
         hint.update(f"Model endpoint accepted credentials; {len(models)} models returned.")
         if show_models:
@@ -136,16 +147,25 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
     def _list_fetched(self, text: str) -> None:
         listing = self.query_one("#model-list", ListView)
         listing.clear()
-        for model in self._fetched:
-            if text.lower() in model.lower():
-                listing.append(_Row(model, model))
+        rows = [model for model in self._fetched if text.lower() in model.lower()]
+        for model in rows:
+            listing.append(_Row(model, model))
         listing.append(_Row("Enter a model identifier…", "__custom__"))
-        listing.index = 0
+        listing.index = rows.index(self._current_model) if self._current_model in rows else 0
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "model-filter":
             event.stop()
             self._list_fetched(event.value)
+
+    def action_forget(self):
+        from rlmagent.config.store import forget_model
+
+        row = self.query_one("#model-list", ListView).highlighted_child
+        value = getattr(row, "value", "")
+        if self._info is None and value.startswith("recent:"):
+            forget_model(*value.removeprefix("recent:").split("|", 1))
+            self._show_providers()
 
     def action_reveal(self):
         field = self.query_one("#model-key", Input)
