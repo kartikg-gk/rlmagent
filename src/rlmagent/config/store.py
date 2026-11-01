@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -106,6 +107,26 @@ class RlmAgentConfig:
 # ---------------------------------------------------------------------------
 # Location
 # ---------------------------------------------------------------------------
+
+
+MAX_RECENT = 8
+
+
+def recent_models() -> list[dict]:
+    """Models chosen before, newest first: [{"provider", "model"}]. Holds no keys."""
+    try:
+        saved = json.loads((config_dir() / "recent_models.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [r for r in saved if isinstance(r, dict) and r.get("provider") and r.get("model")]
+
+
+def remember_model(provider: str, model: str) -> None:
+    entry = {"provider": provider, "model": model}
+    kept = [entry] + [r for r in recent_models() if r != entry]
+    config_dir().mkdir(parents=True, exist_ok=True)
+    (config_dir() / "recent_models.json").write_text(
+        json.dumps(kept[:MAX_RECENT], indent=2), encoding="utf-8")
 
 
 def config_dir() -> Path:

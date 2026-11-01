@@ -387,6 +387,52 @@ class RlmAgentApp(App[None]):
         await self.query_one(Sidebar).show(self._bridge.sessions())
 
 
+def needs_setup(ns: argparse.Namespace) -> bool:
+    """No usable provider yet, so a first run should open the setup page."""
+    from rlmagent.cli.main import _resolve_provider_name
+    from rlmagent.config.config import resolve_provider
+    from rlmagent.config.loader import apply_config
+    from rlmagent.model.settings import ConfigError
+
+    if getattr(ns, "provider", None):
+        return False
+    try:
+        name = _resolve_provider_name(None)
+        apply_config(name)
+        resolve_provider(name)
+    except (ConfigError, KeyError, ValueError):
+        return True
+    return False
+
+
+class SetupApp(App):
+    """Just the model page, shown before the first session exists."""
+
+    choice = None
+
+    def on_mount(self) -> None:
+        from rlmagent.tui.model_screen import ModelScreen
+
+        def done(choice) -> None:
+            self.choice = choice
+            self.exit()
+
+        self.push_screen(ModelScreen(), done)
+
+
+def save_setup(choice) -> None:
+    from rlmagent.config.store import load_config, remember_model, save_config
+
+    config = load_config()
+    if choice.api_key:
+        config.api_keys[choice.provider] = choice.api_key
+    if choice.base_url:
+        config.base_urls[choice.provider] = choice.base_url
+    config.provider, config.model = choice.provider, choice.model
+    save_config(config)
+    remember_model(choice.provider, choice.model)
+
+
 async def run_app(ns: argparse.Namespace) -> int:
     """Build the shared runtime session and run the TUI over it."""
     from rlmagent.runtime import build_session, settle_project_trust
@@ -394,6 +440,12 @@ async def run_app(ns: argparse.Namespace) -> int:
 
     # Settled before the session exists: its answer decides what gets loaded.
     await settle_project_trust(ns, ask=ask_in_dialog)
+    if needs_setup(ns):
+        setup = SetupApp()
+        await setup.run_async()
+        if setup.choice is None:
+            return 1
+        save_setup(setup.choice)
     bridge = SessionBridge(await build_session(ns))
     app = RlmAgentApp(bridge)
     try:

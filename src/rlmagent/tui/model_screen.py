@@ -9,7 +9,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label, ListItem, ListView
 
-from rlmagent.config.store import PROVIDERS, ProviderInfo, load_config
+from rlmagent.config.store import PROVIDERS, ProviderInfo, load_config, recent_models
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +45,7 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
     def __init__(self, current_provider: str = "", current_model: str = "") -> None:
         super().__init__()
         self._current_provider = current_provider
+        self._fetched: list[str] = []
         self._current_model = current_model
         self._info: ProviderInfo | None = None
         self._model: str = ""
@@ -57,11 +58,13 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
         with Vertical(id="model-dialog"):
             yield Label("Select provider", id="model-title")
             yield ListView(id="model-list")
+            yield Input(placeholder="Type to filter models", id="model-filter")
             yield Input(placeholder="API key", password=True, id="model-key")
             yield Label("", id="model-hint")
 
     def on_mount(self) -> None:
         self.query_one("#model-key", Input).display = False
+        self.query_one("#model-filter", Input).display = False
         self._show_providers()
 
     # -- steps --------------------------------------------------------------
@@ -71,6 +74,9 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
         self.query_one("#model-title", Label).update("Select provider")
         listing = self.query_one("#model-list", ListView)
         listing.clear()
+        for recent in recent_models():
+            listing.append(_Row(f"↺ {recent['model']} · {recent['provider']}",
+                                f"recent:{recent['provider']}|{recent['model']}"))
         for info in PROVIDERS:
             marker = "●" if info.key == self._current_provider else " "
             listing.append(_Row(f"{marker} {info.label}", info.key))
@@ -121,12 +127,25 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
             return
         hint.update(f"Model endpoint accepted credentials; {len(models)} models returned.")
         if show_models:
-            listing = self.query_one("#model-list", ListView)
-            listing.clear()
-            for model in models:
+            self._fetched = models
+            self._list_fetched("")
+            box = self.query_one("#model-filter", Input)
+            box.value, box.display = "", True
+            box.focus()
+
+    def _list_fetched(self, text: str) -> None:
+        listing = self.query_one("#model-list", ListView)
+        listing.clear()
+        for model in self._fetched:
+            if text.lower() in model.lower():
                 listing.append(_Row(model, model))
-            listing.append(_Row("Enter a model identifier…", "__custom__"))
-            listing.index = 0
+        listing.append(_Row("Enter a model identifier…", "__custom__"))
+        listing.index = 0
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "model-filter":
+            event.stop()
+            self._list_fetched(event.value)
 
     def action_reveal(self):
         field = self.query_one("#model-key", Input)
@@ -167,7 +186,14 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
         row = event.item
         if not isinstance(row, _Row):
             return
-        if self._info is None:
+        if row.value.startswith("recent:"):
+            provider, _, model = row.value.removeprefix("recent:").partition("|")
+            self._info = next((p for p in PROVIDERS if p.key == provider), None)
+            if self._info is None:
+                self._show_providers()
+                return
+            self._on_model_chosen(model)
+        elif self._info is None:
             self._on_provider_chosen(row.value)
         else:
             self._on_model_chosen(row.value)
@@ -191,6 +217,13 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
+        if event.input.id == "model-filter":
+            listing = self.query_one("#model-list", ListView)
+            event.input.display = False
+            listing.focus()
+            if listing.highlighted_child is not None:
+                self._on_model_chosen(listing.highlighted_child.value)
+            return
         key = event.value.strip()
         if self._input_mode in ("model", "endpoint"):
             if not key:

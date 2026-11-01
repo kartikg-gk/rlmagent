@@ -232,7 +232,7 @@ class SessionBridge:
         """Persist credentials, rebuild the provider, and switch the session."""
         from rlmagent.config.config import resolve_provider
         from rlmagent.config.loader import apply_config
-        from rlmagent.config.store import load_config, provider_info, save_config
+        from rlmagent.config.store import load_config, provider_info, remember_model, save_config
 
         try:
             info = provider_info(provider)
@@ -251,6 +251,7 @@ class SessionBridge:
         config.provider = provider
         config.model = model
         save_config(config)
+        remember_model(provider, model)
 
         # Export credentials for this process. These are set unconditionally:
         # an explicit switch must override whatever the previous provider left
