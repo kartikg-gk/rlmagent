@@ -280,3 +280,11 @@ def test_stopping_a_process_that_just_ended_is_harmless(monkeypatch):
 
     monkeypatch.setattr(cli.os, "getpgid", gone)
     cli.kill_tree(SimpleNamespace(returncode=None, pid=1))
+
+
+def test_long_cell_output_is_shortened_on_screen_only():
+    from rlmagent.backend import shown_output
+
+    assert shown_output("a\nb") == "a\nb"
+    long = shown_output("\n".join(str(i) for i in range(20)))
+    assert long.endswith("(12 more lines)") and "\n7\n" in long and "\n8\n" not in long

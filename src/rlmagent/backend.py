@@ -43,6 +43,17 @@ _STATE_FIELDS = ("answered", "asking", "cells", "variables", "functions", "modul
 MAX_CHECKPOINT_CHARS = 20_000_000
 
 
+SHOWN_OUTPUT_LINES = 8
+
+
+def shown_output(output: str) -> str:
+    """A cell's output for the screen: the start of it. The model still gets all of it."""
+    lines = output.splitlines()
+    if len(lines) <= SHOWN_OUTPUT_LINES:
+        return output
+    return "\n".join(lines[:SHOWN_OUTPUT_LINES]) + f"\n... ({len(lines) - SHOWN_OUTPUT_LINES} more lines)"
+
+
 class Client:
     def __init__(
         self,
@@ -444,7 +455,7 @@ class BackendProvider:
                             and event.get("step", 0) > 0
                             and event.get("output")
                         ):
-                            text = f"\n```text\n{event['output']}\n```\n"
+                            text = f"\n```text\n{shown_output(str(event['output']))}\n```\n"
                         elif name == "command_output":
                             text = f"\n```text\n{event['text'].rstrip()}\n```\n"
                         elif name in ("run_started", "run_completed", "run_failed"):
