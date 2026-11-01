@@ -2,15 +2,44 @@
 
 from __future__ import annotations
 
+import re
+
+from rich.console import Group
 from rich.markup import escape
+from rich.syntax import Syntax
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Collapsible, Static
 
 _MAX_INLINE_OUTPUT = 400
 
-RLM_AGENT_MARK = "δ"  # prompt marker for user turns
+RLM_AGENT_MARK = "›"  # prompt marker for user turns
 ACCENT = "#c9a4ff"  # violet accent, shared by markup and rlm_agent.tcss
+
+
+_CLOSED_FENCE = re.compile(r"```(?:python|py)\n(.*?)\n```", re.DOTALL)
+
+
+def highlighted_code(code: str) -> Syntax:
+    """Python as the terminal shows it: coloured, wrapped, on the app's background."""
+    return Syntax(code, "python", theme="monokai", word_wrap=True, background_color="default")
+
+
+def render_message(text: str) -> Text | Group:
+    """Message text with its finished Python blocks coloured; literal, never markup."""
+    parts: list[Text | Syntax] = []
+    position = 0
+    for fence in _CLOSED_FENCE.finditer(text):
+        if fence.start() > position:
+            parts.append(Text(text[position:fence.start()].strip("\n")))
+        parts.append(highlighted_code(fence.group(1)))
+        position = fence.end()
+    if not parts:
+        return Text(text)
+    if text[position:].strip("\n"):
+        parts.append(Text(text[position:].strip("\n")))
+    return Group(*parts)
 
 
 class UserBlock(Static):
@@ -30,7 +59,7 @@ class AssistantBlock(Static):
     """One assistant message, appended to incrementally while streaming."""
 
     def __init__(self, text: str = "") -> None:
-        super().__init__(escape(text), classes="assistant-block")
+        super().__init__(render_message(text), classes="assistant-block")
         self._buffer = text
 
     @property
@@ -41,12 +70,12 @@ class AssistantBlock(Static):
     def append(self, delta: str) -> None:
         """Append streamed text and re-render."""
         self._buffer += delta
-        self.update(escape(self._buffer))
+        self.update(render_message(self._buffer))
 
     def finalize(self, text: str) -> None:
         """Replace the buffer with the completed message."""
         self._buffer = text
-        self.update(escape(text))
+        self.update(render_message(text))
 
 
 class ToolLine(Static):
@@ -64,6 +93,13 @@ class ToolLine(Static):
             self.add_class("tool-error")
         else:
             self.update(f"✓ {escape(self._summary)}")
+
+
+class ToolCode(Static):
+    """The Python a tool call runs."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(highlighted_code(code), classes="tool-code")
 
 
 class ToolOutput(Vertical):
@@ -97,6 +133,7 @@ class NoticeBlock(Static):
 __all__ = [
     "AssistantBlock",
     "NoticeBlock",
+    "ToolCode",
     "ToolLine",
     "ToolOutput",
     "UserBlock",

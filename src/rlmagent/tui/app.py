@@ -60,7 +60,7 @@ class RlmAgentApp(App[None]):
     """rlm-agent's terminal UI."""
 
     CSS_PATH = _CSS_PATH
-    TITLE = "δelta"
+    TITLE = "rlm-agent"
 
     BINDINGS = [
         ("escape", "stop", "Stop"),
@@ -117,16 +117,20 @@ class RlmAgentApp(App[None]):
         on = tree.approver.toggle_auto()
         self.notify("auto-accept on: file changes and commands go ahead unasked" if on
                     else "auto-accept off")
+        self._refresh_status()
 
     async def _ask_approval(self, request) -> str:
         """Show what the sandbox wants to change and wait for the answer."""
-        from rlmagent.agents.approval import DENY
+        from rlmagent.agents.approval import AUTO, DENY
         from rlmagent.tui.approval_screen import ApprovalScreen
 
         answer = asyncio.get_running_loop().create_future()
         self.push_screen(ApprovalScreen(request),
                          lambda choice: answer.done() or answer.set_result(choice or DENY))
-        return await answer
+        choice = await answer
+        if choice == AUTO:
+            self._refresh_status()
+        return choice
 
     # -- user actions -------------------------------------------------------
 
@@ -324,7 +328,7 @@ class RlmAgentApp(App[None]):
                 if isinstance(update, TextDelta):
                     transcript.stream_delta(update.text)
                 elif isinstance(update, ToolStarted):
-                    transcript.start_tool(update.call_id, update.summary)
+                    transcript.start_tool(update.call_id, update.summary, update.code)
                 elif isinstance(update, ToolFinished):
                     transcript.finish_tool(
                         update.call_id, update.output, is_error=update.is_error,
@@ -355,7 +359,9 @@ class RlmAgentApp(App[None]):
         session = self._bridge.session
         self.query_one(StatusBar).show(self._bridge.status(), busy=self._busy)
         effort = session.thinking_level or DEFAULT_THINKING_LEVEL
-        self.query_one(ModelBadge).show(session.model, effort)
+        tree = getattr(session, "agent_tree", None)
+        auto = tree is not None and tree.approver.policy == "auto"
+        self.query_one(ModelBadge).show(session.model, effort, auto)
 
     async def _refresh_sidebar(self) -> None:
         """Repaint the session list from the catalog."""

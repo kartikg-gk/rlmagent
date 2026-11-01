@@ -99,14 +99,14 @@ async def test_backend_playbook_helpers_and_denied_write(tmp_path):
     from rlmagent.playbook.improver import Improver
     improver = Improver(SimpleNamespace(), None, None)
     model = ReplayProvider([text_turn("```python\nawait improve('remember checks')\n"
-        "try:\n    await write_file('blocked', 'x')\nexcept Exception as exc:\n    message = str(exc)\nFINAL(message)\n```")])
+        "message = await write_file('blocked', 'x')\nFINAL(message)\n```")])
     tree = SimpleNamespace(cwd=str(tmp_path), approver=Approver('deny'), network=False,
                            improver=improver, cell_timeout=30,
                            allowance=Allowance(max_calls=10, max_cost=2))
     backend = BackendProvider(model, model, tree)
     try:
         answer, _ = await _run_backend(backend)
-        assert 'approval' in answer
+        assert answer.startswith('Error:') and 'approval' in answer
         assert not (tmp_path / 'blocked').exists()
         assert improver._pending[0][0] == 'remember checks'
     finally:

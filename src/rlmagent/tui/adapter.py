@@ -44,6 +44,7 @@ class ToolStarted:
     call_id: str
     name: str
     summary: str
+    code: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,6 +304,7 @@ class SessionBridge:
                 call_id=event.tool_call_id,
                 name=event.tool_name,
                 summary=summarize_call(event.tool_name, event.args),
+                code=str(event.args.get("code") or "") if event.tool_name == "python" else "",
             )
         if isinstance(event, RetryEvent):
             return RetryNotice(event.message)

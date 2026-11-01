@@ -219,6 +219,11 @@ ModelScreen {
     color: #b4b4b4;
 }
 
+.tool-code {
+    padding: 0 0 0 4;
+    height: auto;
+}
+
 .tool-line {
     padding: 0 0 0 2;
     color: #6a6a6a;

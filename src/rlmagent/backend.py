@@ -243,9 +243,7 @@ class BackendProvider:
 
                             try:
                                 value = await fn(*args, **kw)
-                            except Refused:
-                                raise
-                            except (OSError, ValueError, UnicodeError) as error:
+                            except (Refused, OSError, ValueError, UnicodeError) as error:
                                 value = f"Error: {error}"
                             self.record_event(
                                 {
@@ -361,7 +359,7 @@ class BackendProvider:
                     "Complete the user's coding task. Workspace access uses async read_file(path), "
                     "list_files(pattern), write_file(path, content), edit_file(path, old, new), "
                     "and run(cmd, timeout=120). Changes and commands use host approval. "
-                    "Ordinary tool failures return text starting with Error:; inspect results "
+                    "Failed or refused tool calls return text starting with Error:; inspect results "
                     "before continuing. "
                     "await fetch_url(url, max_chars=50000) fetches bounded text "
                     "when network is enabled. "

@@ -22,9 +22,9 @@ class ModelBadge(Static):
         """The text currently displayed."""
         return self._line
 
-    def show(self, model: str, effort: str) -> None:
-        """Render *model* and *effort*."""
-        self._line = f"{model} · {effort}"
+    def show(self, model: str, effort: str, auto_accept: bool = False) -> None:
+        """Render *model* and *effort*, and say so when nothing asks before changing."""
+        self._line = ("auto-accept · " if auto_accept else "") + f"{model} · {effort}"
         self.update(self._line)
 
 

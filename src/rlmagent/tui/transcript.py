@@ -8,6 +8,7 @@ from rlmagent.tui.adapter import summarize_call
 from rlmagent.tui.messages import (
     AssistantBlock,
     NoticeBlock,
+    ToolCode,
     ToolLine,
     ToolOutput,
     UserBlock,
@@ -35,11 +36,13 @@ class TranscriptView(VerticalScroll):
         self.mount(NoticeBlock(text, error=error))
         self._scroll()
 
-    def start_tool(self, call_id: str, summary: str) -> None:
-        """Append a pending tool line."""
+    def start_tool(self, call_id: str, summary: str, code: str = "") -> None:
+        """Append a pending tool line, and the code it runs if any."""
         line = ToolLine(call_id, summary)
         self._tools[call_id] = line
         self.mount(line)
+        if code:
+            self.mount(ToolCode(code))
         self._scroll()
 
     def finish_tool(self, call_id: str, output: str, *, is_error: bool) -> None:
@@ -94,6 +97,9 @@ class TranscriptView(VerticalScroll):
                     line = ToolLine(call.id, summarize_call(call.name, call.arguments))
                     line.mark_done(is_error=False)
                     self.mount(line)
+                    code = call.arguments.get("code") if call.name == "python" else None
+                    if isinstance(code, str) and code:
+                        self.mount(ToolCode(code))
                 if entry.text:
                     self.mount(AssistantBlock(entry.text))
             elif role == "compactionSummary":
