@@ -149,6 +149,18 @@ class SessionCatalog:
         staged.write_text(payload, encoding="utf-8")
         staged.replace(self._path)
 
+    def remove(self, session_ids: set[str]) -> None:
+        """Forget these sessions."""
+        entries = self._load_deduped()
+        payload = "".join(
+            entry.to_wire().model_dump_json(exclude_none=True) + "\n"
+            for entry in sorted(entries.values(), key=lambda m: m.updated_at)
+            if entry.session_id not in session_ids
+        )
+        staged = self._path.with_name(f"{self._path.name}.tmp")
+        staged.write_text(payload, encoding="utf-8")
+        staged.replace(self._path)
+
     def touch(self, session_id: str) -> SessionMeta | None:
         """Update the ``updated_at`` timestamp for *session_id*."""
         existing = self.get(session_id)

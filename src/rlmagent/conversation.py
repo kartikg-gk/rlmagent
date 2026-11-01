@@ -448,7 +448,7 @@ class CodingSession:
         self._extensions: list[object] = []
         self._named = title is not None
         self.shadow = None
-        self._undo_stack: list[tuple[str, str | None, list]] = []
+        self._undo_stack: list[tuple[str, str | None, list, dict | None]] = []
         self._renamed_manually = False
         self._tools_loader = tools_loader
         self._skills_loader = skills_loader
@@ -649,7 +649,10 @@ class CodingSession:
         if self.shadow is not None and self.shadow.available:
             try:
                 commit = await asyncio.to_thread(self.shadow.snapshot, f"before: {text[:80]}")
-                self._undo_stack.append((commit, self._tip_id, list(self._harness.transcript)))
+                backend = getattr(self, "backend", None)
+                state = backend.checkpoint_state() if backend is not None else None
+                self._undo_stack.append(
+                    (commit, self._tip_id, list(self._harness.transcript), state))
                 self._undo_problem = None
             except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
                 self._undo_problem = str(exc) or type(exc).__name__
@@ -680,7 +683,7 @@ class CodingSession:
         if getattr(self, "_undo_problem", None):
             return (f"The last turn has no snapshot ({self._undo_problem}), so undo would "
                     "go back further than you expect. Nothing was changed.")
-        commit, tip, transcript = self._undo_stack[-1]
+        commit, tip, transcript, state = self._undo_stack[-1]
         try:
             changed = await asyncio.to_thread(self.shadow.restore, commit)
         except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
@@ -691,10 +694,13 @@ class CodingSession:
         else:
             self._harness.set_messages(transcript)
         files = ", ".join(changed[:10]) + (" ..." if len(changed) > 10 else "")
+        if state is not None:
+            self.backend.restore_state(state)
+        kernel = ("Saved variables were rolled back; effects outside the workspace were not."
+                  if state is not None else "Kernel variables are not rolled back.")
         skipped = sorted(self.shadow.skipped)
         missed = f" Not covered (over 5 MB): {', '.join(skipped[:5])}." if skipped else ""
-        return (f"Undid the last turn. Files restored: {files or 'none changed'}.{missed} "
-                "Kernel variables are not rolled back.")
+        return (f"Undid the last turn. Files restored: {files or 'none changed'}.{missed} {kernel}")
 
     def set_provisional_title(self, text: str) -> None:
         """Derive a placeholder title from *text* and publish it immediately."""

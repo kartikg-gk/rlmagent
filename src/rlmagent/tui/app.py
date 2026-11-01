@@ -102,6 +102,8 @@ class RlmAgentApp(App[None]):
             tree = getattr(self._bridge.session, "agent_tree", None)
             if tree is not None and tree.approver.policy in ("ask", "auto"):
                 tree.approver.ask = self._ask_approval
+            if tree is not None:
+                tree.approver.question = self._ask_question
 
     def action_toggle_auto(self) -> None:
         """Shift+Tab: stop or resume asking before file changes and commands, this session only."""
@@ -118,6 +120,15 @@ class RlmAgentApp(App[None]):
         self.notify("auto-accept on: file changes and commands go ahead unasked" if on
                     else "auto-accept off")
         self._refresh_status()
+
+    async def _ask_question(self, question: str, choices: list[str] | None) -> str | None:
+        """Show a question from the agent and wait for the answer."""
+        from rlmagent.tui.question_screen import QuestionScreen
+
+        answer = asyncio.get_running_loop().create_future()
+        self.push_screen(QuestionScreen(question, choices),
+                         lambda text: answer.done() or answer.set_result(text))
+        return await answer
 
     async def _ask_approval(self, request) -> str:
         """Show what the sandbox wants to change and wait for the answer."""

@@ -20,7 +20,9 @@ The python tool runs code in one sandboxed kernel (Python compiled to WebAssembl
     paths = await list_files("**/*.py")
     await write_file("src/app.py", text)          # asks the user first
     await edit_file("src/app.py", old, new)       # old must occur exactly once
+    await apply_patch(unified_diff)               # several edits or files, all or none; asks first
     r = await run("python -m pytest -q")          # {"exit": 0, "output": "..."}; asks first
+    answer = await ask_user("Which one?", ["a", "b"])  # only when you truly cannot decide
 
 Paths are relative to the project root. Run tests, builds and installs with run(); it executes on the user's machine. A refused write or command raises RuntimeError: tell the user what you wanted to do instead of retrying. Print summaries rather than whole files; long output is cut to its start and end."""
 

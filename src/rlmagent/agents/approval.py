@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
@@ -48,6 +49,8 @@ class Approver:
     def __init__(self, policy: str = "deny", ask: Ask | None = None) -> None:
         self.policy = policy
         self.ask = ask
+        self.question = None  # async (question, choices) -> answer; None: nobody to ask
+        self.one_question = asyncio.Lock()
         self._always: set[tuple[str, str]] = set()
 
     async def approve(self, request: Request) -> str:

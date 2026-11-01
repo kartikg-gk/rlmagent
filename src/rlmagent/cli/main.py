@@ -227,6 +227,10 @@ def _build_session_parser() -> argparse.ArgumentParser:
         help="Session ID to summarize (default: the most recent session).",
     )
     st.add_argument("--session-dir", default=None, dest="sub_session_dir")
+    pr = sub.add_parser("prune", help="List old sessions; remove them with --yes.")
+    pr.add_argument("--older-than", type=int, required=True, metavar="DAYS")
+    pr.add_argument("--yes", action="store_true", help="Actually remove them.")
+    pr.add_argument("--session-dir", default=None, dest="sub_session_dir")
     return p
 
 
@@ -606,6 +610,14 @@ def _handle_session(argv: list[str]) -> int:
         asyncio.run(_session_stats(base, ns.session_id, sys.stdout))
         return 0
 
+    if ns.action == "prune":
+        from rlmagent.plugins import rlm_agent_home
+        from rlmagent.prune import prune
+
+        if ns.older_than < 1:
+            _die("--older-than must be at least 1 day.")
+        return prune(base, rlm_agent_home(), ns.older_than, apply=ns.yes)
+
     return 1
 
 
@@ -658,6 +670,8 @@ async def _run_interactive(session: CodingSession) -> int:
     tree = getattr(session, "agent_tree", None)
     if tree is not None and tree.approver.policy in ("ask", "auto"):
         tree.approver.ask = _ask_on_console
+    if tree is not None:
+        tree.approver.question = _question_on_console
 
     while True:
         try:
@@ -750,6 +764,21 @@ async def _ask_on_console(request) -> str:
         choice = APPROVAL_KEYS.get(answer.strip().lower()[:1])
         if choice is not None:
             return choice
+
+
+async def _question_on_console(question: str, choices: list[str] | None) -> str | None:
+    """Line-mode question: a number picks a choice, anything else is the answer."""
+    _info(f"\nThe agent asks:\n{question}")
+    for number, choice in enumerate(choices or [], start=1):
+        _info(f"  {number}. {choice}")
+    try:
+        answer = await asyncio.get_running_loop().run_in_executor(None, input, "Answer: ")
+    except (EOFError, KeyboardInterrupt):
+        return None
+    answer = answer.strip()
+    if choices and answer.isdigit() and 1 <= int(answer) <= len(choices):
+        return choices[int(answer) - 1]
+    return answer or None
 
 
 def _prompt_user() -> str | None:

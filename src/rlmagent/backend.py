@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import copy
 import json
 import queue
 import threading
@@ -36,6 +37,10 @@ def wait_for_host(future, agent, background):
         except FutureTimeout:
             if future.done():
                 raise
+
+
+_STATE_FIELDS = ("answered", "asking", "cells", "variables", "functions", "modules", "dropped")
+MAX_CHECKPOINT_CHARS = 20_000_000
 
 
 class Client:
@@ -162,6 +167,19 @@ class BackendProvider:
     def __getattr__(self, name):
         return getattr(self.fallback, name)
 
+    def checkpoint_state(self):
+        """A copy of the saved variables for /undo, or None when they are too large to keep."""
+        fields = {name: getattr(self.state, name) for name in _STATE_FIELDS}
+        if len(json.dumps(fields, default=str)) > MAX_CHECKPOINT_CHARS:
+            return None
+        return copy.deepcopy(fields)
+
+    def restore_state(self, checkpoint) -> None:
+        for name, value in copy.deepcopy(checkpoint).items():
+            setattr(self.state, name, value)
+        if self.state.path is not None:
+            self.state.save()
+
     def stream_response(self, *, model, system, messages, tools, signal=None, cache_key=None):
         if not any(tool.name == "python" for tool in tools):
             return self.fallback.stream_response(
@@ -186,6 +204,7 @@ class BackendProvider:
             if hasattr(tree, "provider"):
                 self.provider = with_external(tree.provider.inner)
             workspace = Workspace(tree.cwd, tree.approver)
+            workspace.on_output = lambda text: updates.put({"kind": "command_output", "text": text})
             updates = queue.Queue()
             context = threading.local()
             accounting = []
@@ -358,7 +377,10 @@ class BackendProvider:
                 + (
                     "Complete the user's coding task. Workspace access uses async read_file(path), "
                     "list_files(pattern), write_file(path, content), edit_file(path, old, new), "
+                    "apply_patch(unified_diff) for several edits or files, all or none, "
                     "and run(cmd, timeout=120). Changes and commands use host approval. "
+                    "await ask_user(question, choices=None) asks the user; use it only "
+                    "when you truly cannot decide. "
                     "Failed or refused tool calls return text starting with Error:; inspect results "
                     "before continuing. "
                     "await fetch_url(url, max_chars=50000) fetches bounded text "
@@ -423,6 +445,8 @@ class BackendProvider:
                             and event.get("output")
                         ):
                             text = str(event["output"]) + "\n"
+                        elif name == "command_output":
+                            text = event["text"]
                         elif name in ("run_started", "run_completed", "run_failed"):
                             text = f"[{name}: {event.get('run_id', '')}]\n"
                         if text:

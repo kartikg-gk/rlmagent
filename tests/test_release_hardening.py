@@ -74,7 +74,7 @@ async def test_a_failed_undo_keeps_the_turn_and_says_so(monkeypatch):
     def broken(_commit):
         raise RuntimeError("these files did not come back: a.txt")
 
-    session = SimpleNamespace(_undo_stack=[("c", None, [])], _undo_problem=None,
+    session = SimpleNamespace(_undo_stack=[("c", None, [], None)], _undo_problem=None,
                               shadow=SimpleNamespace(restore=broken, available=True, skipped=set()))
     answer = await CodingSession._cmd_undo(session, "")
     assert "Undo failed" in answer and "a.txt" in answer and session._undo_stack

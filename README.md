@@ -52,7 +52,7 @@ Depth, call, cost, live-agent, and time limits apply across recursive execution.
 ## Workspace approvals
 
 Sandbox code reaches the project through `read_file`, `list_files`, `write_file`,
-`edit_file`, and `run`. File paths are confined to the configured workspace.
+`edit_file`, `apply_patch`, `ask_user`, and `run`. File paths are confined to the configured workspace.
 Writes, edits, and commands use the application's approval policy. Shell commands
 run with the user's permissions; the workspace path restriction is not an OS shell
 sandbox. Command cancellation and timeout handling terminate the process tree.
@@ -68,7 +68,9 @@ the backend's saved values and supported definitions; unsupported objects are
 reported as dropped. Ephemeral sessions retain state only while the app is open.
 Live background jobs end with the application session; they are not restarted
 automatically after process exit. `/undo` restores its filesystem/transcript
-checkpoint and does not rewind backend variables.
+checkpoint and rolls back saved backend variables, unless they are too large
+to copy; effects outside the workspace are not undone. `rlm-agent session prune
+--older-than DAYS` lists old sessions and snapshots; add `--yes` to remove them.
 
 Use `await playbook(id)` to inspect a saved entry, `await skill(id)` to load a skill,
 and `await improve(instructions, shared=False)` to queue a playbook update at the

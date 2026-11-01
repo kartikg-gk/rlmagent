@@ -6,9 +6,11 @@ import asyncio
 import difflib
 import os
 import shutil
+import time
 from pathlib import Path
 
 from rlmagent.agents.approval import Approver, Request, Refused, check
+from rlmagent.agents.patch import PatchError, parse, patched
 from rlmagent.model.external.cli import own_group
 
 MAX_READ = 2_000_000
@@ -21,6 +23,7 @@ class Workspace:
     def __init__(self, root: str | Path, approver: Approver) -> None:
         self.root = Path(root).resolve()
         self.approver = approver
+        self.on_output = None  # called with command output as it arrives
 
     def _path(self, raw: str) -> Path:
         path = (self.root / raw).resolve()  # symlinks followed, so a link out is caught
@@ -83,6 +86,53 @@ class Workspace:
         target.write_text(text.replace(old, new, 1), encoding="utf-8")
         return f"edited {self._rel(target)}"
 
+    async def apply_patch(self, diff: str) -> str:
+        """Apply a unified diff to any number of files, all of them or none."""
+        before: dict[Path, str | None] = {}
+        after: dict[Path, str | None] = {}
+        for change in parse(diff):
+            target = self._path(change.path)
+            exists = target.exists()
+            if change.old_path is None and exists:
+                raise PatchError(f"{change.path} already exists")
+            if change.old_path is not None and not exists:
+                raise PatchError(f"{change.path} does not exist")
+            text = target.read_text(encoding="utf-8") if exists else ""
+            before[target] = text if exists else None
+            after[target] = None if change.new_path is None else patched(text, change)
+        names = ", ".join(self._rel(t) for t in after)
+        approved = await self.approver.approve(Request("patch", names, (diff,), preview=diff))
+        check(approved, Request("patch", names, (diff,)))
+        for target, text in before.items():
+            current = target.read_text(encoding="utf-8") if target.exists() else None
+            if current != text:
+                raise Refused(f"{self._rel(target)} changed while approval was pending; read it again")
+        done: list[Path] = []
+        try:
+            for target, text in after.items():
+                done.append(target)
+                if text is None:
+                    target.unlink()
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(text, encoding="utf-8")
+        except OSError:
+            for target in done:
+                if before[target] is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    target.write_text(before[target], encoding="utf-8")
+            raise
+        return f"patched {names}"
+
+    async def ask_user(self, question: str, choices: list[str] | None = None) -> str:
+        """Put a question to the user and wait; text starting with Error: if nobody answers."""
+        if self.approver.question is None:
+            return "Error: nobody can answer here. Decide yourself and say what you assumed."
+        async with self.approver.one_question:
+            answer = await self.approver.question(str(question), list(choices) if choices else None)
+        return answer or "Error: the user did not answer. Decide yourself and say what you assumed."
+
     async def run(self, cmd: str, timeout: float = 120.0) -> dict:
         approved = await self.approver.approve(Request("run", cmd))
         check(approved, Request("run", cmd))
@@ -113,8 +163,17 @@ class Workspace:
         tail = OutputTail()
 
         async def drain():
+            shown, unsent = 0.0, bytearray()
             while chunk := await proc.stdout.read(8192):
                 tail.feed(chunk)
+                if self.on_output is not None:
+                    unsent.extend(chunk)
+                    if time.monotonic() - shown >= 0.25:
+                        self.on_output(bytes(unsent[-4096:]).decode("utf-8", errors="replace"))
+                        shown = time.monotonic()
+                        unsent.clear()
+            if self.on_output is not None and unsent:
+                self.on_output(bytes(unsent[-4096:]).decode("utf-8", errors="replace"))
             await proc.wait()
 
         reader = asyncio.create_task(drain())
@@ -188,6 +247,8 @@ class Workspace:
             "list_files": self.list_files,
             "write_file": self.write_file,
             "edit_file": self.edit_file,
+            "apply_patch": self.apply_patch,
+            "ask_user": self.ask_user,
             "run": self.run,
             "instruction_docs": self.instruction_docs,
         }

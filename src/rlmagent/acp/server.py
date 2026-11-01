@@ -174,6 +174,8 @@ class Server:
         tree = getattr(session, "agent_tree", None)
         if tree is not None and tree.approver.policy == "ask":
             tree.approver.ask = lambda request: self._ask(sid, request)
+        if tree is not None:
+            tree.approver.question = lambda text, choices: self._question(sid, text, choices)
         if self.modes.get(sid) == "plan":
             session.set_plan_mode(True)
         self.sessions[sid] = session
@@ -196,6 +198,21 @@ class Server:
             "options": options})
         outcome = reply.get("outcome", {})
         return menu.get(outcome.get("optionId")) if outcome.get("outcome") == "selected" else None
+
+    async def _question(self, sid: str, text: str, choices: list[str] | None) -> str | None:
+        """Editors take a pick from a list over ACP; they have no free-text answer."""
+        if not choices:
+            raise ValueError("this editor can only answer questions that list choices")
+        reply = await self.request("session/request_permission", {
+            "sessionId": sid,
+            "toolCall": {"toolCallId": f"question-{uuid.uuid4().hex[:12]}", "title": text,
+                         "kind": "other", "status": "pending"},
+            "options": [{"optionId": str(i), "name": c, "kind": "allow_once"}
+                        for i, c in enumerate(choices)]})
+        outcome = reply.get("outcome", {})
+        if outcome.get("outcome") != "selected":
+            return None
+        return choices[int(outcome["optionId"])]
 
     async def _ask(self, session_id: str, request) -> str:
         reply = await self.request("session/request_permission", {

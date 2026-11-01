@@ -1,0 +1,154 @@
+import io
+from time import time
+
+import pytest
+from _scripted import text_turn
+from rlmness import Allowance
+
+from rlmagent.agents.approval import DENY, ONCE, Approver, Refused
+from rlmagent.agents.patch import PatchError
+from rlmagent.agents.workspace import Workspace
+from rlmagent.harness.session.index import SessionCatalog
+from rlmagent.prune import prune
+
+DIFF = """--- a/one.py
++++ b/one.py
+@@ -1,2 +1,2 @@
+ keep
+-old
++new
+--- /dev/null
++++ b/two.py
+@@ -0,0 +1 @@
++made
+"""
+
+
+async def test_a_patch_changes_every_file_after_one_approval(tmp_path):
+    (tmp_path / "one.py").write_text("keep\nold\n")
+    asked = []
+
+    async def ask(request):
+        asked.append(request.target)
+        return ONCE
+    await Workspace(tmp_path, Approver("ask", ask)).apply_patch(DIFF)
+    assert (tmp_path / "one.py").read_text() == "keep\nnew\n"
+    assert (tmp_path / "two.py").read_text() == "made\n"
+    assert asked == ["one.py, two.py"]
+
+
+async def test_a_patch_that_does_not_fit_changes_nothing(tmp_path):
+    (tmp_path / "one.py").write_text("keep\nother\n")
+    with pytest.raises(PatchError, match="not found"):
+        await Workspace(tmp_path, Approver("auto")).apply_patch(DIFF)
+    assert (tmp_path / "one.py").read_text() == "keep\nother\n"
+    assert not (tmp_path / "two.py").exists()
+
+
+async def test_a_patch_stays_inside_and_needs_approval(tmp_path):
+    (tmp_path / "w").mkdir()
+    with pytest.raises(ValueError, match="outside the workspace"):
+        await Workspace(tmp_path / "w", Approver("auto")).apply_patch(
+            "--- /dev/null\n+++ b/../evil.py\n@@ -0,0 +1 @@\n+x\n")
+    (tmp_path / "w" / "one.py").write_text("keep\nold\n")
+
+    async def deny(_request):
+        return DENY
+    with pytest.raises(Refused):
+        await Workspace(tmp_path / "w", Approver("ask", deny)).apply_patch(DIFF)
+    assert (tmp_path / "w" / "one.py").read_text() == "keep\nold\n"
+
+
+async def test_a_moved_hunk_and_windows_line_endings_still_apply(tmp_path):
+    (tmp_path / "one.py").write_bytes(b"top\r\nkeep\r\nold\r\n")
+    diff = "--- a/one.py\n+++ b/one.py\n@@ -1,2 +1,2 @@\n keep\n-old\n+new\n"
+    await Workspace(tmp_path, Approver("auto")).apply_patch(diff)
+    assert (tmp_path / "one.py").read_bytes() == b"top\r\nkeep\r\nnew\r\n"
+
+
+async def test_questions_reach_the_user_or_return_an_error(tmp_path):
+    workspace = Workspace(tmp_path, Approver("deny"))
+    assert (await workspace.ask_user("which?")).startswith("Error:")
+
+    async def answer(question, choices):
+        return choices[1]
+    workspace.approver.question = answer
+    assert await workspace.ask_user("which?", ["a", "b"]) == "b"
+
+    async def silent(question, choices):
+        return None
+    workspace.approver.question = silent
+    assert (await workspace.ask_user("which?")).startswith("Error:")
+
+
+async def test_command_output_arrives_while_it_runs(tmp_path):
+    seen = []
+    workspace = Workspace(tmp_path, Approver("auto"))
+    workspace.on_output = seen.append
+    result = await workspace.run("echo first; sleep 1; echo second")
+    assert result["exit"] == 0 and "second" in result["output"]
+    assert len(seen) >= 2 and "first" in seen[0] and "second" not in seen[0]
+
+
+async def _backend_with(tmp_path, turns):
+    from types import SimpleNamespace
+
+    from rlmagent.backend import BackendProvider
+
+    model = __import__("rlmagent.model.scripted", fromlist=["x"]).ReplayProvider(turns)
+    tree = SimpleNamespace(cwd=str(tmp_path), approver=Approver("auto"), network=False,
+                           cell_timeout=30, allowance=Allowance(max_calls=10, max_cost=2))
+    return BackendProvider(model, model, tree)
+
+
+async def test_saved_variables_roll_back_to_a_checkpoint(tmp_path):
+    backend = await _backend_with(tmp_path, [text_turn("x")])
+    backend.state.variables["a"] = {"value": 1}
+    saved = backend.checkpoint_state()
+    backend.state.variables["a"]["value"] = 2
+    backend.state.variables["b"] = {"value": 3}
+    backend.restore_state(saved)
+    assert backend.state.variables == {"a": {"value": 1}}
+    backend.state.variables["a"]["value"] = 9
+    assert saved["variables"]["a"]["value"] == 1
+
+
+async def test_too_large_variables_are_not_copied(tmp_path, monkeypatch):
+    backend = await _backend_with(tmp_path, [text_turn("x")])
+    monkeypatch.setattr("rlmagent.backend.MAX_CHECKPOINT_CHARS", 10)
+    backend.state.variables["a"] = {"value": "x" * 100}
+    assert backend.checkpoint_state() is None
+
+
+def _session(catalog, base, sid, cwd, age_days):
+    catalog.upsert(catalog.prepare(session_id=sid, vault_path=base / f"{sid}.jsonl",
+                                   cwd=str(cwd), model="m", provider="p"))
+    from dataclasses import replace
+
+    meta = catalog.get(sid)
+    entries = catalog._load_deduped()
+    entries[sid] = replace(meta, updated_at=time() - age_days * 86400)
+    catalog.remove({sid})
+    catalog.upsert(entries[sid])
+    (base / f"{sid}.jsonl").write_text("x")
+    (base / f"{sid}.backend.json").write_text("{}")
+
+
+def test_prune_lists_first_and_removes_only_what_is_old(tmp_path):
+    base, home = tmp_path / "store", tmp_path / "home"
+    base.mkdir()
+    catalog = SessionCatalog(base)
+    _session(catalog, base, "old1", tmp_path / "gone", 40)
+    _session(catalog, base, "new1", tmp_path / "here", 1)
+
+    out = io.StringIO()
+    prune(base, home, 30, out=out)
+    assert "1 of 2" in out.getvalue() and "Nothing was removed" in out.getvalue()
+    assert (base / "old1.jsonl").exists()
+
+    prune(base, home, 30, apply=True, out=io.StringIO())
+    assert not (base / "old1.jsonl").exists() and not (base / "old1.backend.json").exists()
+    assert (base / "new1.jsonl").exists()
+    assert [m.session_id for m in catalog.list_all()] == ["new1"]
+
+
