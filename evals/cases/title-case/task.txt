@@ -1,0 +1,1 @@
+Add a function `title_case(text)` to names.py. It capitalises each word, keeps words of two letters or fewer lowercase unless they come first, and collapses repeated spaces.

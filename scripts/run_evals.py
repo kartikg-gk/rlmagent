@@ -36,7 +36,8 @@ def run_case(case: Path, agent_args: list[str], timeout: float) -> dict:
         started = time.monotonic()
         try:
             agent = subprocess.run(
-                [_agent(), "-p", "--no-auto-improve", *agent_args, task], cwd=work,
+                [_agent(), "-p", "--no-auto-improve", "--session-dir", str(Path(tmp) / "s"),
+                 *agent_args, task], cwd=work,
                 capture_output=True, text=True, timeout=timeout, encoding="utf-8", errors="replace",
             )
             agent_error = "" if agent.returncode == 0 else agent.stderr[-400:]
@@ -45,9 +46,14 @@ def run_case(case: Path, agent_args: list[str], timeout: float) -> dict:
         seconds = time.monotonic() - started
         check = subprocess.run([sys.executable, str(case / "verify.py")], cwd=work,
                                capture_output=True, text=True)
+        spent = subprocess.run([_agent(), "session", "stats", "--session-dir", str(Path(tmp) / "s")],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace")
+    usage = json.loads(spent.stdout) if spent.returncode == 0 else {}
     passed = check.returncode == 0
     detail = "" if passed else (check.stderr.strip().splitlines() or ["failed"])[-1]
     return {"case": case.name, "passed": passed, "seconds": round(seconds, 1),
+            "turns": usage.get("turns"), "tokens": usage.get("total_tokens"),
+            "cost": usage.get("cost_usd"),
             "detail": detail or agent_error}
 
 
@@ -69,7 +75,9 @@ def main() -> int:
         result = run_case(CASES / name, agent_args, args.timeout)
         results.append(result)
         mark = "PASS" if result["passed"] else "FAIL"
-        print(f"{mark}  {name:<20} {result['seconds']:>6}s  {result['detail']}", flush=True)
+        print(f"{mark}  {name:<20} {result['seconds']:>6}s  "
+              f"{result['tokens'] or 0:>8} tokens  ${result['cost'] or 0:.4f}  {result['detail']}",
+              flush=True)
     print(f"\n{sum(r['passed'] for r in results)}/{len(results)} passed")
     if args.json_out:
         Path(args.json_out).write_text(json.dumps(results, indent=2), encoding="utf-8")

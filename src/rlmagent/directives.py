@@ -592,7 +592,7 @@ def build_default_registry() -> CommandRegistry:
             name="undo",
             description="Undo the last turn: its file changes and its messages",
             handler=_cmd_undo,
-            usage="/undo",
+            usage="/undo [N | list]",
             search_terms=("revert", "restore", "rollback"),
         ),
         SlashCommand(

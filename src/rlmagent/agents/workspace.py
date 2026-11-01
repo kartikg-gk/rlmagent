@@ -16,6 +16,8 @@ from rlmagent.model.external.cli import own_group
 MAX_READ = 2_000_000
 MAX_OUTPUT = 50 * 1024
 MAX_LIST = 2_000
+MAX_INSTRUCTION = 64 * 1024
+MAX_INSTRUCTIONS = 200
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".rlm-agent"}
 
 
@@ -125,12 +127,16 @@ class Workspace:
             raise
         return f"patched {names}"
 
-    async def ask_user(self, question: str, choices: list[str] | None = None) -> str:
+    async def ask_user(self, question: str, choices: list[str] | None = None,
+                       multiple: bool = False) -> str | list[str]:
         """Put a question to the user and wait; text starting with Error: if nobody answers."""
         if self.approver.question is None:
             return "Error: nobody can answer here. Decide yourself and say what you assumed."
         async with self.approver.one_question:
-            answer = await self.approver.question(str(question), list(choices) if choices else None)
+            options = list(choices) if choices else None
+            answer = await (self.approver.question(str(question), options, multiple=True)
+                            if multiple and options else
+                            self.approver.question(str(question), options))
         return answer or "Error: the user did not answer. Decide yourself and say what you assumed."
 
     async def run(self, cmd: str, timeout: float = 120.0) -> dict:
@@ -226,6 +232,8 @@ class Workspace:
             target = self._path(path)
             if target.name not in names:
                 raise ValueError("choose an instruction file from instruction_docs()")
+            if target.stat().st_size > MAX_INSTRUCTION:
+                raise ValueError(f"{path} is larger than {MAX_INSTRUCTION} bytes")
             return await self.read_file(path)
         import os
 
@@ -237,7 +245,7 @@ class Workspace:
             for name in sorted(names.intersection(files)):
                 target = self._path(str(Path(folder) / name))
                 found.append(self._rel(target))
-                if len(found) >= MAX_LIST:
+                if len(found) >= MAX_INSTRUCTIONS:
                     return found
         return found
 

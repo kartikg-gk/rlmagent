@@ -1,6 +1,4 @@
-from rich.console import Console, Group
-from rich.syntax import Syntax
-from rich.text import Text
+from rich.console import Console
 
 from rlmagent.harness.contracts.stream import ToolRunStartEvent
 from rlmagent.tui.composer import ModelBadge
@@ -14,17 +12,21 @@ def _shown(renderable) -> str:
     return capture.get()
 
 
-def test_finished_python_blocks_are_coloured_and_text_stays_literal():
-    rendered = render_message("look [bold]here[/bold]\n```python\nx = 1\n```\ndone")
-    assert isinstance(rendered, Group)
-    assert [type(part) for part in rendered.renderables] == [Text, Syntax, Text]
-    shown = _shown(rendered)
-    assert "[bold]here[/bold]" in shown and "x = 1" in shown and "```" not in shown
+def test_messages_render_as_markdown_and_never_as_console_markup():
+    shown = _shown(render_message("# Head\n\nlook [bold]here[/bold]\n\n```python\nx = 1\n```"))
+    assert "Head" in shown and "[bold]here[/bold]" in shown and "x = 1" in shown
+    assert "```" not in shown and "# Head" not in shown
 
 
-def test_a_block_still_streaming_stays_plain():
-    rendered = render_message("```python\nx = ")
-    assert isinstance(rendered, Text) and rendered.plain == "```python\nx = "
+def test_streamed_progress_stays_above_the_answer():
+    from rlmagent.tui.messages import AssistantBlock
+
+    block = AssistantBlock("```python\nx = 1\n```")
+    block.finalize("the answer")
+    assert "x = 1" in block.text and block.text.endswith("the answer")
+    same = AssistantBlock("hello")
+    same.finalize("hello")
+    assert same.text == "hello"
 
 
 def test_python_tool_calls_carry_their_code_to_the_screen():
@@ -61,3 +63,33 @@ async def test_code_renders_inside_the_real_app():
         await pilot.pause()
         assert block.text.endswith("after") and block.region.height > 0
         assert pilot.app.query_one(ToolCode).region.height > 0
+
+
+def test_approval_answers_to_y_and_n():
+    from rlmagent.agents.approval import Request
+    from rlmagent.tui.approval_screen import ApprovalScreen
+
+    keys = {binding[0]: binding[1] for binding in ApprovalScreen.BINDINGS}
+    assert keys["y"] == "once" and keys["n"] == "deny"
+    assert ApprovalScreen(Request("run", "x")).request.target == "x"
+
+
+async def test_the_question_screen_collects_several_picks():
+    from textual.app import App
+    from textual.widgets import Input, SelectionList
+
+    from rlmagent.tui.question_screen import QuestionScreen
+
+    answers = []
+
+    class Host(App):
+        def on_mount(self):
+            self.push_screen(QuestionScreen("which?", ["a", "b"], True), answers.append)
+
+    async with Host().run_test() as pilot:
+        await pilot.pause()
+        pilot.app.screen.query_one(SelectionList).select("b")
+        pilot.app.screen.query_one(Input).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+    assert answers == [["b"]]

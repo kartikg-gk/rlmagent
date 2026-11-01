@@ -40,6 +40,12 @@ class PromptInput(TextArea):
         """Take focus so the user can type immediately."""
         self.focus()
 
+    BINDINGS = [
+        ("alt+b", "cursor_word_left", "Word left"),
+        ("alt+f", "cursor_word_right", "Word right"),
+        ("alt+d", "delete_word_right", "Delete word"),
+    ]
+
     #: Keys that insert a literal newline instead of submitting.
     #: ``shift+enter`` only reaches the app under the kitty keyboard
     #: protocol; ``ctrl+j`` is the universal fallback.

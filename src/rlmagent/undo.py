@@ -78,6 +78,9 @@ class Shadow:
         self._git("commit", "-q", "--allow-empty", "--no-verify", "-m", label[:200])
         return self._git("rev-parse", "HEAD")
 
+    def label(self, commit: str) -> str:
+        return self._git("log", "-1", "--format=%s", commit).removeprefix("before: ")
+
     def restore(self, commit: str) -> list[str]:
         """Put the workspace back to `commit` and check it; returns the paths that changed."""
         self.snapshot("before undo")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from rich.syntax import Syntax
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import ModalScreen
@@ -17,7 +18,8 @@ class _Choice(ListItem):
 
 
 class ApprovalScreen(ModalScreen[str]):
-    BINDINGS = [("escape", "deny", "Deny"), ("shift+tab", "auto", "Auto-accept")]
+    BINDINGS = [("escape", "deny", "Deny"), ("n", "deny", "Deny"), ("y", "once", "Allow once"),
+                ("shift+tab", "auto", "Auto-accept")]
 
     def __init__(self, request: Request) -> None:
         super().__init__()
@@ -27,7 +29,10 @@ class ApprovalScreen(ModalScreen[str]):
         always = "this command" if self.request.kind == "run" else "this file"
         with Vertical(id="approval-dialog"):
             yield Label("The agent wants to:", id="approval-title")
-            yield Static(self.request.describe(), id="approval-body", markup=False)
+            text = self.request.describe()
+            body = Syntax(text, "diff", theme="monokai", word_wrap=True,
+                          background_color="default") if self.request.preview else text
+            yield Static(body, id="approval-body", markup=False)
             yield ListView(
                 _Choice("Allow once", ONCE),
                 _Choice(f"Always allow {always} this session", ALWAYS),
@@ -41,6 +46,9 @@ class ApprovalScreen(ModalScreen[str]):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         self.dismiss(event.item.value)
+
+    def action_once(self) -> None:
+        self.dismiss(ONCE)
 
     def action_auto(self) -> None:
         self.dismiss(AUTO)

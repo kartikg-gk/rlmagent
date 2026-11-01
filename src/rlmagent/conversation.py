@@ -676,19 +676,30 @@ class CodingSession:
         await tree.root_kernel().run(f"import json as _j\nPROMPT = _j.loads({literal})\ndel _j")
         return note(refs)
 
-    async def _cmd_undo(self, _arg: str) -> str:
+    async def _cmd_undo(self, arg: str) -> str:
         if not self._undo_stack:
             ready = self.shadow is not None and self.shadow.available
             return "Nothing to undo." if ready else "Undo needs git on PATH."
         if getattr(self, "_undo_problem", None):
             return (f"The last turn has no snapshot ({self._undo_problem}), so undo would "
                     "go back further than you expect. Nothing was changed.")
-        commit, tip, transcript, state = self._undo_stack[-1]
+        arg = arg.strip()
+        if arg == "list":
+            rows = []
+            for steps, entry in enumerate(reversed(self._undo_stack), start=1):
+                rows.append(f"  {steps}. {await asyncio.to_thread(self.shadow.label, entry[0])}")
+            return "Turns you can go back to (/undo N):\n" + "\n".join(rows)
+        if arg and not arg.isdigit():
+            return "Usage: /undo [N | list]"
+        steps = int(arg or 1)
+        if not 1 <= steps <= len(self._undo_stack):
+            return f"Only {len(self._undo_stack)} turns can be undone."
+        commit, tip, transcript, state = self._undo_stack[-steps]
         try:
             changed = await asyncio.to_thread(self.shadow.restore, commit)
         except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
             return f"Undo failed; the conversation was not rewound. {exc}"
-        self._undo_stack.pop()
+        del self._undo_stack[-steps:]
         if tip is not None and self._vault is not None:
             await self.rewind(tip)
         else:
@@ -700,7 +711,7 @@ class CodingSession:
                   if state is not None else "Kernel variables are not rolled back.")
         skipped = sorted(self.shadow.skipped)
         missed = f" Not covered (over 5 MB): {', '.join(skipped[:5])}." if skipped else ""
-        return (f"Undid the last turn. Files restored: {files or 'none changed'}.{missed} {kernel}")
+        return (f"Undid {steps} turn{'s' if steps > 1 else ''}. Files restored: {files or 'none changed'}.{missed} {kernel}")
 
     def set_provisional_title(self, text: str) -> None:
         """Derive a placeholder title from *text* and publish it immediately."""

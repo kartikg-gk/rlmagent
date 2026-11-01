@@ -230,7 +230,7 @@ async def test_approval_screen_shows_literal_diff_and_accepts_keyboard_shortcut(
 
     app = ApprovalApp()
     async with app.run_test() as pilot:
-        assert "[old]" in str(app.dialog.query_one("#approval-body", Static).render())
+        assert "[old]" in app.dialog.query_one("#approval-body", Static).content.code
         await pilot.press("shift+tab")
         await pilot.pause()
         assert app.choice == AUTO

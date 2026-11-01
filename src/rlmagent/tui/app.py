@@ -63,7 +63,7 @@ class RlmAgentApp(App[None]):
     TITLE = "rlm-agent"
 
     BINDINGS = [
-        ("escape", "stop", "Stop"),
+        ("escape", "escape", "Stop / Quit"),
         ("ctrl+c", "cancel", "Stop / Quit"),
         ("ctrl+n", "new_session", "New session"),
         ("ctrl+q", "quit", "Quit"),
@@ -121,12 +121,13 @@ class RlmAgentApp(App[None]):
                     else "auto-accept off")
         self._refresh_status()
 
-    async def _ask_question(self, question: str, choices: list[str] | None) -> str | None:
+    async def _ask_question(self, question: str, choices: list[str] | None,
+                            multiple: bool = False):
         """Show a question from the agent and wait for the answer."""
         from rlmagent.tui.question_screen import QuestionScreen
 
         answer = asyncio.get_running_loop().create_future()
-        self.push_screen(QuestionScreen(question, choices),
+        self.push_screen(QuestionScreen(question, choices, multiple),
                          lambda text: answer.done() or answer.set_result(text))
         return await answer
 
@@ -205,6 +206,11 @@ class RlmAgentApp(App[None]):
 
         self.query_one(TranscriptView).add_user(text)
         self.run_worker(self._stream(text), exclusive=True)
+
+    def action_escape(self) -> None:
+        """Esc stops a running turn; when idle with an empty prompt it leaves the app."""
+        if not self.action_stop() and not self.query_one(PromptInput).text.strip():
+            self.exit()
 
     def action_stop(self) -> bool:
         """Stop the running generation. Returns whether anything was stopped."""

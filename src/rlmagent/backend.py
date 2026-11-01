@@ -309,13 +309,13 @@ class BackendProvider:
                     improver.request(instructions, shared)
                     return "Playbook update queued for the turn boundary."
 
-                async def fetch_url(url, max_chars=50000):
+                async def fetch_url(url, max_chars=50000, raw=False):
                     from rlmagent.agents.approval import Refused
                     from rlmagent.network import fetch_text
 
                     if not tree.network:
                         raise Refused("network access is disabled")
-                    return await fetch_text(url, max_chars=max_chars)
+                    return await fetch_text(url, max_chars=max_chars, raw=raw)
 
                 async def guidance(id=None):
                     refinement = getattr(tree, "refinement", None)
@@ -379,7 +379,7 @@ class BackendProvider:
                     "list_files(pattern), write_file(path, content), edit_file(path, old, new), "
                     "apply_patch(unified_diff) for several edits or files, all or none, "
                     "and run(cmd, timeout=120). Changes and commands use host approval. "
-                    "await ask_user(question, choices=None) asks the user; use it only "
+                    "await ask_user(question, choices=None, multiple=False) asks the user; use it only "
                     "when you truly cannot decide. "
                     "Failed or refused tool calls return text starting with Error:; inspect results "
                     "before continuing. "
@@ -444,9 +444,9 @@ class BackendProvider:
                             and event.get("step", 0) > 0
                             and event.get("output")
                         ):
-                            text = str(event["output"]) + "\n"
+                            text = f"\n```text\n{event['output']}\n```\n"
                         elif name == "command_output":
-                            text = event["text"]
+                            text = f"\n```text\n{event['text'].rstrip()}\n```\n"
                         elif name in ("run_started", "run_completed", "run_failed"):
                             text = f"[{name}: {event.get('run_id', '')}]\n"
                         if text:

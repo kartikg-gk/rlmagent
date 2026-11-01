@@ -766,8 +766,8 @@ async def _ask_on_console(request) -> str:
             return choice
 
 
-async def _question_on_console(question: str, choices: list[str] | None) -> str | None:
-    """Line-mode question: a number picks a choice, anything else is the answer."""
+async def _question_on_console(question: str, choices: list[str] | None, multiple: bool = False):
+    """Line-mode question: numbers pick choices (commas for several); anything else is the answer."""
     _info(f"\nThe agent asks:\n{question}")
     for number, choice in enumerate(choices or [], start=1):
         _info(f"  {number}. {choice}")
@@ -776,6 +776,9 @@ async def _question_on_console(question: str, choices: list[str] | None) -> str 
     except (EOFError, KeyboardInterrupt):
         return None
     answer = answer.strip()
+    picks = [p.strip() for p in answer.split(",")]
+    if multiple and choices and all(p.isdigit() and 1 <= int(p) <= len(choices) for p in picks):
+        return [choices[int(p) - 1] for p in picks]
     if choices and answer.isdigit() and 1 <= int(answer) <= len(choices):
         return choices[int(answer) - 1]
     return answer or None

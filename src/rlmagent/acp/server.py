@@ -175,7 +175,8 @@ class Server:
         if tree is not None and tree.approver.policy == "ask":
             tree.approver.ask = lambda request: self._ask(sid, request)
         if tree is not None:
-            tree.approver.question = lambda text, choices: self._question(sid, text, choices)
+            tree.approver.question = lambda text, choices, multiple=False: self._question(
+                sid, text, choices, multiple)
         if self.modes.get(sid) == "plan":
             session.set_plan_mode(True)
         self.sessions[sid] = session
@@ -199,10 +200,11 @@ class Server:
         outcome = reply.get("outcome", {})
         return menu.get(outcome.get("optionId")) if outcome.get("outcome") == "selected" else None
 
-    async def _question(self, sid: str, text: str, choices: list[str] | None) -> str | None:
+    async def _question(self, sid: str, text: str, choices: list[str] | None,
+                        multiple: bool = False) -> str | None:
         """Editors take a pick from a list over ACP; they have no free-text answer."""
-        if not choices:
-            raise ValueError("this editor can only answer questions that list choices")
+        if not choices or multiple:
+            raise ValueError("this editor can only pick one answer from a list of choices")
         reply = await self.request("session/request_permission", {
             "sessionId": sid,
             "toolCall": {"toolCallId": f"question-{uuid.uuid4().hex[:12]}", "title": text,

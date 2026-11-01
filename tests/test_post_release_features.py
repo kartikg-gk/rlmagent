@@ -152,3 +152,55 @@ def test_prune_lists_first_and_removes_only_what_is_old(tmp_path):
     assert [m.session_id for m in catalog.list_all()] == ["new1"]
 
 
+
+
+def test_pages_are_read_without_their_markup():
+    from rlmagent.network import readable
+
+    text = readable("<html><style>a{}</style><script>x()</script><h1>Title</h1><p>Some  text</p></html>")
+    assert text == "Title\nSome text"
+
+
+def test_prompts_find_files_without_an_extension_and_trim_links(tmp_path):
+    from rlmagent.prompt_refs import references
+
+    (tmp_path / "Makefile").write_text("all:\n")
+    refs = references("fix Makefile, see (https://example.com/a).", tmp_path)
+    assert [f["path"] for f in refs["files"]] == ["Makefile"]
+    assert refs["links"] == ["https://example.com/a"]
+
+
+async def test_instruction_documents_are_bounded(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("x" * 70_000)
+    workspace = Workspace(tmp_path, Approver("deny"))
+    assert await workspace.instruction_docs() == ["AGENTS.md"]
+    with pytest.raises(ValueError, match="larger"):
+        await workspace.instruction_docs("AGENTS.md")
+
+
+async def test_undo_goes_back_several_turns_or_lists_them(tmp_path):
+    from types import SimpleNamespace
+
+    from rlmagent.conversation import CodingSession
+
+    restored = []
+    session = SimpleNamespace(
+        _undo_stack=[("c1", None, ["t1"], None), ("c2", None, ["t2"], None)], _undo_problem=None,
+        _vault=None, _harness=SimpleNamespace(set_messages=lambda m: None),
+        shadow=SimpleNamespace(available=True, skipped=set(), label=lambda c: f"turn {c}",
+                               restore=lambda c: restored.append(c) or []))
+    listed = await CodingSession._cmd_undo(session, "list")
+    assert "1. turn c2" in listed and "2. turn c1" in listed
+    assert "Only 2" in await CodingSession._cmd_undo(session, "5")
+    await CodingSession._cmd_undo(session, "2")
+    assert restored == ["c1"] and session._undo_stack == []
+
+
+async def test_several_answers_can_be_requested(tmp_path):
+    workspace = Workspace(tmp_path, Approver("deny"))
+
+    async def answer(question, choices, multiple=False):
+        return choices if multiple else choices[0]
+    workspace.approver.question = answer
+    assert await workspace.ask_user("q", ["a", "b"], multiple=True) == ["a", "b"]
+    assert await workspace.ask_user("q", ["a", "b"]) == "a"

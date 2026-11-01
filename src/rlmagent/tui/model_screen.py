@@ -39,6 +39,7 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
         ("ctrl+f", "discover", "Fetch models"),
         ("ctrl+t", "test", "Test credentials"),
         ("ctrl+e", "endpoint", "Endpoint"),
+        ("ctrl+r", "reveal", "Show key"),
     ]
 
     def __init__(self, current_provider: str = "", current_model: str = "") -> None:
@@ -126,6 +127,10 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
                 listing.append(_Row(model, model))
             listing.append(_Row("Enter a model identifier…", "__custom__"))
             listing.index = 0
+
+    def action_reveal(self):
+        field = self.query_one("#model-key", Input)
+        field.password = not field.password
 
     def action_discover(self):
         self.run_worker(self._remote(True), exclusive=True, group="provider-check")

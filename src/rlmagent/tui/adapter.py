@@ -98,6 +98,10 @@ class StatusSnapshot:
     context_limit: int
     branch: str | None
     plan_mode: bool = False
+    input_tokens: int = 0
+    cached_tokens: int = 0
+    output_tokens: int = 0
+    cost: float = 0.0
 
     @property
     def context_percent(self) -> int:
@@ -168,6 +172,10 @@ class SessionBridge:
             context_limit=usage.context_limit,
             branch=git_branch(self._session.cwd),
             plan_mode=self._session.plan_mode,
+            input_tokens=usage.total_input_tokens,
+            cached_tokens=usage.cache_read_tokens,
+            output_tokens=usage.total_output_tokens,
+            cost=usage.total_cost_usd,
         )
 
     def sessions(self) -> list[SessionEntry]:
