@@ -267,3 +267,16 @@ def test_sessions_from_a_newer_version_are_refused_clearly():
     with pytest.raises(RecordParseError, match="newer"):
         deserialize_record(json.dumps({"type": "session_info", "id": "a", "timestamp": 1.0,
                                        "format": 99}))
+
+
+@pytest.mark.skipif(__import__("sys").platform == "win32", reason="process groups")
+def test_stopping_a_process_that_just_ended_is_harmless(monkeypatch):
+    from types import SimpleNamespace
+
+    from rlmagent.model.external import cli
+
+    def gone(_pid):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(cli.os, "getpgid", gone)
+    cli.kill_tree(SimpleNamespace(returncode=None, pid=1))

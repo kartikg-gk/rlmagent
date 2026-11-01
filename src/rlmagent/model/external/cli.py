@@ -69,10 +69,14 @@ def kill_tree(proc) -> None:
         return
     if sys.platform == "win32":
         subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
-    elif os.getpgid(proc.pid) == proc.pid:
-        os.killpg(proc.pid, signal.SIGKILL)  # it leads its own group: see own_group()
-    else:
-        proc.kill()
+        return
+    try:
+        if os.getpgid(proc.pid) == proc.pid:
+            os.killpg(proc.pid, signal.SIGKILL)  # it leads its own group: see own_group()
+        else:
+            proc.kill()
+    except ProcessLookupError:
+        pass  # it ended by itself just now; nothing is left to stop
 
 
 def own_group() -> dict:
