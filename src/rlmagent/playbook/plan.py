@@ -28,7 +28,9 @@ be wrong. Never propose changes to source files.
 Answer with one JSON object and nothing else:
 {"summary": "one sentence", "rationale": "the evidence", "expected": "what should improve",
  "edits": [{"action": "create|update|delete", "kind": "rule|memory|skill|role", "id": "short-id",
-            "title": "...", "content": "...", "callable": "only for skills"}]}
+            "title": "...", "content": "...", "callable": "only for skills",
+            "expires_after_tasks": "only for what stops being true once the current work moves \
+on: how many finished tasks to keep it"}]}
 An empty "edits" list is a good answer when nothing is worth keeping."""
 
 SCOPES = {

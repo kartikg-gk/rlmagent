@@ -599,7 +599,7 @@ def build_default_registry() -> CommandRegistry:
             name="refine",
             description="Review reusable guidance in a background job",
             handler=_cmd_improve,
-            usage="/refine [focus] | status | cancel",
+            usage="/refine [focus] | status | cancel | evidence | rate <change> <verdict>",
             search_terms=("harness", "workflow", "guidance"),
         ),
         SlashCommand(

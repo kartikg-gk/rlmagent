@@ -106,6 +106,11 @@ async def improve(instructions=None, shared=False):
     return await _rlmagent_call("improve", {"instructions": instructions, "shared": bool(shared)})
 
 
+async def capabilities():
+    """The limits and approval setting in force, read from the harness."""
+    return await _rlmagent_call("capabilities", {})
+
+
 async def guidance(id=None):
     return await _rlmagent_call("guidance", {"id": id})
 

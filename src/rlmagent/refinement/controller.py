@@ -13,6 +13,10 @@ from rlmagent.refinement.store import HarnessStore, skill_parts
 from rlmagent.skillset import Skill
 
 
+#: A saved note is sent with every request, so a long one is paid for every time.
+DIGEST_CHARS = 400
+
+
 class Signal:
     def __init__(self):
         self.cancelled = False
@@ -53,6 +57,14 @@ class Refinement:
         if argument.strip() == "cancel":
             self.cancel()
             return self.status()
+        words = argument.split()
+        evidence = getattr(self.session, "evidence", None)
+        if words[:1] == ["evidence"]:
+            return evidence.report() if evidence is not None else "No evidence is kept here."
+        if words[:1] == ["rate"]:
+            if evidence is None or len(words) != 3:
+                return "Use /refine rate <change> better|same|worse."
+            return evidence.rate(words[1], words[2])
         if not self.writable():
             return "Refinement is unavailable while guidance is read-only."
         if self.phase in ("reviewing", "ready", "applying"):
@@ -131,6 +143,11 @@ class Refinement:
             try:
                 if candidate.changed:
                     self.active = self.store.commit(candidate.baseline, candidate.state)
+                    note = self.active.history[-1]
+                    evidence = getattr(self.session, "evidence", None)
+                    if evidence is not None:
+                        evidence.saved(note.id[:12], "refine",
+                                       sorted({edit["id"] for edit in note.edits}), note.summary)
                 else:
                     self.active = self.store.read()
                 self.phase = "completed"
@@ -156,7 +173,7 @@ class Refinement:
                 description, _ = skill_parts(entry.id, entry.content)
                 parts.append(f"Workflow {entry.id}: {description}")
             else:
-                parts.append(f"{entry.kind} {entry.id} ({entry.title}):\n{entry.content}")
+                parts.append(f"{entry.kind} {entry.id} ({entry.title}):\n{_digest(entry)}")
         if not parts:
             return base
         return base + (
@@ -198,9 +215,21 @@ class Refinement:
         return session.refinement
 
 
+def _digest(entry) -> str:
+    """The entry as it goes in every prompt: short ones whole, long ones the start of them."""
+    if len(entry.content) <= DIGEST_CHARS:
+        return entry.content
+    head = entry.content[:DIGEST_CHARS].rstrip()
+    return f'{head}... (full text: await guidance("{entry.id}"))'
+
+
+def project_folder(home: Path, cwd: str) -> Path:
+    project = hashlib.sha256(str(Path(cwd).resolve()).encode()).hexdigest()[:24]
+    return home / "harness" / project
+
+
 def attach(session, home: Path, *, persist: bool):
-    project = hashlib.sha256(str(Path(session.cwd).resolve()).encode()).hexdigest()[:24]
-    path = home / "harness" / project / "state.json" if persist else None
+    path = project_folder(home, session.cwd) / "state.json" if persist else None
     controller = Refinement(session, HarnessStore(path))
     controller.home = home
     session.refinement = controller

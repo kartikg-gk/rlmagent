@@ -234,6 +234,10 @@ class AgentTree:
             node.final_note = str(args.get("note") or "")
             node.final_given = True
             return None
+        if op == "capabilities":
+            from rlmagent.backend import limits_of
+
+            return limits_of(self)
         if op == "guidance":
             refinement = getattr(self, "refinement", None)
             if refinement is None:

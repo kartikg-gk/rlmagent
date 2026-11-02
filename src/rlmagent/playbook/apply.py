@@ -22,6 +22,9 @@ def validate(edit: dict) -> str | None:
         return None
     if kind not in KINDS:
         return f"kind must be one of {KINDS}"
+    life = edit.get("expires_after_tasks")
+    if life is not None and (not isinstance(life, int) or isinstance(life, bool) or life < 1):
+        return "expires_after_tasks must be a positive whole number"
     if not str(edit.get("title") or "").strip() or not str(edit.get("content") or "").strip():
         return "title and content are required"
     if kind == "skill":
@@ -60,6 +63,7 @@ def apply_edits(pb: Playbook, edits: list[dict], *, baseline: dict[str, int], sc
                     id=eid, kind=edit["kind"], title=edit["title"], content=edit["content"],
                     scope=scope, callable=edit.get("callable"),
                     version=(before.version + 1) if before else 1, updated=time.time(),
+                    expires_after_tasks=edit.get("expires_after_tasks"), made_at_task=pb.tasks,
                 )
                 pb.entries[eid] = entry
                 change["after"] = asdict(entry)

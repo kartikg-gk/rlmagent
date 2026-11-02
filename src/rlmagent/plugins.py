@@ -219,6 +219,71 @@ def load_extensions(
 # ---------------------------------------------------------------------------
 
 
+def contributions(result: LoadResult) -> tuple[list, dict]:
+    """What the loaded extensions offer: tool definitions, and functions by name.
+
+    `register()` may return a ToolSpec, a mapping of name to function, or a list
+    of either. Anything else is left alone, since returning nothing is normal.
+    """
+    from rlmagent.harness.contracts.tooling import ToolSpec
+
+    tools: list = []
+    functions: dict = {}
+    for extension in result.loaded:
+        values = extension.value if isinstance(extension.value, (list, tuple)) else [extension.value]
+        for value in values:
+            if isinstance(value, ToolSpec):
+                tools.append(value)
+            elif isinstance(value, dict):
+                functions.update({
+                    name: fn for name, fn in value.items()
+                    if str(name).isidentifier() and callable(fn)
+                })
+    return tools, functions
+
+
+def as_host_function(fn):
+    """The function a cell calls, always a coroutine and named for its errors."""
+    import inspect
+    from functools import wraps
+
+    if inspect.iscoroutinefunction(fn):
+        return fn
+
+    @wraps(fn)
+    async def call(*args, **kwargs):
+        return fn(*args, **kwargs)
+
+    return call
+
+
+def as_tool(name: str, fn):
+    """An extension function as a tool, for the engine that offers tools to the model."""
+    import inspect
+    import json
+
+    from rlmagent.harness.contracts.tooling import ToolOutcome, ToolSpec
+
+    bound = as_host_function(fn)
+
+    async def run(_call_id, arguments, _signal=None, _on_update=None):
+        value = await bound(**arguments)
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+        return ToolOutcome(content=text)
+
+    parameters = inspect.signature(fn).parameters
+    return ToolSpec(
+        name=name, label=name, description=inspect.getdoc(fn) or name,
+        parameters={
+            "type": "object",
+            "properties": {key: {} for key in parameters},
+            "required": [key for key, value in parameters.items()
+                         if value.default is inspect.Parameter.empty],
+        },
+        run=run,
+    )
+
+
 def unload_extensions() -> int:
     """Drop every previously imported extension from ``sys.modules``."""
     removed = 0
@@ -248,6 +313,9 @@ __all__ = [
     "ENTRY_ATTRIBUTE",
     "EXTENSIONS_DIR_ENV",
     "ExtensionFailure",
+    "as_host_function",
+    "as_tool",
+    "contributions",
     "LoadResult",
     "LoadedExtension",
     "rlm_agent_home",

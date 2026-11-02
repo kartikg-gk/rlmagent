@@ -38,7 +38,7 @@ async def test_auto_check_yes_runs_the_planner(tmp_path):
     try:
         await _submit(session, "tests use pytest -q")
         assert [e.id for e in improver.entries()] == ["tests"]
-        assert improver.local.history[-1]["trigger"] == "auto:turns"
+        assert improver.local.history[-1]["trigger"] == "auto:tasks"
     finally:
         await session.shutdown()
 
@@ -108,7 +108,7 @@ def test_cli_accepts_the_auto_improve_settings():
                                          "--improve-cooldown", "60"])
     assert (ns.auto_improve, ns.improve_every, ns.improve_cooldown) == (False, 5, 60.0)
     ns = _build_run_parser().parse_args([])
-    assert (ns.auto_improve, ns.improve_every, ns.improve_cooldown) == (True, 20, 900.0)
+    assert (ns.auto_improve, ns.improve_every, ns.improve_cooldown) == (True, 5, 900.0)
 
 
 async def test_the_check_sees_what_the_playbook_already_holds(tmp_path):

@@ -21,12 +21,16 @@ class Entry:
     callable: str | None = None
     version: int = 1
     updated: float = field(default_factory=time.time)
+    #: Dropped this many finished tasks after `made_at_task`. None keeps it for good.
+    expires_after_tasks: int | None = None
+    made_at_task: int = 0
 
 
 @dataclass
 class Playbook:
     entries: dict[str, Entry] = field(default_factory=dict)
     history: list[dict] = field(default_factory=list)
+    tasks: int = 0
 
 
 def load(path: Path | None) -> Playbook:
@@ -35,7 +39,8 @@ def load(path: Path | None) -> Playbook:
     try:
         doc = json.loads(Path(path).read_text(encoding="utf-8"))
         entries = {e["id"]: Entry(**e) for e in doc.get("entries", [])}
-        return Playbook(entries=entries, history=list(doc.get("history", [])))
+        return Playbook(entries=entries, history=list(doc.get("history", [])),
+                        tasks=int(doc.get("tasks", 0)))
     except (OSError, ValueError, TypeError, KeyError):
         return Playbook()
 
@@ -45,7 +50,8 @@ def save(path: Path | None, pb: Playbook) -> None:
         return
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    doc = {"entries": [asdict(e) for e in pb.entries.values()], "history": pb.history}
+    doc = {"entries": [asdict(e) for e in pb.entries.values()], "history": pb.history,
+           "tasks": pb.tasks}
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(doc, indent=1), encoding="utf-8")
     os.replace(tmp, path)

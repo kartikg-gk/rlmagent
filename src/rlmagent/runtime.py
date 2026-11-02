@@ -70,8 +70,21 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
         from rlmagent.model.external import with_external
         provider = BackendProvider(with_external(raw_provider), provider, tree)
 
+    from rlmagent.plugins import as_tool, contributions, load_extensions, reload_extensions
+
+    extended: dict = {"tools": [], "functions": {}}
+
+    def _take_extensions(result) -> None:
+        for failure in result.failures:
+            print(f"rlm-agent: extension {failure.name!r} failed: {failure.error}", file=sys.stderr)
+        extra, functions = contributions(result)
+        extended["tools"] = [*extra, *(as_tool(name, fn) for name, fn in functions.items())]
+        extended["functions"] = functions
+        tree.extension_functions = functions
+
     _load_extensions(verbose=verbose)
-    tools = _load_tools(verbose=verbose, kernel=kernel)
+    _take_extensions(load_extensions())
+    tools = [*_load_tools(verbose=verbose, kernel=kernel), *extended["tools"]]
     skills = _load_skills(os.getcwd(), verbose=verbose)
     system = root_system(
         _resolve_system(getattr(ns, "system_prompt", None), tools=tools, skills=skills),
@@ -82,7 +95,8 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     )
 
     def _tools_loader():
-        return _load_tools(kernel=kernel)
+        _take_extensions(reload_extensions())
+        return [*_load_tools(kernel=kernel), *extended["tools"]]
 
     def _skills_loader():
         return _load_skills(os.getcwd())
@@ -147,13 +161,18 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     tree.attach(tree.root_id(), session)
     from rlmagent.playbook.improver import Improver
     from rlmagent.plugins import rlm_agent_home
+    from rlmagent.refinement.controller import project_folder
+    from rlmagent.refinement.evidence import EvidenceLog
 
+    session.evidence = EvidenceLog(
+        None if no_session else project_folder(rlm_agent_home(), session.cwd) / "evidence.jsonl"
+    )
     local = sessions_dir / f"{session.session_id}.playbook.json" if sessions_dir else None
     session.improver = tree.improver = Improver(
         session, local_path=local, shared_path=rlm_agent_home() / "playbook.json"
     )
     session.improver.auto = getattr(ns, "auto_improve", True)
-    session.improver.every = getattr(ns, "improve_every", 20)
+    session.improver.every = getattr(ns, "improve_every", 5)
     session.improver.cooldown = getattr(ns, "improve_cooldown", 900.0)
     session.on_compacted = lambda: (tree.tracer.compacted("root"), session.improver.compacted())
     session.improver.show_digest()

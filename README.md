@@ -77,7 +77,10 @@ to copy; effects outside the workspace are not undone. `rlm-agent session prune
 
 Use `await playbook(id)` to inspect a saved entry, `await skill(id)` to load a skill,
 and `await improve(instructions, shared=False)` to queue a playbook update at the
-turn boundary. Compaction also schedules the existing automatic improvement check.
+turn boundary. Compaction also schedules the existing automatic improvement check,
+as do every 5 finished tasks (`--improve-every`) and any task with 3 or more failed
+tool calls. A memory saved automatically is dropped 3 finished tasks later unless a
+later edit keeps it, since it describes one moment of the work.
 Contracts select their execution engine explicitly with `"engine": "rlmness"`.
 Existing contracts without this field retain the previous session engine. Contract
 settings take precedence over the normal CLI engine default.
@@ -150,6 +153,53 @@ enter a compatible model identifier. Model access still requires a live completi
 
 Workspace commands execute through non-login Bash, with a default 120-second timeout and a maximum of 1,800 seconds.
 
+## Workers
+
+A worker is a named agent that keeps running after the terminal closes. It is an
+ordinary saved session, so `--resume` works on it once it has stopped.
+
+```text
+rlm-agent worker start nightly --auto-approve
+rlm-agent worker send nightly "check the build"
+rlm-agent worker schedule nightly "review open issues" --in 3600
+rlm-agent worker schedule nightly "run the tests" --at 2027-01-02T09:00 --every 86400
+rlm-agent worker list
+rlm-agent worker jobs nightly
+rlm-agent worker log nightly --follow
+rlm-agent worker attach nightly
+rlm-agent worker stop nightly
+```
+
+Start flags are the normal run flags. The folder's trust is decided when you start
+it, because a worker has nobody to ask. For the same reason anything needing
+approval is refused unless it was started with `--auto-approve`, and `ask_user`
+has no answer. A job that was running when a worker died is not run again; a job
+due while a worker was down runs when it next starts. Workers do not restart on
+their own after a reboot.
+
+## Project extensions
+
+A Python file in `.rlm-agent/extensions/` (or `~/.rlm-agent/extensions/`) with a
+`register()` function is loaded at startup and by `/reload`. Project files load
+only in a trusted folder. `register()` may return a mapping of names to functions,
+a `ToolSpec`, or a list of those:
+
+```python
+def word_count(path):
+    """Count the words in a file."""
+    with open(path) as handle:
+        return len(handle.read().split())
+
+def register():
+    return {"word_count": word_count}
+```
+
+A function becomes `await word_count(...)` in a cell, and a tool under `--engine
+session`. It runs in the host with your permissions, outside the sandbox and outside
+approval, so enforce any rule it needs in its own code. It cannot replace a built-in
+name. `/tools` lists what is really available; in a cell, `await capabilities()`
+reports the same along with the limits in force.
+
 ## Manual harness refinement
 
 Use `/refine` when a conversation contains a correction or procedure worth
@@ -179,12 +229,19 @@ Workflow metadata must match its stable entry id. Individual entries are limited
 to 32 KiB. Existing Python-function playbook skills keep their original meaning.
 Installed skill files are never overwritten by refinement.
 
+`/refine evidence` shows, per saved change in this project: when it was saved, how
+many later tasks actually sent it to the model, failed tool calls per task before and
+after, and your verdict from `/refine rate <change> better|same|worse`. The counts
+are signals rather than proof, because tasks differ.
+
 The completed proposal waits for a turn boundary before it is saved or activated.
 If the session is idle when review finishes, it can commit immediately.
 `/refine status` distinguishes a running review, a proposal awaiting activation,
 completion, cancellation, and failure. Beginning the next submission or finishing
 the current turn services that boundary. Updated guidance then applies to the
 root and newly created child agents. Running children keep their existing prompt.
+Notes over 400 characters appear shortened in the prompt, with the rest available
+through `await guidance("entry-id")`.
 Workflow names and descriptions appear in the prompt; the full procedure is
 available through `await guidance("entry-id")` in Python or `/skill:entry-id`.
 

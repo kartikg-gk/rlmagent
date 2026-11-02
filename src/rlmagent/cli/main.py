@@ -46,7 +46,7 @@ _PACKAGE = "rlmagent"
 _DEFAULT_ANTHROPIC_MODEL = "claude-opus-5"
 _DEFAULT_OPENAI_MODEL = "gpt-5"
 _DEFAULT_SYSTEM = "You are a helpful coding assistant."
-_SUBCOMMANDS = frozenset({"acp", "config", "provider", "session", "tui"})
+_SUBCOMMANDS = frozenset({"acp", "config", "provider", "session", "tui", "worker"})
 
 
 # ---------------------------------------------------------------------------
@@ -146,8 +146,8 @@ def _build_run_parser() -> argparse.ArgumentParser:
     p.add_argument("--verbose", "-v", action="store_true", help="Verbose diagnostics.")
     p.add_argument("--no-auto-improve", dest="auto_improve", action="store_false",
                    help="Do not update the playbook automatically.")
-    p.add_argument("--improve-every", type=int, default=20,
-                   help="Check whether to update the playbook every N assistant turns (default 20).")
+    p.add_argument("--improve-every", type=int, default=5,
+                   help="Check whether to update the playbook every N finished tasks (default 5).")
     p.add_argument("--improve-cooldown", type=float, default=900.0,
                    help="Seconds between automatic playbook checks (default 900).")
     p.add_argument("--kernel", choices=("wasm", "local"), default="wasm",
@@ -910,6 +910,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _handle_provider(rest)
         if cmd == "session":
             return _handle_session(rest)
+        if cmd == "worker":
+            from rlmagent.worker import handle
+
+            return handle(rest)
 
     # Default: run mode
     ns = _build_run_parser().parse_args(args)

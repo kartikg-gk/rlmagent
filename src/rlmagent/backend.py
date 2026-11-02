@@ -43,6 +43,21 @@ _STATE_FIELDS = ("answered", "asking", "cells", "variables", "functions", "modul
 MAX_CHECKPOINT_CHARS = 20_000_000
 
 
+def limits_of(tree) -> dict:
+    """The settings in force, read from where they are enforced."""
+    allowance = tree.allowance
+    return {
+        "approval": tree.approver.policy,
+        "network": tree.network,
+        "kernel": getattr(tree, "kernel_kind", None),
+        "max_depth": allowance.max_depth,
+        "calls_used": allowance.calls,
+        "max_calls": allowance.max_calls,
+        "cost_used": allowance.cost,
+        "max_cost": allowance.max_cost,
+    }
+
+
 SHOWN_OUTPUT_LINES = 8
 
 
@@ -178,6 +193,14 @@ class BackendProvider:
     def __getattr__(self, name):
         return getattr(self.fallback, name)
 
+    def function_names(self) -> list[str]:
+        """The names a cell can call, without starting a run."""
+        fixed = {"FINAL", "capabilities", "fetch_url", "guidance", "improve", "playbook", "skill",
+                 "rlm", "gather_rlm", "spawn", "children", "tell_parent"}
+        workspace = Workspace(self.tree.cwd, self.tree.approver).functions()
+        extended = getattr(self.tree, "extension_functions", {})
+        return sorted(fixed | set(workspace) | set(extended))
+
     def checkpoint_state(self):
         """A copy of the saved variables for /undo, or None when they are too large to keep."""
         fields = {name: getattr(self.state, name) for name in _STATE_FIELDS}
@@ -296,7 +319,11 @@ class BackendProvider:
 
                     return call
 
+                from rlmagent.plugins import as_host_function
+
                 joined = {
+                    **{name: wrap(as_host_function(fn))
+                       for name, fn in getattr(tree, "extension_functions", {}).items()},
                     **bridges,
                     **{name: wrap(fn) for name, fn in workspace.functions().items()},
                 }
@@ -334,7 +361,17 @@ class BackendProvider:
                     refinement = getattr(tree, "refinement", None)
                     return refinement.read_guidance(id) if refinement is not None else []
 
+                async def capabilities():
+                    names = {name for name in joined if not name.startswith("_")}
+                    if "_spawn" in joined:
+                        names |= {"spawn", "children"}
+                    return {
+                        "functions": sorted(names | {tool.name for tool in tools} | {"FINAL"}),
+                        **limits_of(tree),
+                    }
+
                 joined["guidance"] = wrap(guidance)
+                joined["capabilities"] = wrap(capabilities)
                 joined.update(
                     playbook=wrap(playbook), improve=wrap(improve), fetch_url=wrap(fetch_url)
                 )
@@ -401,6 +438,8 @@ class BackendProvider:
                     "await instruction_docs() discovers project instruction and skill files; "
                     "await instruction_docs(path) reads a selected file. "
                     "Read relevant instructions before editing. "
+                    "await capabilities() reports the functions and limits you actually have; "
+                    "check it rather than answering from memory about what is available. "
                     "Use the backend's rlm(piece, instruction=question) and gather_rlm APIs. "
                     "Background jobs use await spawn(task, data, keep=False, "
                     "role=None, model=None); "

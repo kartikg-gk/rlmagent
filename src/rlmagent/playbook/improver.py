@@ -22,6 +22,12 @@ from rlmagent.playbook.plan import (
 )
 from rlmagent.playbook.store import Playbook, load, merged, save
 
+#: How long a memory saved without being asked for lasts, in finished tasks. It
+#: was written from one moment of the work, which is what makes it go stale.
+AUTO_MEMORY_TASKS = 3
+#: Failed tool calls in one task that are worth a look for something to keep.
+TROUBLE_CALLS = 3
+
 
 class Improver:
     def __init__(self, session, local_path: Path | None, shared_path: Path | None) -> None:
@@ -33,9 +39,10 @@ class Improver:
         self._pending: list[tuple[str | None, bool, str]] = []
         self._shown: str | None = None
         self.auto = True
-        self.every = 20
+        self.every = 5
         self.cooldown = 900.0
         self._counted = 0
+        self._finished = 0
         self._last_check = float("-inf")
         self._compacted = False
 
@@ -67,14 +74,21 @@ class Improver:
         return notes
 
     async def after_turn(self) -> None:
-        """Every `every` assistant turns (at most once per `cooldown` seconds), check."""
-        if not self.auto:
+        """Every `every` finished tasks (at most once per `cooldown` seconds), check.
+
+        Tasks rather than model turns: one task can take dozens of turns, and a
+        count of those lands in the middle of work that has nothing to teach yet.
+        A task that went badly is checked sooner, since that is where the lessons are.
+        """
+        if not self.auto or time.monotonic() - self._last_check < self.cooldown:
             return
-        turns = sum(1 for m in self.session.transcript if getattr(m, "role", "") == "assistant")
-        if turns - self._counted < self.every or time.monotonic() - self._last_check < self.cooldown:
-            return
-        self._counted = turns
-        await self._auto("auto:turns")
+        evidence = getattr(self.session, "evidence", None)
+        if evidence is not None and evidence.last_failed >= TROUBLE_CALLS:
+            self._counted = self._finished
+            await self._auto("auto:trouble")
+        elif self._finished - self._counted >= self.every:
+            self._counted = self._finished
+            await self._auto("auto:tasks")
 
     def compacted(self) -> None:
         """Note a compaction; the check runs at the next turn boundary, never inside a turn."""
@@ -85,12 +99,29 @@ class Improver:
         self._compacted = False
 
     async def at_boundary(self) -> None:
+        self._finished += 1
+        await self._task_finished()
         await self.run_pending()
         if self._compacted:
             self._compacted = False
             if self.auto:
                 await self._auto("auto:compaction")
         await self.after_turn()
+
+    async def _task_finished(self) -> None:
+        """Count the task in the session's playbook, and drop what has now gone stale."""
+        if not self.writable:
+            return
+        target = self._store("local")
+        target.tasks += 1
+        save(self.paths["local"], target)
+        stale = [e.id for e in target.entries.values()
+                 if e.expires_after_tasks is not None
+                 and target.tasks - e.made_at_task >= e.expires_after_tasks]
+        if stale:
+            event = self.apply([{"action": "delete", "id": eid} for eid in stale],
+                               trigger="expire", summary="written for work that has moved on")
+            await self._record(event)
 
     async def _auto(self, trigger: str) -> None:
         self._last_check = time.monotonic()
@@ -114,6 +145,10 @@ class Improver:
             proposal = parse_proposal(await self.session._utility_completion(request, SYSTEM))
         except ValueError as exc:
             return f"Playbook not changed: {exc}"
+        if trigger.startswith("auto:"):
+            for edit in proposal["edits"]:
+                if isinstance(edit, dict) and edit.get("kind") == "memory":
+                    edit.setdefault("expires_after_tasks", AUTO_MEMORY_TASKS)
         event = self.apply(proposal["edits"], trigger=trigger, scope=scope, baseline=baseline,
                            summary=str(proposal.get("summary", "")),
                            rationale=str(proposal.get("rationale", "")))
@@ -144,6 +179,10 @@ class Improver:
                             summary=summary, rationale=rationale,
                             read_only=self.shared if scope == "local" else None)
         save(self.paths[scope], target)
+        done = sorted({c["id"] for c in event["changes"] if c["applied"]})
+        evidence = getattr(self.session, "evidence", None)
+        if done and evidence is not None:
+            evidence.saved(event["id"], f"playbook:{trigger}", done, summary)
         return event
 
     async def undo(self, event_id: str) -> str:
@@ -161,9 +200,12 @@ class Improver:
         """Put the playbook in front of the model when it has changed since last shown."""
         entries = self.entries()
         fp = fingerprint(entries)
-        if not entries or fp == self._shown:
+        if fp == self._shown or (not entries and self._shown is None):
             return
         self._shown = fp
+        if not entries:
+            self.session.inject("[Playbook] Earlier entries no longer apply; it is now empty.")
+            return
         transcript = self.session.transcript
         goal = next((getattr(m, "text", "") for m in transcript if getattr(m, "role", "") == "user"), "")
         recent = [getattr(m, "text", "") for m in transcript[-4:]]

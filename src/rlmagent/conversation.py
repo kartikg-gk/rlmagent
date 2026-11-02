@@ -99,7 +99,8 @@ COMMAND_REGISTRY = build_default_registry()
 _RUNNABLE_COMMANDS: frozenset[str] = frozenset({
     "branch", "branches", "compact", "continue", "create-skill", "diag",
     "export", "help", "model", "name", "plan", "provider", "quit", "reload",
-    "refine", "rewind", "session", "shell", "skills", "stats", "system", "think", "undo", "version",
+    "refine", "rewind", "session", "shell", "skills", "stats", "system", "think", "tools", "undo",
+    "version",
 })
 
 _RUNNABLE_COMMAND_TABLE: tuple[tuple[str, str], ...] = tuple(
@@ -1110,6 +1111,7 @@ class CodingSession:
             "compact": self._cmd_compact,
             "improve": self._cmd_improve,
             "refine": self._cmd_refine,
+            "tools": self._cmd_tools,
             "undo": self._cmd_undo,
             "stats": self._cmd_stats,
             "name": self._cmd_name,
@@ -1686,6 +1688,9 @@ class CodingSession:
 
     async def _post_run(self) -> None:
         """Housekeeping after a completed agent run."""
+        evidence = getattr(self, "evidence", None)
+        if evidence is not None:
+            evidence.task_finished(self)
         refinement = getattr(self, "refinement", None)
         if refinement is not None:
             refinement.at_boundary()
@@ -1833,6 +1838,20 @@ class CodingSession:
                 "Use /plan off to resume editing."
             )
         return "Plan mode off — editing tools restored."
+
+    def _cmd_tools(self, _arg: str) -> str:
+        """What this session can really call, read from what is loaded."""
+        lines = ["Tools the model is offered: "
+                 + (", ".join(sorted(t.name for t in self.tools)) or "(none)")]
+        backend = getattr(self, "backend", None)
+        if backend is not None:
+            lines.append("Functions in a cell: " + ", ".join(backend.function_names()))
+        tree = getattr(self, "agent_tree", None)
+        if tree is not None:
+            from rlmagent.backend import limits_of
+
+            lines.append("Limits: " + ", ".join(f"{k}={v}" for k, v in limits_of(tree).items()))
+        return "\n".join(lines)
 
     async def _cmd_refine(self, arg: str) -> str:
         refinement = getattr(self, "refinement", None)
