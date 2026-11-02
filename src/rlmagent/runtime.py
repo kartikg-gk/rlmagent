@@ -143,6 +143,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
         session.backend = provider
     session.agent_tree = tree
     session.shadow = Shadow(session.cwd, rlm_agent_home())
+    session.load_undo()
     tree.attach(tree.root_id(), session)
     from rlmagent.playbook.improver import Improver
     from rlmagent.plugins import rlm_agent_home

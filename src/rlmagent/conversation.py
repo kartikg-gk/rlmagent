@@ -403,6 +403,10 @@ class SessionStats:
 # ── main class ─────────────────────────────────────────────────────────────
 
 
+MAX_SAVED_UNDO = 50
+MAX_SAVED_UNDO_STATES = 5
+
+
 class CodingSession:
     """Single stateful runtime object for a persistent, resumable coding session."""
 
@@ -653,6 +657,7 @@ class CodingSession:
                 state = backend.checkpoint_state() if backend is not None else None
                 self._undo_stack.append(
                     (commit, self._tip_id, list(self._harness.transcript), state))
+                self._save_undo()
                 self._undo_problem = None
             except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
                 self._undo_problem = str(exc) or type(exc).__name__
@@ -675,6 +680,41 @@ class CodingSession:
         literal = json.dumps(json.dumps(refs))
         await tree.root_kernel().run(f"import json as _j\nPROMPT = _j.loads({literal})\ndel _j")
         return note(refs)
+
+    def _undo_file(self) -> Path | None:
+        vault = getattr(self, "_vault", None)
+        return vault.path.with_suffix(".undo.json") if vault is not None else None
+
+    def _save_undo(self) -> None:
+        """Keep the turns /undo can reach beside the session, so they survive a restart."""
+        path = self._undo_file()
+        if path is None:
+            return
+        kept = self._undo_stack[-MAX_SAVED_UNDO:]
+        entries = [{"commit": commit, "tip": tip,
+                    # Variables can be large: only the latest turns keep theirs.
+                    "state": state if i >= len(kept) - MAX_SAVED_UNDO_STATES else None}
+                   for i, (commit, tip, _messages, state) in enumerate(kept)]
+        data = json.dumps({"cwd": self.cwd, "entries": entries}, default=str)
+        staged = path.with_name(path.name + ".tmp")
+        try:
+            staged.write_text(data, encoding="utf-8")
+            staged.replace(path)
+        except OSError as exc:
+            print(f"rlm-agent: /undo will not survive a restart: {exc}", file=sys.stderr)
+
+    def load_undo(self) -> None:
+        """Bring back the turns saved for /undo, if they belong to this folder."""
+        path = self._undo_file()
+        try:
+            saved = json.loads(path.read_text(encoding="utf-8")) if path is not None else None
+        except (OSError, ValueError):
+            return
+        if not saved or saved.get("cwd") != self.cwd:
+            return
+        # A turn with no tip began an empty conversation, so going back means no messages.
+        self._undo_stack = [(e["commit"], e.get("tip"), [], e.get("state"))
+                            for e in saved.get("entries", [])]
 
     @property
     def interrupted(self) -> bool:
@@ -711,6 +751,7 @@ class CodingSession:
         except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
             return f"Undo failed; the conversation was not rewound. {exc}"
         del self._undo_stack[-steps:]
+        self._save_undo()
         if tip is not None and self._vault is not None:
             await self.rewind(tip)
         else:

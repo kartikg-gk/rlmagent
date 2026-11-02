@@ -4,8 +4,8 @@ The repository lives under ~/.rlm-agent/shadow/, never inside the project, so th
 project's own git history is untouched. It honours the project's .gitignore and
 also skips dependency folders, files named like secrets (see EXCLUDES) and files
 over 5 MB, none of which come back on undo. Other files are copied there as they
-are, including any secret under an ordinary name. Snapshots of files survive a
-restart, but the list of turns to undo does not. The session rolls back saved
+are, including any secret under an ordinary name. The last 50 turns can be undone
+after a restart, the last 5 with their variables. The session rolls back saved
 variables itself, on the backend engine, unless they are too large to copy.
 """
 

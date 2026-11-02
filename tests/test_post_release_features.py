@@ -186,7 +186,7 @@ async def test_undo_goes_back_several_turns_or_lists_them(tmp_path):
     restored = []
     session = SimpleNamespace(
         _undo_stack=[("c1", None, ["t1"], None), ("c2", None, ["t2"], None)], _undo_problem=None,
-        _vault=None, _harness=SimpleNamespace(set_messages=lambda m: None),
+        _vault=None, _save_undo=lambda: None, _harness=SimpleNamespace(set_messages=lambda m: None),
         shadow=SimpleNamespace(available=True, skipped=set(), label=lambda c: f"turn {c}",
                                restore=lambda c: restored.append(c) or []))
     listed = await CodingSession._cmd_undo(session, "list")
@@ -288,3 +288,44 @@ def test_long_cell_output_is_shortened_on_screen_only():
     assert shown_output("a\nb") == "a\nb"
     long = shown_output("\n".join(str(i) for i in range(20)))
     assert long.endswith("(12 more lines)") and "\n7\n" in long and "\n8\n" not in long
+
+
+@pytest.mark.skipif(__import__("shutil").which("git") is None, reason="git not on PATH")
+async def test_undo_works_after_a_restart(tmp_path):
+    from _scripted import text_turn
+
+    from rlmagent.conversation import CodingSession
+    from rlmagent.model.scripted import ReplayProvider
+    from rlmagent.undo import Shadow
+
+    work, store, home = tmp_path / "w", tmp_path / "s", tmp_path / "h"
+    work.mkdir()
+    (work / "a.txt").write_text("one")
+    first = await CodingSession.create(
+        provider=ReplayProvider([text_turn("ok"), text_turn("ok")]), provider_name="replay",
+        model="m", system="s", tools=[], cwd=str(work), sessions_dir=store)
+    first.shadow = Shadow(work, home)
+    async for _ in first.submit("first"):
+        pass
+    (work / "a.txt").write_text("two")
+    async for _ in first.submit("second"):
+        pass
+    (work / "a.txt").write_text("three")
+    sid = first.session_id
+    await first.shutdown()
+
+    second = await CodingSession.resume(
+        sid, provider=ReplayProvider([]), provider_name="replay", model="m", system="s",
+        tools=[], sessions_dir=store)
+    second.shadow = Shadow(work, home)
+    second._cwd = str(work)
+    second.load_undo()
+    assert len(second._undo_stack) == 2
+    answer = await second._cmd_undo("")
+    assert "Undid 1 turn" in answer
+    assert (work / "a.txt").read_text() == "two"
+    assert len([m for m in second.transcript if m.role == "user"]) == 1
+    third_stack = len(second._undo_stack)
+    second.load_undo()
+    assert len(second._undo_stack) == third_stack == 1
+    await second.shutdown()
