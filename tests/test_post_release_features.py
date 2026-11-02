@@ -1,3 +1,4 @@
+import asyncio
 import io
 from time import time
 
@@ -329,3 +330,106 @@ async def test_undo_works_after_a_restart(tmp_path):
     second.load_undo()
     assert len(second._undo_stack) == third_stack == 1
     await second.shutdown()
+
+
+@pytest.mark.parametrize("address", [
+    "127.0.0.1", "10.0.0.8", "192.168.1.1", "169.254.169.254", "::1", "fe80::1", "fd00::1",
+    "::ffff:127.0.0.1", "0.0.0.0", "224.0.0.1", "100.64.0.1",
+])
+def test_local_and_private_addresses_are_not_public(address):
+    from rlmagent.network import _is_public
+
+    assert not _is_public(address)
+
+
+def test_ordinary_addresses_are_public():
+    from rlmagent.network import _is_public
+
+    assert _is_public("93.184.216.34") and _is_public("2606:2800:220:1::1")
+
+
+def _names(monkeypatch, table):
+    from rlmagent import network
+
+    async def resolve(host):
+        if host not in table:
+            raise ValueError(f"cannot resolve {host}")
+        if not network._is_public(table[host]):
+            raise ValueError(f"{host} is a private or local address")
+        return table[host]
+
+    monkeypatch.setattr(network, "_public_address", resolve)
+
+
+class _Local:
+    """A real server on loopback, reached through a fake public name."""
+
+    def __init__(self, routes):
+        self.routes, self.seen = routes, []
+
+    async def __aenter__(self):
+        async def serve(reader, writer):
+            head = (await reader.readuntil(b"\r\n\r\n")).decode()
+            self.seen.append(head)
+            path = head.split()[1]
+            writer.write(self.routes[path].encode())
+            await writer.drain()
+            writer.close()
+
+        self.server = await asyncio.start_server(serve, "127.0.0.1", 0)
+        self.port = self.server.sockets[0].getsockname()[1]
+        return self
+
+    async def __aexit__(self, *_exc):
+        self.server.close()
+        await self.server.wait_closed()
+
+
+async def test_fetching_refuses_private_names_and_private_redirects(monkeypatch):
+    from rlmagent import network
+
+    with pytest.raises(ValueError, match="private"):
+        await network.fetch_text("http://localhost:1/")
+    with pytest.raises(ValueError, match="private"):
+        await network.fetch_text("http://169.254.169.254/latest/")
+
+    _names(monkeypatch, {"secret.test": "10.0.0.1"})
+    with pytest.raises(ValueError, match="private"):
+        await network.fetch_text("http://secret.test/")
+
+
+async def test_each_redirect_hop_is_checked_and_the_name_stays_in_host(monkeypatch):
+    from rlmagent import network
+
+    ok = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nhi"
+    async with _Local({"/": ok}) as server:
+        real_public = network._is_public
+        monkeypatch.setattr(network, "_is_public", lambda a: a == "127.0.0.1" or real_public(a))
+
+        async def resolve(host):
+            return "127.0.0.1"
+        monkeypatch.setattr(network, "_public_address", resolve)
+        answer = await network.fetch_text(f"http://named.test:{server.port}/")
+        assert answer["text"] == "hi"
+        assert f"host: named.test:{server.port}" in server.seen[0].lower()
+
+    bounce = ("HTTP/1.1 302 Found\r\nLocation: http://inner.test/\r\nContent-Length: 0\r\n\r\n")
+    async with _Local({"/": bounce}) as server:
+        async def resolve_two(host):
+            if host == "inner.test":
+                raise ValueError("inner.test is a private or local address")
+            return "127.0.0.1"
+        monkeypatch.setattr(network, "_public_address", resolve_two)
+        with pytest.raises(ValueError, match="private"):
+            await network.fetch_text(f"http://outer.test:{server.port}/")
+
+
+async def test_private_fetching_can_be_allowed():
+    from rlmagent import network
+
+    ok = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nhi"
+    async with _Local({"/": ok}) as server:
+        url = f"http://127.0.0.1:{server.port}/"
+        assert (await network.fetch_text(url, allow_private=True))["text"] == "hi"
+        with pytest.raises(ValueError, match="private"):
+            await network.fetch_text(url)

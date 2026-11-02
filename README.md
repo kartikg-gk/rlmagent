@@ -39,6 +39,9 @@ the frontend does not run another recursive model loop around each backend step.
 `--kernel wasm` uses separate Pyodide interpreters in a shared Node host.
 `--kernel local` uses host Python with the backend engine; it has machine access.
 The compatibility engine uses its previous IPython kernel for local execution.
+`fetch_url` refuses local and private addresses, including through redirects, unless
+`--allow-private-fetch` is passed. Sandbox code using httpx directly and approved
+shell commands are not covered by this check.
 `--no-network` disables the sandbox network setup. With networking enabled, use
 async httpx; blocking requests-based libraries are not supported by this host.
 

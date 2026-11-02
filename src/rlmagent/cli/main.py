@@ -130,6 +130,10 @@ def _build_run_parser() -> argparse.ArgumentParser:
         help="Resume a previous session by its ID.",
     )
     p.add_argument(
+        "--allow-private-fetch", action="store_true",
+        help="Let fetch_url reach local and private network addresses.",
+    )
+    p.add_argument(
         "--resume-anywhere", action="store_true",
         help="Allow --resume in a folder other than the one the session started in.",
     )

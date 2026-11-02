@@ -49,7 +49,7 @@ async def test_fetch_bounds_content_and_rejects_non_http(monkeypatch):
             **kw,
         ),
     )
-    result = await fetch_text("https://example.test", max_chars=5)
+    result = await fetch_text("https://example.test", max_chars=5, allow_private=True)
     assert result["text"] == "abcde" and result["truncated"] is True
     with pytest.raises(ValueError):
         await fetch_text("file:///private")

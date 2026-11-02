@@ -326,7 +326,9 @@ class BackendProvider:
 
                     if not tree.network:
                         raise Refused("network access is disabled")
-                    return await fetch_text(url, max_chars=max_chars, raw=raw)
+                    return await fetch_text(
+                        url, max_chars=max_chars, raw=raw,
+                        allow_private=getattr(tree, "allow_private_fetch", False))
 
                 async def guidance(id=None):
                     refinement = getattr(tree, "refinement", None)

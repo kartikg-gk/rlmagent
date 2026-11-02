@@ -254,6 +254,7 @@ def make_agent_tree(ns, provider, provider_name, model, sessions_dir, *, cwd, ba
         approver=Approver(policy),
         network=network,
     )
+    tree.allow_private_fetch = getattr(ns, "allow_private_fetch", False)
     return tree
 
 
