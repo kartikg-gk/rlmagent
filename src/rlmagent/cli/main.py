@@ -46,7 +46,8 @@ _PACKAGE = "rlmagent"
 _DEFAULT_ANTHROPIC_MODEL = "claude-opus-5"
 _DEFAULT_OPENAI_MODEL = "gpt-5"
 _DEFAULT_SYSTEM = "You are a helpful coding assistant."
-_SUBCOMMANDS = frozenset({"acp", "config", "provider", "session", "tui", "worker"})
+_SUBCOMMANDS = frozenset({"acp", "config", "doctor", "provider", "session", "status", "tui",
+                          "worker"})
 
 
 # ---------------------------------------------------------------------------
@@ -965,6 +966,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             from rlmagent.worker import handle
 
             return handle(rest)
+        if cmd in ("status", "doctor"):
+            from rlmagent.cli.health import run
+
+            return run(rest, doctor=cmd == "doctor")
 
     # Default: run mode
     ns = _build_run_parser().parse_args(args)

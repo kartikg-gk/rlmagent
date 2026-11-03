@@ -98,7 +98,7 @@ COMMAND_REGISTRY = build_default_registry()
 #: callers but is never offered here.
 _RUNNABLE_COMMANDS: frozenset[str] = frozenset({
     "branch", "branches", "compact", "continue", "create-skill", "diag", "diff", "tasks", "mcp",
-    "goal", "autonomous",
+    "goal", "autonomous", "btw",
     "export", "help", "model", "name", "plan", "provider", "quit", "reload",
     "refine", "rewind", "session", "shell", "skills", "stats", "system", "think", "tools", "undo",
     "version",
@@ -766,6 +766,21 @@ class CodingSession:
                 return str(exc)
         return hub.report()
 
+    async def _cmd_btw(self, arg: str) -> str:
+        """Answer a side question from the conversation so far, without adding to it."""
+        question = arg.strip()
+        if not question:
+            return "Usage: /btw QUESTION"
+        recent = "\n".join(f"[{getattr(m, 'role', '?')}] {getattr(m, 'text', '')}"
+                           for m in list(self.transcript)[-30:])[-60_000:]
+        prompt = f"Conversation so far:\n{recent}\n\nSide question: {question}"
+        system = ("Answer the user's side question briefly from the conversation. It is not "
+                  "part of the task; do not suggest running tools.")
+        try:
+            return (await self._utility_completion(prompt, system)).strip() or "(no answer)"
+        except Exception as exc:  # noqa: BLE001 - shown to the user, the session goes on
+            return f"Could not answer: {exc}"
+
     def _cmd_goal(self, arg: str) -> str:
         pilot = getattr(self, "autopilot", None)
         return pilot.command_goal(arg) if pilot is not None else "Goals are not available here."
@@ -1191,6 +1206,7 @@ class CodingSession:
             "tasks": self._cmd_tasks,
             "mcp": self._cmd_mcp,
             "goal": self._cmd_goal,
+            "btw": self._cmd_btw,
             "autonomous": self._cmd_autonomous,
             "stats": self._cmd_stats,
             "name": self._cmd_name,
@@ -1785,8 +1801,10 @@ class CodingSession:
                 TipRecord(entry_id=self._tip_id), advance_tip=False
             )
 
+        asked = getattr(self, "compact_requested", False)
+        self.compact_requested = False
         if (
-            self.should_compact()
+            (asked or self.should_compact())
             and len(self._harness.transcript) >= _CONTEXT_LIMITS.min_entries
         ):
             try:

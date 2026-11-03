@@ -92,8 +92,26 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     from rlmagent.autopilot import Autopilot
 
     pilot = Autopilot(cwd=here)
+    from rlmagent.websearch import make_web_search
+
+    built: dict = {}  # the session, once it exists; these functions run only after that
+
+    async def context_usage() -> dict:
+        """How full the conversation context is: used and limit in tokens, and percent."""
+        usage = built["session"].usage
+        limit = max(usage.context_limit, 1)
+        return {"used": usage.estimated_context_tokens, "limit": usage.context_limit,
+                "percent": round(100 * usage.estimated_context_tokens / limit)}
+
+    async def compact() -> str:
+        """Summarize older conversation when this turn ends, to free context for more work."""
+        built["session"].compact_requested = True
+        return "older conversation will be summarized when this turn ends"
+
     tree.host_functions = {"todo": tasks.todo, "mcp": hub.mcp, "mcp_tools": hub.mcp_tools,
-                           **net.functions(), **pilot.functions()}
+                           **net.functions(), **pilot.functions(),
+                           "context_usage": context_usage, "compact": compact,
+                           "web_search": make_web_search(lambda: tree.network)}
     builtin_tools = [as_tool(name, fn) for name, fn in tree.host_functions.items()]
     extended: dict = {"tools": [], "functions": {}}
 
@@ -184,6 +202,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     session.tasks = tasks
     session.mcp = hub
     session.agentnet = net
+    built["session"] = session
     session.autopilot = pilot
     pilot.path = sessions_dir / f"{session.session_id}.goal.json" if sessions_dir else None
     pilot.used_tokens = lambda: (session.usage.total_input_tokens

@@ -390,6 +390,11 @@ def _cmd_mcp(ctx: CommandContext) -> CommandResult:
     return _ok()
 
 
+def _cmd_btw(ctx: CommandContext) -> CommandResult:
+    """Handled by the session."""
+    return _ok()
+
+
 def _cmd_goal(ctx: CommandContext) -> CommandResult:
     """Handled by the session."""
     return _ok()
@@ -633,6 +638,13 @@ def build_default_registry() -> CommandRegistry:
             handler=_cmd_mcp,
             usage="/mcp [NAME]",
             search_terms=("servers", "connectors", "tools"),
+        ),
+        SlashCommand(
+            name="btw",
+            description="Ask a side question about the conversation without adding to it",
+            handler=_cmd_btw,
+            usage="/btw QUESTION",
+            search_terms=("aside", "question", "quick"),
         ),
         SlashCommand(
             name="goal",

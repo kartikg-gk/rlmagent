@@ -197,6 +197,34 @@ has no answer. A job that was running when a worker died is not run again; a job
 due while a worker was down runs when it next starts. Workers do not restart on
 their own after a reboot.
 
+## Goals and autonomous mode
+
+`/goal TEXT [--tokens N]` sets an objective that is put in front of the model on every
+turn until it calls `await goal_done(summary)`; `/goal pause`, `resume` and `clear`
+manage it. `/autonomous` then starts the next turn by itself while the goal is open,
+and stops at its limits (`/autonomous turns N`, `tokens N`, `seconds N`), when the
+goal is done, or when you press Esc. `/autonomous gate CMD` sets a command that must
+exit 0 before `goal_done` is accepted. A passed gate shows only what that command
+checks.
+
+## Agents working together
+
+Open sessions and workers can reach each other. In a cell: `await list_agents()`,
+`await send_message(to, text)`, `await read_messages()`. A message to a worker runs as
+its next task; a message to a session is shown to it before its next turn.
+`await schedule(task, in_seconds=..., every=None, worker=None)` queues work on a
+worker, and `await heartbeat(text)` reports progress, shown in the terminal and in
+`rlm-agent worker log`.
+
+Other functions: `await web_search(query)` when `BRAVE_API_KEY`, `TAVILY_API_KEY` or
+`SERPER_API_KEY` is set; `await context_usage()`; `await compact()` to summarize older
+conversation when the turn ends. `/btw QUESTION` answers a side question without
+adding it to the conversation.
+
+`rlm-agent status` shows configuration, sandbox, git, MCP, search, workers and open
+sessions; `rlm-agent doctor` reports problems and `doctor --fix` repairs the ones it
+can (stale workers and sessions, a missing Pyodide).
+
 ## MCP servers
 
 List Model Context Protocol servers in `mcp.json` in the rlm-agent home, or in

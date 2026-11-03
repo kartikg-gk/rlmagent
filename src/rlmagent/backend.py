@@ -462,6 +462,15 @@ class BackendProvider:
                     "await todo('done', n), await todo() to see it; the user sees it too. "
                     "await mcp_tools() lists tools on configured MCP servers and "
                     "await mcp(server, tool, arguments) calls one. "
+                    "await web_search(query) searches the web when a search key is set. "
+                    "await context_usage() reports how full the context is; await compact() "
+                    "summarizes older conversation when this turn ends. "
+                    "Other agents: await list_agents(), await send_message(to, text), "
+                    "await read_messages(); await schedule(task, in_seconds=..., "
+                    "every=None, worker=None) queues work on a background worker; "
+                    "await heartbeat(text) reports progress on long work. "
+                    "When the user set a goal, await goal() shows it and "
+                    "await goal_done(summary) marks it achieved. "
                     "Return the answer with FINAL. The conversation is in PROMPT."
                 )
             )
