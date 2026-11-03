@@ -14,6 +14,23 @@ pip install rlmagent
 rlmness --setup
 ```
 
+Or install it as a tool with one line, which also sets up the sandbox when Node is
+present (`RLMAGENT_VERSION` pins a version):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kartikg-gk/rlmagent/main/scripts/install.sh | sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/kartikg-gk/rlmagent/main/scripts/install.ps1 | iex
+```
+
+`rlm-agent config show` prints the saved provider and model, and any
+`RLM_AGENT_PROVIDER`, `RLM_AGENT_MODEL`, `RLM_AGENT_API_KEY` or `RLM_AGENT_HOME`
+set in the environment, which take precedence for a run. `rlm-agent config path`
+prints where the file is. Providers include OpenAI, Anthropic, OpenRouter, Ollama,
+Hugging Face and Vertex.
+
 This revision requires `rlmness>=0.2.2`. When installing unreleased local builds,
 install the matching backend wheel before the application wheel.
 

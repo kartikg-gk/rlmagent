@@ -28,7 +28,8 @@ def test_doctor_finds_and_fixes_stale_workers_and_sessions(tmp_path, capsys):
     assert not names["worker old"].ok and names["worker old"].fix == "mark it stopped"
     assert not names["session s-gone"].ok
     assert health.run([], doctor=True) == 1
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
+    out = captured.out + captured.err
     assert "doctor --fix would mark it stopped" in out
     health.run(["--fix"], doctor=True)
     assert "fixing: marked stopped" in capsys.readouterr().out
@@ -101,3 +102,16 @@ async def test_a_requested_compaction_runs_when_the_turn_ends(tmp_path, monkeypa
         pass
     assert ran == [True] and session.compact_requested is False
     await session.shutdown()
+
+
+def test_config_show_lists_environment_overrides(tmp_path, monkeypatch, capsys):
+    from rlmagent.cli.config_cmd import handle_config
+
+    monkeypatch.setenv("RLM_AGENT_MODEL", "small-model")
+    monkeypatch.setenv("RLM_AGENT_API_KEY", "sk-test-1234567890")
+    monkeypatch.delenv("RLM_AGENT_PROVIDER", raising=False)
+    assert handle_config(["show"]) == 0
+    captured = capsys.readouterr()
+    out = captured.out + captured.err
+    assert "RLM_AGENT_MODEL=small-model" in out
+    assert "sk-test-1234567890" not in out and "RLM_AGENT_API_KEY=" in out

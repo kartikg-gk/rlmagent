@@ -81,20 +81,31 @@ def _save_noninteractive(
     return 0
 
 
+#: Environment variables that take precedence over the saved file for a run.
+OVERRIDES = ("RLM_AGENT_PROVIDER", "RLM_AGENT_MODEL", "RLM_AGENT_API_KEY", "RLM_AGENT_HOME")
+
+
 def _show() -> int:
-    """Print the saved configuration with API keys masked."""
+    """Print the saved configuration with API keys masked, and what the environment overrides."""
+    import os
+
     cfg = load_config()
     path = config_path()
+    overrides = [(name, os.environ[name]) for name in OVERRIDES if os.environ.get(name)]
     if not path.exists():
         prompts.info(f"No configuration at {path}. Run 'rlm-agent config' to create one.")
-        return 1
-
-    prompts.info(f"Config: {path}")
-    prompts.info(f"Provider: {cfg.provider or '(unset)'}")
-    prompts.info(f"Model:    {cfg.model or '(unset)'}")
-    for name in sorted(cfg.api_keys):
-        prompts.info(f"  {name}: {mask_key(cfg.api_keys[name])}")
-    return 0
+    else:
+        prompts.info(f"Config: {path}")
+        prompts.info(f"Provider: {cfg.provider or '(unset)'}")
+        prompts.info(f"Model:    {cfg.model or '(unset)'}")
+        for name in sorted(cfg.api_keys):
+            prompts.info(f"  {name}: {mask_key(cfg.api_keys[name])}")
+    if overrides:
+        prompts.info("Set in the environment, used instead of the file:")
+        for name, value in overrides:
+            shown = mask_key(value) if name.endswith("_KEY") else value
+            prompts.info(f"  {name}={shown}")
+    return 0 if path.exists() or overrides else 1
 
 
 def _configure(*, visible: bool = False) -> int:
