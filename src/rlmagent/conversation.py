@@ -97,7 +97,7 @@ COMMAND_REGISTRY = build_default_registry()
 #: can actually type. Anything outside this set stays in the registry for other
 #: callers but is never offered here.
 _RUNNABLE_COMMANDS: frozenset[str] = frozenset({
-    "branch", "branches", "compact", "continue", "create-skill", "diag", "diff", "tasks",
+    "branch", "branches", "compact", "continue", "create-skill", "diag", "diff", "tasks", "mcp",
     "export", "help", "model", "name", "plan", "provider", "quit", "reload",
     "refine", "rewind", "session", "shell", "skills", "stats", "system", "think", "tools", "undo",
     "version",
@@ -746,6 +746,22 @@ class CodingSession:
         return text if len(text) <= limit else (
             text[:limit] + f"\n... cut at {limit} characters; /diff stat lists every file")
 
+    async def _cmd_mcp(self, arg: str) -> str:
+        hub = getattr(self, "mcp", None)
+        if hub is None:
+            return "MCP is not available in this session."
+        name = arg.strip()
+        if name:
+            from rlmagent.mcp import McpError
+
+            if name not in hub.servers:
+                return f"No MCP server named {name!r}."
+            try:
+                await hub.servers[name].start()
+            except McpError as exc:
+                return str(exc)
+        return hub.report()
+
     def _cmd_tasks(self, arg: str) -> str:
         tasks = getattr(self, "tasks", None)
         if tasks is None:
@@ -837,6 +853,9 @@ class CodingSession:
         backend = getattr(self, "backend", None)
         if backend is not None:
             await backend.close()
+        hub = getattr(self, "mcp", None)
+        if hub is not None:
+            await hub.close()
         self._unsubscribe()
         tree = getattr(self, "agent_tree", None)
         if tree is not None:
@@ -1153,6 +1172,7 @@ class CodingSession:
             "undo": self._cmd_undo,
             "diff": self._cmd_diff,
             "tasks": self._cmd_tasks,
+            "mcp": self._cmd_mcp,
             "stats": self._cmd_stats,
             "name": self._cmd_name,
             "export": self._cmd_export,

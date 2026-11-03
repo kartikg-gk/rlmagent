@@ -458,6 +458,10 @@ class BackendProvider:
                     "Children can await tell_parent(text). await children() lists handles. "
                     "Playbooks use await playbook(id=None), await skill(id), and "
                     "await improve(instructions, shared=False). "
+                    "For work with several parts keep a task list: await todo('add', text), "
+                    "await todo('done', n), await todo() to see it; the user sees it too. "
+                    "await mcp_tools() lists tools on configured MCP servers and "
+                    "await mcp(server, tool, arguments) calls one. "
                     "Return the answer with FINAL. The conversation is in PROMPT."
                 )
             )

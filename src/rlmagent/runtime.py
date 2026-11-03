@@ -70,12 +70,23 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
         from rlmagent.model.external import with_external
         provider = BackendProvider(with_external(raw_provider), provider, tree)
 
-    from rlmagent.plugins import as_tool, contributions, load_extensions, reload_extensions
+    from rlmagent.plugins import (
+        as_tool, contributions, load_extensions, reload_extensions, rlm_agent_home,
+    )
     from rlmagent.tasks import TaskList
 
     # Harness functions every agent gets: cells call them, the session engine sees tools.
     tasks = TaskList()
-    tree.host_functions = {"todo": tasks.todo}
+    from pathlib import Path
+
+    from rlmagent.mcp import McpHub, load_configs
+    from rlmagent.trust import project_inputs_allowed
+
+    here = os.getcwd()
+    configs, problems = load_configs(rlm_agent_home(),
+                                     Path(here) if project_inputs_allowed(here) else None)
+    hub = McpHub(configs, here, tree.approver, problems)
+    tree.host_functions = {"todo": tasks.todo, "mcp": hub.mcp, "mcp_tools": hub.mcp_tools}
     builtin_tools = [as_tool(name, fn) for name, fn in tree.host_functions.items()]
     extended: dict = {"tools": [], "functions": {}}
 
@@ -164,6 +175,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     session.shadow = Shadow(session.cwd, rlm_agent_home())
     session.load_undo()
     session.tasks = tasks
+    session.mcp = hub
     tasks.attach(sessions_dir / f"{session.session_id}.tasks.json" if sessions_dir else None)
     tree.attach(tree.root_id(), session)
     from rlmagent.playbook.improver import Improver

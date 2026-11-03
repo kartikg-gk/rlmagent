@@ -196,6 +196,24 @@ has no answer. A job that was running when a worker died is not run again; a job
 due while a worker was down runs when it next starts. Workers do not restart on
 their own after a reboot.
 
+## MCP servers
+
+List Model Context Protocol servers in `mcp.json` in the rlm-agent home, or in
+`.rlm-agent/mcp.json` of a trusted project:
+
+```json
+{"servers": {
+  "files": {"command": "npx", "args": ["-y", "some-mcp-server"], "env": {"TOKEN": "${MY_TOKEN}"}},
+  "docs": {"url": "https://example.com/mcp", "headers": {"Authorization": "Bearer ${DOCS_KEY}"}}
+}}
+```
+
+`${NAME}` is read from the environment when a server starts, so keys stay out of the
+file. Servers start on first use. Cells call `await mcp_tools()` and
+`await mcp(server, tool, arguments)`; the session engine has matching tools. Calls
+need approval unless the server marks the tool read-only. `/mcp` lists servers,
+their state and tools; `/mcp NAME` starts one.
+
 ## Project extensions
 
 A Python file in `.rlm-agent/extensions/` (or `~/.rlm-agent/extensions/`) with a

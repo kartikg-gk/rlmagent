@@ -385,6 +385,11 @@ def _cmd_tasks(ctx: CommandContext) -> CommandResult:
     return _ok()
 
 
+def _cmd_mcp(ctx: CommandContext) -> CommandResult:
+    """Handled by the session."""
+    return _ok()
+
+
 def _cmd_compact(ctx: CommandContext) -> CommandResult:
     """Request context compaction."""
     return _ok(compact_requested=True)
@@ -611,6 +616,13 @@ def build_default_registry() -> CommandRegistry:
             handler=_cmd_tasks,
             usage="/tasks [add TEXT | done N | undo N | remove N | clear]",
             search_terms=("todo", "checklist", "plan"),
+        ),
+        SlashCommand(
+            name="mcp",
+            description="List MCP servers and their tools; /mcp NAME starts one",
+            handler=_cmd_mcp,
+            usage="/mcp [NAME]",
+            search_terms=("servers", "connectors", "tools"),
         ),
         SlashCommand(
             name="undo",
