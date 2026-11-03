@@ -89,8 +89,11 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     from rlmagent.agentnet import AgentNet
 
     net = AgentNet("", here)
+    from rlmagent.autopilot import Autopilot
+
+    pilot = Autopilot(cwd=here)
     tree.host_functions = {"todo": tasks.todo, "mcp": hub.mcp, "mcp_tools": hub.mcp_tools,
-                           **net.functions()}
+                           **net.functions(), **pilot.functions()}
     builtin_tools = [as_tool(name, fn) for name, fn in tree.host_functions.items()]
     extended: dict = {"tools": [], "functions": {}}
 
@@ -181,6 +184,11 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     session.tasks = tasks
     session.mcp = hub
     session.agentnet = net
+    session.autopilot = pilot
+    pilot.path = sessions_dir / f"{session.session_id}.goal.json" if sessions_dir else None
+    pilot.used_tokens = lambda: (session.usage.total_input_tokens
+                                 + session.usage.total_output_tokens)
+    pilot.load()
     net.me = f"s-{session.session_id[:8]}"
     net.register()
 

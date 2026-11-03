@@ -700,8 +700,21 @@ async def _run_one_shot(
     """Submit a single prompt and exit."""
     events = session.submit(prompt)
     ok = await _consume_events(events, print_mode=print_mode)
+    ok = await _keep_going(session, ok, print_mode=print_mode)
     sys.stdout.flush()
     return 0 if ok else 1
+
+
+async def _keep_going(session: CodingSession, ok: bool, *, print_mode: bool) -> bool:
+    """Run the turns autonomous mode starts on its own, until it stops."""
+    pilot = getattr(session, "autopilot", None)
+    while ok and pilot is not None and (following := pilot.next_prompt()):
+        _info(f"[autonomous turn {pilot.turns}]")
+        ok = await _consume_events(session.submit(following), print_mode=print_mode)
+    if pilot is not None and pilot.stopped_because:
+        _info(f"[autonomous mode stopped: {pilot.stopped_because}]")
+        pilot.stopped_because = ""
+    return ok
 
 
 async def _run_interactive(session: CodingSession) -> int:
@@ -781,7 +794,8 @@ async def _run_interactive(session: CodingSession) -> int:
         except RuntimeError as exc:
             _warn(str(exc))
             continue
-        await _consume_events(events, print_mode=False)
+        ok = await _consume_events(events, print_mode=False)
+        await _keep_going(session, ok, print_mode=False)
 
     return 0
 

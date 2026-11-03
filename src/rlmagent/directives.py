@@ -390,6 +390,16 @@ def _cmd_mcp(ctx: CommandContext) -> CommandResult:
     return _ok()
 
 
+def _cmd_goal(ctx: CommandContext) -> CommandResult:
+    """Handled by the session."""
+    return _ok()
+
+
+def _cmd_autonomous(ctx: CommandContext) -> CommandResult:
+    """Handled by the session."""
+    return _ok()
+
+
 def _cmd_compact(ctx: CommandContext) -> CommandResult:
     """Request context compaction."""
     return _ok(compact_requested=True)
@@ -623,6 +633,20 @@ def build_default_registry() -> CommandRegistry:
             handler=_cmd_mcp,
             usage="/mcp [NAME]",
             search_terms=("servers", "connectors", "tools"),
+        ),
+        SlashCommand(
+            name="goal",
+            description="Set, show, pause or clear the goal the agent keeps working toward",
+            handler=_cmd_goal,
+            usage="/goal [TEXT [--tokens N] | pause | resume | clear]",
+            search_terms=("objective", "target", "aim"),
+        ),
+        SlashCommand(
+            name="autonomous",
+            description="Keep working toward the goal without waiting, within limits",
+            handler=_cmd_autonomous,
+            usage="/autonomous [off | status | turns N | tokens N | seconds N | gate CMD]",
+            search_terms=("auto", "loop", "unattended"),
         ),
         SlashCommand(
             name="undo",

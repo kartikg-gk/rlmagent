@@ -98,6 +98,7 @@ COMMAND_REGISTRY = build_default_registry()
 #: callers but is never offered here.
 _RUNNABLE_COMMANDS: frozenset[str] = frozenset({
     "branch", "branches", "compact", "continue", "create-skill", "diag", "diff", "tasks", "mcp",
+    "goal", "autonomous",
     "export", "help", "model", "name", "plan", "provider", "quit", "reload",
     "refine", "rewind", "session", "shell", "skills", "stats", "system", "think", "tools", "undo",
     "version",
@@ -633,6 +634,9 @@ class CodingSession:
         refinement = getattr(self, "refinement", None)
         if refinement is not None:
             refinement.at_boundary()
+        pilot = getattr(self, "autopilot", None)
+        if pilot is not None and (reminder := pilot.reminder()):
+            self.inject(reminder)
         # Name the session from its first prompt straight away, so listings
         # never show a bare id while waiting on the model-generated title.
         if not self._title:
@@ -761,6 +765,16 @@ class CodingSession:
             except McpError as exc:
                 return str(exc)
         return hub.report()
+
+    def _cmd_goal(self, arg: str) -> str:
+        pilot = getattr(self, "autopilot", None)
+        return pilot.command_goal(arg) if pilot is not None else "Goals are not available here."
+
+    def _cmd_autonomous(self, arg: str) -> str:
+        pilot = getattr(self, "autopilot", None)
+        if pilot is None:
+            return "Autonomous mode is not available here."
+        return pilot.command_autonomous(arg)
 
     def _cmd_tasks(self, arg: str) -> str:
         tasks = getattr(self, "tasks", None)
@@ -1176,6 +1190,8 @@ class CodingSession:
             "diff": self._cmd_diff,
             "tasks": self._cmd_tasks,
             "mcp": self._cmd_mcp,
+            "goal": self._cmd_goal,
+            "autonomous": self._cmd_autonomous,
             "stats": self._cmd_stats,
             "name": self._cmd_name,
             "export": self._cmd_export,

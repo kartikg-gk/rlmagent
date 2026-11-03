@@ -408,11 +408,22 @@ class RlmAgentApp(App[None]):
             with suppress(NoMatches):
                 await self._refresh_sidebar()
                 self._refresh_status()
+            pilot = getattr(self._bridge.session, "autopilot", None)
             if self._queued and not self._cancelled:
                 following = self._queued.pop(0)
                 with suppress(NoMatches):
                     transcript.add_user(following)
                     self.run_worker(self._stream(following), exclusive=True)
+            elif pilot is not None and self._cancelled:
+                pilot.stop_autonomous("stopped by the user")
+            elif pilot is not None and (following := pilot.next_prompt()):
+                with suppress(NoMatches):
+                    transcript.add_notice(f"autonomous turn {pilot.turns}")
+                    self.run_worker(self._stream(following), exclusive=True)
+            elif pilot is not None and pilot.stopped_because:
+                with suppress(NoMatches):
+                    transcript.add_notice(f"autonomous mode stopped: {pilot.stopped_because}")
+                pilot.stopped_because = ""
 
     def _refresh_status(self) -> None:
         """Update the footer readout and the composer's model/effort badge."""
