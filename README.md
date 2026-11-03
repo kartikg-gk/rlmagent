@@ -148,6 +148,12 @@ click opens a card in full; F2 shows the agent tree. The status bar shows steps,
 running agents, depth and spend against the run's limits. Messages typed while a
 run is going are queued and sent when it ends.
 
+`/diff` shows what the session changed in the project (`/diff last` for the last
+turn, `/diff stat` for a file summary). Agents keep a task list with
+`await todo("add", text)` and `await todo("done", n)` (a `todo` tool in the session
+engine); it is saved with the session, shown in the sidebar and by `/tasks`. The
+session engine also has `ApplyPatch` for multi-file unified diffs, plus `Grep` and `Glob`.
+
 ### Remote models and cloud credentials
 
 In the model picker, Ctrl+F fetches remote models, Ctrl+T checks credentials, and
