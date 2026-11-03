@@ -69,6 +69,7 @@ class RlmAgentApp(App[None]):
         ("ctrl+n", "new_session", "New session"),
         ("ctrl+q", "quit", "Quit"),
         Binding("shift+tab", "toggle_auto", "Auto-accept", priority=True),
+        Binding("f2", "agent_tree", "Agents"),
     ]
 
     def __init__(self, bridge: SessionBridge | None = None) -> None:
@@ -214,6 +215,18 @@ class RlmAgentApp(App[None]):
 
         self.query_one(TranscriptView).add_user(text)
         self.run_worker(self._stream(text), exclusive=True)
+
+    def on_step_card_inspect(self, event) -> None:
+        from rlmagent.tui.inspect import StepScreen
+
+        self.push_screen(StepScreen(event.step))
+
+    def action_agent_tree(self) -> None:
+        from rlmagent.tui.inspect import AgentTreeScreen
+        from rlmagent.tui.steps import StepBook
+
+        book = self._bridge.steps if self._bridge is not None else StepBook()
+        self.push_screen(AgentTreeScreen(book))
 
     def action_escape(self) -> None:
         """Esc stops a running turn; when idle with an empty prompt it leaves the app."""

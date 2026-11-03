@@ -231,6 +231,15 @@ def _build_session_parser() -> argparse.ArgumentParser:
         help="Session ID to summarize (default: the most recent session).",
     )
     st.add_argument("--session-dir", default=None, dest="sub_session_dir")
+    vw = sub.add_parser("view", help="Replay a session's agent steps as cards.")
+    vw.add_argument("session_id", nargs="?", default=None,
+                    help="Session ID (default: the most recent session).")
+    vw.add_argument("--session-dir", default=None, dest="sub_session_dir")
+    sp = sub.add_parser("steps", help="Per-agent steps, tokens, cost and time of a session.")
+    sp.add_argument("session_id", nargs="?", default=None,
+                    help="Session ID (default: the most recent session).")
+    sp.add_argument("--json", action="store_true", help="Print one JSON object per agent.")
+    sp.add_argument("--session-dir", default=None, dest="sub_session_dir")
     pr = sub.add_parser("prune", help="List old sessions; remove them with --yes.")
     pr.add_argument("--older-than", type=int, required=True, metavar="DAYS")
     pr.add_argument("--yes", action="store_true", help="Actually remove them.")
@@ -496,7 +505,8 @@ def _latest_session_id(base: Path) -> str | None:
     """Session id of the most recently modified vault file, if any."""
     if not base.exists():
         return None
-    files = [p for p in base.glob("*.jsonl") if p.name != "index.jsonl"]
+    # Run event logs sit beside the vaults as <id>.backend.events.jsonl; skip them.
+    files = [p for p in base.glob("*.jsonl") if p.name != "index.jsonl" and "." not in p.stem]
     if not files:
         return None
     return max(files, key=lambda p: p.stat().st_mtime).stem
@@ -612,6 +622,30 @@ def _handle_session(argv: list[str]) -> int:
 
     if ns.action == "stats":
         asyncio.run(_session_stats(base, ns.session_id, sys.stdout))
+        return 0
+
+    if ns.action in ("view", "steps"):
+        from rlmagent.tui.replay import (
+            ReplayApp, agent_rows, events_path, format_rows, load_events, runs_of,
+        )
+
+        resolved = ns.session_id or _latest_session_id(base)
+        if resolved is None:
+            _die("No sessions found.")
+        path = events_path(base, resolved)
+        if not path.exists():
+            _die(f"No agent steps saved for {resolved}; steps are kept for --engine rlmness.")
+        books = runs_of(load_events(path))
+        if ns.action == "view":
+            ReplayApp(resolved, books).run()
+            return 0
+        rows = agent_rows(books)
+        if ns.json:
+            import json
+            for row in rows:
+                print(json.dumps(row))
+        else:
+            print(format_rows(rows))
         return 0
 
     if ns.action == "prune":

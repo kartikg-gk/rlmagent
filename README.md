@@ -136,6 +136,18 @@ and per-call usage. Contract runs write `<trace-file>.backend.events.jsonl`.
 Usage totals preserve input, output, cache reads/writes and reasoning counts from
 all recursive model calls. Providers that omit counts cannot supply those totals.
 
+`rlm-agent session view [id]` replays those steps as cards, and
+`rlm-agent session steps [id] [--json]` prints steps, tokens, cost and time per agent.
+
+### Terminal UI
+
+With the default engine each agent step is a card: depth, a short agent id, the step
+number and its state, then the code, the first lines of output and, once it ends,
+tokens, cost and time. Sub-agent cards are indented under their parent. Enter or a
+click opens a card in full; F2 shows the agent tree. The status bar shows steps,
+running agents, depth and spend against the run's limits. Messages typed while a
+run is going are queued and sent when it ends.
+
 ### Remote models and cloud credentials
 
 In the model picker, Ctrl+F fetches remote models, Ctrl+T checks credentials, and

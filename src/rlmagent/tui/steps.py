@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from rich.console import Group
 from rich.markup import escape
 from rich.text import Text
 from textual.containers import Vertical
+from textual.message import Message
 from textual.widgets import Collapsible, Static
 
 from rlmagent.tui.messages import highlighted_code
@@ -168,8 +168,21 @@ def output_preview(output: str) -> tuple[str, int]:
     return "\n".join(lines[:SHOWN_OUTPUT_LINES]), hidden
 
 
-class StepCard(Vertical):
-    """One step on screen: title, code, output preview, usage."""
+class StepCard(Vertical, can_focus=True):
+    """One step on screen: title, code, output preview, usage. Enter or a click opens it."""
+
+    BINDINGS = [("enter", "inspect", "Open step")]
+
+    class Inspect(Message):
+        def __init__(self, step: Step) -> None:
+            super().__init__()
+            self.step = step
+
+    def action_inspect(self) -> None:
+        self.post_message(self.Inspect(self.step))
+
+    def on_click(self) -> None:
+        self.action_inspect()
 
     def __init__(self, step: Step) -> None:
         super().__init__(classes="step-card")
@@ -211,10 +224,6 @@ class StepCard(Vertical):
         self._foot.update(footer_text(step) if done else "")
         self._foot.display = done
 
-    def full_text(self) -> str:
-        """Everything this step has, for the inspector."""
-        return Group(Text(header_text(self.step)), highlighted_code(self.step.code or "# no code"),
-                     Text(self.step.output or "(no output)"), Text(footer_text(self.step)))
 
 
 __all__ = [
