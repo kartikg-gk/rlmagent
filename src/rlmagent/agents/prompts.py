@@ -17,7 +17,9 @@ SANDBOX_GUIDE = """## Your kernel
 The python tool runs code in one sandboxed kernel (Python compiled to WebAssembly) that stays alive for the whole task: variables, imports and functions you define remain available in later calls. The sandbox has its own empty filesystem; `open()` does not see the project.{network} Reach the project only through these functions (await them):
 
     text  = await read_file("src/app.py")
+    part  = await read_file("src/app.py", 100, 160)   # only lines 100 to 160
     paths = await list_files("**/*.py")
+    hits  = await search_files(r"def main", glob="*.py")  # [{"path", "line", "text"}]
     await write_file("src/app.py", text)          # asks the user first
     await edit_file("src/app.py", old, new)       # old must occur exactly once
     await apply_patch(unified_diff)               # several edits or files, all or none; asks first

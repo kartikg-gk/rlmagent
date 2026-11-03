@@ -425,8 +425,9 @@ class BackendProvider:
                 self.instructions
                 + "\n\n"
                 + (
-                    "Complete the user's coding task. Workspace access uses async read_file(path), "
-                    "list_files(pattern), write_file(path, content), edit_file(path, old, new), "
+                    "Complete the user's coding task. Workspace access uses async read_file(path, start=None, end=None) "
+                    "(line numbers from 1, both ends included), list_files(pattern), "
+                    "search_files(regex, path='.', glob=None, ignore_case=False) for matching lines, write_file(path, content), edit_file(path, old, new), "
                     "apply_patch(unified_diff) for several edits or files, all or none, "
                     "and run(cmd, timeout=120). Changes and commands use host approval. "
                     "await ask_user(question, choices=None, multiple=False) asks the user; use it only "

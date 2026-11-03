@@ -235,3 +235,24 @@ async def test_line_mode_asks_on_the_console(monkeypatch):
     answers = iter(["?", "t"])
     monkeypatch.setattr("builtins.input", lambda _q: next(answers))
     assert await cli_main._ask_on_console(Request("run", "make test")) == "auto"
+
+
+async def test_workspace_reads_line_ranges_and_searches(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("one\ndef main():\n    pass\nfour\n")
+    (tmp_path / "notes.txt").write_text("def main is here too\n")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "x.py").write_text("def main\n")
+    ws = Workspace(tmp_path, Approver("auto"))
+    assert await ws.read_file("src/a.py", 2, 3) == "def main():\n    pass\n"
+    assert await ws.read_file("src/a.py", start=4) == "four\n"
+    hits = await ws.search_files(r"def main")
+    assert [(h["path"], h["line"]) for h in hits] == [("notes.txt", 1), ("src/a.py", 2)]
+    assert [h["path"] for h in await ws.search_files("def", glob="*.py")] == ["src/a.py"]
+    assert await ws.search_files("DEF MAIN", path="src", ignore_case=True) == [
+        {"path": "src/a.py", "line": 2, "text": "def main():"}
+    ]
+    capped = await ws.search_files("e", limit=1)
+    assert len(capped) == 2 and "stopped at 1" in capped[-1]["note"]
+    with pytest.raises(ValueError, match="outside the workspace"):
+        await ws.search_files("x", path="..")

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import fnmatch
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -16,6 +18,8 @@ from rlmagent.model.external.cli import own_group
 MAX_READ = 2_000_000
 MAX_OUTPUT = 50 * 1024
 MAX_LIST = 2_000
+MAX_MATCHES = 500
+MAX_MATCH_TEXT = 300
 MAX_INSTRUCTION = 64 * 1024
 MAX_INSTRUCTIONS = 200
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".rlm-agent"}
@@ -47,14 +51,68 @@ class Workspace:
     def _rel(self, path: Path) -> str:
         return path.relative_to(self.root).as_posix()
 
-    async def read_file(self, path: str) -> str:
+    async def read_file(self, path: str, start: int | None = None, end: int | None = None) -> str:
+        """The file's text, or only lines start..end (1-based, both included)."""
         target = self._path(path)
-        if target.stat().st_size > MAX_READ:
-            raise ValueError(f"{path} is larger than {MAX_READ} bytes")
+        ranged = start is not None or end is not None
+        if not ranged and target.stat().st_size > MAX_READ:
+            raise ValueError(
+                f"{path} is larger than {MAX_READ} bytes; read it in parts with start and end"
+            )
         try:
-            return target.read_text(encoding="utf-8")
+            if not ranged:
+                return target.read_text(encoding="utf-8")
+            first = max(1, int(start or 1))
+            last = None if end is None else int(end)
+            picked = []
+            with open(target, encoding="utf-8") as f:
+                for number, line in enumerate(f, 1):
+                    if last is not None and number > last:
+                        break
+                    if number >= first:
+                        picked.append(line)
+            return "".join(picked)
         except UnicodeDecodeError:
             raise ValueError(f"{path} is a binary file, not UTF-8 text") from None
+
+    async def search_files(self, pattern: str, path: str = ".", glob: str | None = None,
+                           ignore_case: bool = False, limit: int = MAX_MATCHES) -> list[dict]:
+        """Lines matching a regular expression: [{"path", "line", "text"}], capped at limit."""
+        flags = re.IGNORECASE if ignore_case else 0
+        regex = re.compile(pattern, flags)
+        base = self._path(path)
+        limit = max(1, min(int(limit), MAX_MATCHES))
+        files = [base] if base.is_file() else self._walk(base, glob)
+        found: list[dict] = []
+        for file in files:
+            try:
+                if file.stat().st_size > MAX_READ:
+                    continue
+                with open(file, encoding="utf-8", newline="") as f:
+                    for number, line in enumerate(f, 1):
+                        if regex.search(line):
+                            text = line.rstrip("\r\n")
+                            found.append({
+                                "path": self._rel(file),
+                                "line": number,
+                                "text": text[:MAX_MATCH_TEXT],
+                            })
+                            if len(found) >= limit:
+                                found.append({"note": f"stopped at {limit} matches; narrow the search"})
+                                return found
+            except (UnicodeDecodeError, OSError):
+                continue
+        return found
+
+    def _walk(self, base: Path, glob: str | None):
+        for folder, dirs, names in os.walk(base, followlinks=False):
+            dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+            for name in sorted(names):
+                file = Path(folder) / name
+                if glob and not (fnmatch.fnmatch(name, glob)
+                                 or fnmatch.fnmatch(self._rel(file), glob)):
+                    continue
+                yield file
 
     async def list_files(self, pattern: str = "**/*") -> list[str]:
         found = []
@@ -269,6 +327,7 @@ class Workspace:
         return {
             "read_file": self.read_file,
             "list_files": self.list_files,
+            "search_files": self.search_files,
             "write_file": self.write_file,
             "edit_file": self.edit_file,
             "apply_patch": self.apply_patch,

@@ -54,7 +54,8 @@ Depth, call, cost, live-agent, and time limits apply across recursive execution.
 
 ## Workspace approvals
 
-Sandbox code reaches the project through `read_file`, `list_files`, `write_file`,
+Sandbox code reaches the project through `read_file` (whole files or a line range),
+`list_files`, `search_files` (regex search of file contents), `write_file`,
 `edit_file`, `apply_patch`, `ask_user`, and `run`. File paths are confined to the configured workspace.
 Writes, edits, and commands use the application's approval policy. Shell commands
 run with the user's permissions; the workspace path restriction is not an OS shell
