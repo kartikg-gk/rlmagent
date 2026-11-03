@@ -88,7 +88,8 @@ class ReplayApp(App[None]):
 
     CSS_PATH = Path(__file__).with_name("rlm_agent.tcss")
     TITLE = "rlm-agent replay"
-    BINDINGS = [Binding("q", "quit", "Quit"), Binding("f2", "agent_tree", "Agents")]
+    BINDINGS = [Binding("q", "quit", "Quit"), Binding("f2", "agent_tree", "Agents"),
+                Binding("f3", "timeline", "Timeline")]
 
     def __init__(self, session_id: str, books: list[StepBook]) -> None:
         super().__init__()
@@ -117,14 +118,22 @@ class ReplayApp(App[None]):
 
         self.push_screen(StepScreen(event.step))
 
-    def action_agent_tree(self) -> None:
-        from rlmagent.tui.inspect import AgentTreeScreen
-
+    def _merged(self) -> StepBook:
         merged = StepBook()
         for book in self.books:
             merged.agents.update(book.agents)
             merged.steps.update(book.steps)
-        self.push_screen(AgentTreeScreen(merged))
+        return merged
+
+    def action_agent_tree(self) -> None:
+        from rlmagent.tui.inspect import AgentTreeScreen
+
+        self.push_screen(AgentTreeScreen(self._merged()))
+
+    def action_timeline(self) -> None:
+        from rlmagent.tui.inspect import TimelineScreen
+
+        self.push_screen(TimelineScreen(self.books[-1] if self.books else StepBook()))
 
 
 __all__ = ["ReplayApp", "agent_rows", "events_path", "format_rows", "load_events", "runs_of"]

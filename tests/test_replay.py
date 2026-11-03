@@ -87,3 +87,39 @@ def test_session_steps_command_and_latest_session_skip_event_logs(tmp_path, caps
     assert "total: 4 agents" in capsys.readouterr().out
     assert _handle_session(["steps", "s1", "--json", "--session-dir", str(tmp_path)]) == 0
     assert len(capsys.readouterr().out.strip().splitlines()) == 4
+
+
+def test_timeline_puts_steps_on_one_scale():
+    from rlmagent.tui.inspect import timeline_rows
+    from rlmagent.tui.steps import StepBook
+
+    assert timeline_rows(StepBook()) == ["No timed steps yet."]
+    book = runs_of(_events())[0]
+    rows = timeline_rows(book)
+    assert rows[0].startswith("+    0.0s     2.0s |" + "█" * 30)
+    assert rows[1].startswith("+    0.5s     0.5s |       ") and "d1 123456 step 1 done" in rows[1]
+
+
+def test_workers_panel_lists_workers_and_their_jobs(tmp_path, monkeypatch):
+    import time as _time
+
+    from rlmagent import worker
+    from rlmagent.tui.inspect import worker_rows
+
+    monkeypatch.setenv("RLM_AGENT_HOME", str(tmp_path))
+    monkeypatch.setattr(worker, "root", lambda: tmp_path / "workers")
+    assert worker_rows()[0].startswith("No workers")
+    worker.schedule("night", "run the checks", _time.time() + 60, every=3600)
+    rows = worker_rows()
+    assert rows[0] == "night: not running, no heartbeat, 1 waiting"
+    assert "every 3600s: run the checks" in rows[1]
+
+
+async def test_timeline_key_in_replay(tmp_path):
+    from rlmagent.tui.inspect import TimelineScreen
+
+    app = ReplayApp("s1", runs_of(load_events(_saved(tmp_path))))
+    async with app.run_test() as pilot:
+        await pilot.press("f3")
+        await pilot.pause()
+        assert isinstance(app.screen, TimelineScreen)

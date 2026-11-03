@@ -221,3 +221,35 @@ def test_apply_records_when_a_note_was_made():
                         "content": "c", "expires_after_tasks": 1}],
                 baseline={}, scope="local", trigger="auto:tasks", summary="")
     assert book.entries["a"].made_at_task == 7
+
+
+async def test_automatic_proposals_can_wait_for_review(tmp_path):
+    import json as _json
+    from types import SimpleNamespace
+
+    from rlmagent.playbook.improver import Improver
+
+    proposal = {"summary": "keep the check", "rationale": "seen twice", "edits": [
+        {"action": "create", "kind": "memory", "id": "check-cmd", "title": "Check",
+         "content": "Run make check"}]}
+
+    class Session(SimpleNamespace):
+        transcript = []
+
+        async def _utility_completion(self, request, system):
+            return _json.dumps(proposal)
+
+        def inject(self, text):
+            pass
+
+    improver = Improver(Session(), tmp_path / "local.json", None)
+    improver.hold_auto = True
+    note = await improver.improve(None, trigger="auto:tasks")
+    assert note.startswith("Held proposal 1") and not improver.entries()
+    assert "create memory check-cmd: Run make check" in await improver.command("pending")
+    assert (await improver.command("accept 5")).startswith("Use /improve accept N")
+    await improver.command("accept 1")
+    assert [e.id for e in improver.entries()] == ["check-cmd"] and not improver.held
+    await improver.improve(None, trigger="auto:tasks")
+    assert (await improver.command("reject 1")).startswith("Dropped")
+    assert await improver.command("pending") == "No proposals are waiting."

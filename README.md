@@ -144,7 +144,8 @@ all recursive model calls. Providers that omit counts cannot supply those totals
 With the default engine each agent step is a card: depth, a short agent id, the step
 number and its state, then the code, the first lines of output and, once it ends,
 tokens, cost and time. Sub-agent cards are indented under their parent. Enter or a
-click opens a card in full; F2 shows the agent tree. The status bar shows steps,
+click opens a card in full; F2 shows the agent tree, F3 a timeline of steps and F4
+the background workers with their heartbeats and scheduled jobs. The status bar shows steps,
 running agents, depth and spend against the run's limits. Messages typed while a
 run is going are queued and sent when it ends.
 
@@ -271,8 +272,10 @@ many later tasks actually sent it to the model, failed tool calls per task befor
 after, and your verdict from `/refine rate <change> better|same|worse`. The counts
 are signals rather than proof, because tasks differ.
 
-The completed proposal waits for a turn boundary before it is saved or activated.
-If the session is idle when review finishes, it can commit immediately.
+A proposal that changes guidance waits for you: `/refine show` lists each added,
+changed or removed entry with a diff of its text, `/refine apply` saves it and
+`/refine cancel` drops it. An approved proposal waits for a turn boundary before it
+is saved or activated; if the session is idle it commits immediately.
 `/refine status` distinguishes a running review, a proposal awaiting activation,
 completion, cancellation, and failure. Beginning the next submission or finishing
 the current turn services that boundary. Updated guidance then applies to the
@@ -294,6 +297,8 @@ rewind, inference-route changes, or shutdown discard pending work. Contract runs
 do not load this ambient harness or enable `/refine`.
 
 This mechanism runs only when explicitly requested. Existing `/improve` and its
-automatic playbook scheduling are separate. A committed refinement means its
+automatic playbook scheduling are separate. Proposals from the automatic playbook
+check are held: `/improve pending` lists them, `/improve accept N` saves one and
+`/improve reject N` drops it. `--apply-auto-improve` saves them at once instead. A committed refinement means its
 structure and persistence checks passed; its expected benefit has not been
 established by a performance benchmark.

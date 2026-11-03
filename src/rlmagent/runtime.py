@@ -191,6 +191,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
         session, local_path=local, shared_path=rlm_agent_home() / "playbook.json"
     )
     session.improver.auto = getattr(ns, "auto_improve", True)
+    session.improver.hold_auto = getattr(ns, "review_auto_improve", True)
     session.improver.every = getattr(ns, "improve_every", 5)
     session.improver.cooldown = getattr(ns, "improve_cooldown", 900.0)
     session.on_compacted = lambda: (tree.tracer.compacted("root"), session.improver.compacted())

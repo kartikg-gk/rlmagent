@@ -48,11 +48,14 @@ async def session_for(turns, path=None):
     )
     session._skills = []
     session.refinement = Refinement(session, HarnessStore(path))
+    session.refinement.review_first = False  # these tests cover what happens after approval
     return session
 
 
 async def finish(session):
     await session.refinement.task
+    if session.refinement.phase == "awaiting review":
+        await session.refinement.command("apply")
     assert session.refinement.phase in ("ready", "completed"), session.refinement.status()
     session.refinement.at_boundary()
     assert session.refinement.phase == "completed", session.refinement.status()
@@ -493,3 +496,33 @@ async def test_streaming_api_adapter_runs_review_without_network(tmp_path):
     finally:
         await session.shutdown()
         await provider.close()
+
+
+async def test_a_proposal_waits_for_review_before_it_is_saved(tmp_path):
+    path = tmp_path / "harness.json"
+    session = await session_for(good_turns(), path)
+    session.refinement.review_first = True
+    assert (await session.handle_command("/refine show")).startswith("No proposal is waiting")
+    assert (await session.handle_command("/refine apply")).startswith("No proposal is waiting")
+    await session.handle_command("/refine Remember the check")
+    await session.refinement.task
+    assert session.refinement.phase == "awaiting review"
+    shown = await session.handle_command("/refine show")
+    assert shown.startswith("add prompt focused-check: Focused check")
+    assert "+Run python verify_project.py --focused" in shown
+    assert "Finish or cancel" in await session.handle_command("/refine again")
+    assert not HarnessStore(path).read().entries
+    await session.handle_command("/refine apply")
+    assert session.refinement.phase == "completed"
+    assert "focused-check" in HarnessStore(path).read().entries
+
+
+async def test_a_dropped_proposal_saves_nothing(tmp_path):
+    path = tmp_path / "harness.json"
+    session = await session_for(good_turns(), path)
+    session.refinement.review_first = True
+    await session.handle_command("/refine Remember the check")
+    await session.refinement.task
+    await session.handle_command("/refine cancel")
+    assert session.refinement.phase == "cancelled" and session.refinement.draft is None
+    assert not HarnessStore(path).read().entries

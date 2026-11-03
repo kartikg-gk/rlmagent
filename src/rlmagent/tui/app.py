@@ -70,6 +70,8 @@ class RlmAgentApp(App[None]):
         ("ctrl+q", "quit", "Quit"),
         Binding("shift+tab", "toggle_auto", "Auto-accept", priority=True),
         Binding("f2", "agent_tree", "Agents"),
+        Binding("f3", "timeline", "Timeline"),
+        Binding("f4", "workers", "Workers"),
     ]
 
     def __init__(self, bridge: SessionBridge | None = None) -> None:
@@ -227,6 +229,17 @@ class RlmAgentApp(App[None]):
 
         book = self._bridge.steps if self._bridge is not None else StepBook()
         self.push_screen(AgentTreeScreen(book))
+
+    def action_timeline(self) -> None:
+        from rlmagent.tui.inspect import TimelineScreen
+        from rlmagent.tui.steps import StepBook
+
+        self.push_screen(TimelineScreen(self._bridge.steps if self._bridge else StepBook()))
+
+    def action_workers(self) -> None:
+        from rlmagent.tui.inspect import WorkersScreen
+
+        self.push_screen(WorkersScreen())
 
     def action_escape(self) -> None:
         """Esc stops a running turn; when idle with an empty prompt it leaves the app."""

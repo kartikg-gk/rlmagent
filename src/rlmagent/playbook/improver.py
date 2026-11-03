@@ -45,6 +45,9 @@ class Improver:
         self._finished = 0
         self._last_check = float("-inf")
         self._compacted = False
+        # When set, proposals from automatic checks wait in held for /improve accept.
+        self.hold_auto = False
+        self.held: list[dict] = []
 
     def _store(self, scope: str) -> Playbook:
         if self.paths[scope] is not None:
@@ -149,6 +152,12 @@ class Improver:
             for edit in proposal["edits"]:
                 if isinstance(edit, dict) and edit.get("kind") == "memory":
                     edit.setdefault("expires_after_tasks", AUTO_MEMORY_TASKS)
+            if self.hold_auto and proposal["edits"]:
+                self.held.append({"edits": proposal["edits"], "trigger": trigger, "scope": scope,
+                                  "summary": str(proposal.get("summary", "")),
+                                  "rationale": str(proposal.get("rationale", ""))})
+                return (f"Held proposal {len(self.held)} for review: "
+                        f"{proposal.get('summary', '')} (/improve pending)")
         event = self.apply(proposal["edits"], trigger=trigger, scope=scope, baseline=baseline,
                            summary=str(proposal.get("summary", "")),
                            rationale=str(proposal.get("rationale", "")))
@@ -216,8 +225,34 @@ class Improver:
             f"[{getattr(m, 'role', '?')}] {getattr(m, 'text', '')}" for m in self.session.transcript
         )
 
+    def pending_text(self) -> str:
+        if not self.held:
+            return "No proposals are waiting."
+        rows = []
+        for n, held in enumerate(self.held, 1):
+            rows.append(f"{n}. [{held['trigger']}] {held['summary']}")
+            rows += [f"   {e.get('action')} {e.get('kind', '')} {e.get('id', '')}: "
+                     f"{str(e.get('content', e.get('title', '')))[:200]}" for e in held["edits"]]
+        return "\n".join(rows)
+
+    async def _decide(self, words: list[str]) -> str:
+        if len(words) != 2 or not words[1].isdigit() or not 1 <= int(words[1]) <= len(self.held):
+            return f"Use /improve {words[0]} N, with N from /improve pending."
+        held = self.held.pop(int(words[1]) - 1)
+        if words[0] == "reject":
+            return f"Dropped: {held['summary']}"
+        event = self.apply(held["edits"], trigger=held["trigger"], scope=held["scope"],
+                           summary=held["summary"], rationale=held["rationale"])
+        await self._record(event)
+        self.show_digest()
+        return _describe(event)
+
     async def command(self, arg: str) -> str:
         words = arg.split()
+        if words[:1] == ["pending"]:
+            return self.pending_text()
+        if words[:1] in (["accept"], ["reject"]):
+            return await self._decide(words)
         if words[:1] == ["list"]:
             return "\n".join(f"{e.id} [{e.kind}, {e.scope}] {e.title}" for e in self.entries()) \
                 or "The playbook is empty."

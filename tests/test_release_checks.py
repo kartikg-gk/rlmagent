@@ -114,6 +114,8 @@ async def test_default_backend_uses_integrated_manual_guidance(tmp_path, monkeyp
     try:
         await session.handle_command("/refine")
         await session.refinement.task
+        assert "+" + entry["content"] in await session.handle_command("/refine show")
+        await session.handle_command("/refine apply")
         assert session.refinement.phase == "completed", session.refinement.status()
         assert entry["content"] in session.backend.instructions
         async for _ in session.submit("Read the saved guidance through Python and FINAL it."):

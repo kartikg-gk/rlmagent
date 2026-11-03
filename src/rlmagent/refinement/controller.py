@@ -39,6 +39,8 @@ class Refinement:
         self.detail = "No manual review has been requested."
         self.job_id = None
         self.draft = None
+        # A proposal that changes guidance waits for /refine apply before it is saved.
+        self.review_first = True
         self._apply_active()
 
     def writable(self):
@@ -57,6 +59,17 @@ class Refinement:
         if argument.strip() == "cancel":
             self.cancel()
             return self.status()
+        if argument.strip() == "show":
+            if self.draft is None:
+                return "No proposal is waiting. " + self.status()
+            return proposal_diff(self.draft.baseline, self.draft.state)
+        if argument.strip() == "apply":
+            if self.phase != "awaiting review":
+                return "No proposal is waiting for review. " + self.status()
+            self.phase, self.detail = "ready", "Approved proposal awaits a turn boundary."
+            if not self.session.harness.active:
+                self.at_boundary()
+            return self.status()
         words = argument.split()
         evidence = getattr(self.session, "evidence", None)
         if words[:1] == ["evidence"]:
@@ -67,7 +80,7 @@ class Refinement:
             return evidence.rate(words[1], words[2])
         if not self.writable():
             return "Refinement is unavailable while guidance is read-only."
-        if self.phase in ("reviewing", "ready", "applying"):
+        if self.phase in ("reviewing", "awaiting review", "ready", "applying"):
             return self.status() + " Finish or cancel this review before starting another."
         baseline = self.store.read()
         evidence = evidence_text(list(self.session.transcript))
@@ -99,6 +112,11 @@ class Refinement:
                 )
                 if generation == self.generation and not self.signal.is_cancelled():
                     self.draft = candidate
+                    if self.review_first and candidate.changed:
+                        self.phase, self.detail = "awaiting review", (
+                            "/refine show lists the proposed changes; /refine apply saves "
+                            "them; /refine cancel drops them.")
+                        return
                     self.phase, self.detail = "ready", "Validated proposal awaits a turn boundary."
                     if not self.session.harness.active:
                         self.at_boundary()
@@ -121,7 +139,7 @@ class Refinement:
         self.draft = None
         if self.task is not None and not self.task.done():
             self.task.cancel()
-        if self.phase in ("reviewing", "ready", "applying"):
+        if self.phase in ("reviewing", "awaiting review", "ready", "applying"):
             self.phase, self.detail = "cancelled", "Discarded the pending review."
 
     async def close(self):
@@ -213,6 +231,25 @@ class Refinement:
         store = self.store if session.cwd == self.session.cwd else HarnessStore(None)
         session.refinement = Refinement(session, store)
         return session.refinement
+
+
+def proposal_diff(before, after) -> str:
+    """Each entry a proposal adds, changes or removes, with a unified diff of its text."""
+    import difflib
+
+    parts = []
+    for entry_id in sorted(set(before.entries) | set(after.entries)):
+        old, new = before.entries.get(entry_id), after.entries.get(entry_id)
+        if old == new:
+            continue
+        verb = "add" if old is None else "remove" if new is None else "change"
+        shown = new or old
+        parts.append(f"{verb} {shown.kind} {entry_id}: {shown.title}")
+        lines = difflib.unified_diff(
+            (old.content if old else "").splitlines(), (new.content if new else "").splitlines(),
+            fromfile=f"a/{entry_id}", tofile=f"b/{entry_id}", lineterm="")
+        parts.append("\n".join(lines))
+    return "\n".join(parts) or "The proposal changes nothing."
 
 
 def _digest(entry) -> str:
