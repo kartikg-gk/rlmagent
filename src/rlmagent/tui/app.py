@@ -18,6 +18,7 @@ from textual.widgets import Footer, Header
 from rlmagent.tui.adapter import (
     RetryNotice,
     SessionBridge,
+    StepChanged,
     TextDelta,
     ToolFinished,
     ToolStarted,
@@ -74,6 +75,8 @@ class RlmAgentApp(App[None]):
         super().__init__()
         self._bridge = bridge
         self._busy = False
+        #: Messages typed while the agent was working, sent in order afterwards.
+        self._queued: list[str] = []
         #: Set by Ctrl+C so updates still in flight are not rendered.
         self._cancelled = False
 
@@ -189,9 +192,14 @@ class RlmAgentApp(App[None]):
             self.on_prompt_input_complete(PromptInput.Complete())
             return
         bar.dismiss()
-        if self._busy:
-            return
         text = event.text
+        if self._busy:
+            if text.strip() and not _is_registered_command(text):
+                self.query_one(PromptInput).clear_prompt()
+                self._queued.append(text)
+                self.query_one(TranscriptView).add_notice(
+                    f"queued, sent when this run ends: {text}")
+            return
         self.query_one(PromptInput).clear_prompt()
 
         if self._bridge is None:
@@ -217,6 +225,7 @@ class RlmAgentApp(App[None]):
         if not self._busy or self._bridge is None:
             return False
         self._cancelled = True
+        self._queued.clear()
         self._bridge.cancel()
         transcript = self.query_one(TranscriptView)
         transcript.finish_assistant(transcript.live_text)
@@ -330,6 +339,7 @@ class RlmAgentApp(App[None]):
         """Consume the runtime's event stream and render it."""
         assert self._bridge is not None
         transcript = self.query_one(TranscriptView)
+        transcript.new_run()
         self._busy = True
         self._cancelled = False
         self._refresh_status()
@@ -350,6 +360,9 @@ class RlmAgentApp(App[None]):
                     transcript.finish_tool(
                         update.call_id, update.output, is_error=update.is_error,
                     )
+                elif isinstance(update, StepChanged):
+                    transcript.show_step(update.step)
+                    self._refresh_status()
                 elif isinstance(update, RetryNotice):
                     transcript.add_notice(update.message)
                 elif isinstance(update, TurnFinished):
@@ -366,6 +379,11 @@ class RlmAgentApp(App[None]):
             with suppress(NoMatches):
                 await self._refresh_sidebar()
                 self._refresh_status()
+            if self._queued and not self._cancelled:
+                following = self._queued.pop(0)
+                with suppress(NoMatches):
+                    transcript.add_user(following)
+                    self.run_worker(self._stream(following), exclusive=True)
 
     def _refresh_status(self) -> None:
         """Update the footer readout and the composer's model/effort badge."""

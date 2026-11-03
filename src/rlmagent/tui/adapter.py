@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from time import time
@@ -17,6 +19,7 @@ from rlmagent.harness.contracts.stream import (
     ToolRunStartEvent,
 )
 from rlmagent.harness.contracts.transcript import ModelEntry
+from rlmagent.tui.steps import StepBook
 
 # ---------------------------------------------------------------------------
 # View-model updates
@@ -59,13 +62,20 @@ class ToolFinished:
 
 
 @dataclass(frozen=True, slots=True)
+class StepChanged:
+    """An agent step started, produced code or output, or finished."""
+
+    step: object  # rlmagent.tui.steps.Step
+
+
+@dataclass(frozen=True, slots=True)
 class RetryNotice:
     """A failed attempt is being retried; shown as progress, not as an error."""
 
     message: str
 
 
-Update = TextDelta | TurnFinished | ToolStarted | ToolFinished | RetryNotice
+Update = TextDelta | TurnFinished | ToolStarted | ToolFinished | RetryNotice | StepChanged
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +112,7 @@ class StatusSnapshot:
     cached_tokens: int = 0
     output_tokens: int = 0
     cost: float = 0.0
+    budget: str = ""
 
     @property
     def context_percent(self) -> int:
@@ -142,11 +153,12 @@ def summarize_call(name: str, args: dict) -> str:
 class SessionBridge:
     """Translates a ``CodingSession`` event stream into view-model updates."""
 
-    __slots__ = ("_session", "_streamed")
+    __slots__ = ("_session", "_streamed", "steps")
 
     def __init__(self, session: CodingSession) -> None:
         self._session = session
         self._streamed = 0
+        self.steps = StepBook()
 
     # -- read-only views ----------------------------------------------------
 
@@ -176,7 +188,28 @@ class SessionBridge:
             cached_tokens=usage.cache_read_tokens,
             output_tokens=usage.total_output_tokens,
             cost=usage.total_cost_usd,
+            budget=self.budget_line(),
         )
+
+    def budget_line(self) -> str:
+        """Steps, agents, depth and spend of the current run against its limits."""
+        totals = self.steps.totals()
+        if not totals["steps"]:
+            return ""
+        backend = getattr(self._session, "backend", None)
+        limits = getattr(getattr(backend, "tree", None), "allowance", None)
+
+        def of(used, limit):
+            return f"{used}/{limit}" if limit is not None else f"{used}"
+
+        parts = [f"steps {of(totals['steps'], getattr(limits, 'max_calls', None))}"]
+        if totals["running"]:
+            parts.append(f"{totals['running']} running")
+        parts.append(f"depth {of(totals['depth'], getattr(limits, 'max_depth', None))}")
+        if totals["cost"] is not None:
+            cap = getattr(limits, "max_cost", None)
+            parts.append(f"${totals['cost']:.4f}" + (f"/{cap:.2f}" if cap is not None else ""))
+        return " ".join(parts)
 
     def sessions(self) -> list[SessionEntry]:
         """List every known session in a stable order, newest first."""
@@ -299,12 +332,60 @@ class SessionBridge:
             yield update
 
     async def _relay(self, events: AsyncIterator[AgentEvent]) -> AsyncIterator[Update]:
-        """Translate a runtime event stream into view-model updates."""
+        """Translate a runtime event stream into view-model updates.
+
+        Step events arrive on the engine's thread while the reply streams, so
+        both are put on one queue and handed on in the order they came.
+        """
         self._streamed = 0
-        async for event in events:
-            update = self._translate(event)
-            if update is not None:
-                yield update
+        self.steps = StepBook()
+        backend = getattr(self._session, "backend", None)
+        if backend is None or not hasattr(backend, "listeners"):
+            async for event in events:
+                update = self._translate(event)
+                if update is not None:
+                    yield update
+            return
+        loop = asyncio.get_running_loop()
+        merged: asyncio.Queue = asyncio.Queue()
+        finished = object()
+
+        def on_event(event: dict) -> None:
+            loop.call_soon_threadsafe(merged.put_nowait, ("step", event))
+
+        async def pump() -> None:
+            try:
+                async for event in events:
+                    await merged.put(("agent", event))
+            except BaseException as error:  # handed to the reader below
+                await merged.put(("error", error))
+            finally:
+                await merged.put(("done", finished))
+
+        backend.listeners.append(on_event)
+        backend.cards = True
+        task = asyncio.create_task(pump())
+        try:
+            while True:
+                kind, item = await merged.get()
+                if kind == "done":
+                    break
+                if kind == "error":
+                    raise item
+                update = (StepChanged(step) if (step := self.steps.feed(item)) else None)                     if kind == "step" else self._translate(item)
+                if update is not None:
+                    yield update
+            while not merged.empty():  # steps that landed after the reply ended
+                kind, item = merged.get_nowait()
+                if kind == "step" and (step := self.steps.feed(item)):
+                    yield StepChanged(step)
+        finally:
+            backend.listeners.remove(on_event)
+            backend.cards = False
+            if not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await task
 
     # -- translation --------------------------------------------------------
 
@@ -358,6 +439,7 @@ __all__ = [
     "SessionBridge",
     "SessionEntry",
     "StatusSnapshot",
+    "StepChanged",
     "TextDelta",
     "ToolFinished",
     "ToolStarted",

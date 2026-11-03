@@ -14,6 +14,7 @@ from rlmagent.tui.messages import (
     UserBlock,
     should_collapse,
 )
+from rlmagent.tui.steps import StepCard
 
 
 class TranscriptView(VerticalScroll):
@@ -23,6 +24,7 @@ class TranscriptView(VerticalScroll):
         super().__init__()
         self._live: AssistantBlock | None = None
         self._tools: dict[str, ToolLine] = {}
+        self._cards: dict[tuple[str, int], StepCard] = {}
 
     # -- appending ----------------------------------------------------------
 
@@ -54,6 +56,29 @@ class TranscriptView(VerticalScroll):
             self.mount(ToolOutput(output))
         self._scroll()
 
+    def show_step(self, step) -> StepCard:
+        """Add a card for a new step, or redraw the card it already has."""
+        card = self._cards.get(step.key)
+        if card is None:
+            card = StepCard(step)
+            self._cards[step.key] = card
+            if self._live is not None and not self._live.text.strip():
+                self.mount(card, before=self._live)
+            else:
+                self.mount(card)
+        else:
+            card.refresh_step(step)
+        self._scroll()
+        return card
+
+    def new_run(self) -> None:
+        """Later steps get new cards; the last run's cards stay as they are."""
+        self._cards.clear()
+
+    @property
+    def cards(self) -> list[StepCard]:
+        return list(self._cards.values())
+
     # -- streaming ----------------------------------------------------------
 
     def stream_delta(self, delta: str) -> None:
@@ -83,6 +108,7 @@ class TranscriptView(VerticalScroll):
         """Clear the transcript (used when switching sessions)."""
         self._live = None
         self._tools.clear()
+        self._cards.clear()
         self.remove_children()
 
     def replay(self, entries) -> None:

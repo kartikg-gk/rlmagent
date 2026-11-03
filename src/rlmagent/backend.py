@@ -169,11 +169,17 @@ class BackendProvider:
         self._serial = asyncio.Lock()
         self.event_path = None
         self._event_lock = threading.Lock()
+        # Called with each run event, from the engine's thread. A screen that
+        # draws steps itself sets cards, and the reply then carries only text.
+        self.listeners = []
+        self.cards = False
 
     def record_event(self, event):
         with self._event_lock:
             event = {"timestamp": time(), **event}
             self.events.append(event)
+            for listener in list(self.listeners):
+                listener(event)
             if self.event_path is not None:
                 path = Path(self.event_path)
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -486,7 +492,9 @@ class BackendProvider:
                         event = updates.get_nowait()
                         name = event["kind"]
                         text = ""
-                        if (
+                        if self.cards:
+                            pass
+                        elif (
                             name == "code_generated"
                             and event.get("step", 0) > 0
                             and event.get("code")

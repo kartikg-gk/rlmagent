@@ -29,6 +29,8 @@ class StatusBar(Static):
         if snapshot.input_tokens or snapshot.output_tokens or snapshot.cost:
             parts.append(f"{snapshot.input_tokens:,} in, {snapshot.cached_tokens:,} cached, "
                          f"{snapshot.output_tokens:,} out, ${snapshot.cost:.4f}")
+        if snapshot.budget:
+            parts.append(snapshot.budget)
         if snapshot.branch:
             parts.append(f"⎇ {snapshot.branch}")
         if snapshot.plan_mode:

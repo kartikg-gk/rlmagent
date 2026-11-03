@@ -258,3 +258,35 @@ ModelScreen {
     overflow-y: auto;
     margin: 1 0;
 }
+
+/* Step cards: one per agent step, indented by depth in code. */
+.step-card {
+    height: auto;
+    margin-bottom: 1;
+    padding: 0 1;
+    border-left: solid #2a2a2a;
+}
+
+.step-card.step-live {
+    border-left: solid #c9a4ff;
+}
+
+.step-card.step-failed {
+    border-left: solid #d36a6a;
+}
+
+.step-head {
+    color: #8a8a8a;
+}
+
+.step-card.step-live > .step-head {
+    color: #c9a4ff;
+}
+
+.step-output {
+    color: #9a9a9a;
+}
+
+.step-foot {
+    color: #5a5a5a;
+}
