@@ -390,6 +390,11 @@ def _cmd_mcp(ctx: CommandContext) -> CommandResult:
     return _ok()
 
 
+def _cmd_image(ctx: CommandContext) -> CommandResult:
+    """Handled by the session."""
+    return _ok()
+
+
 def _cmd_btw(ctx: CommandContext) -> CommandResult:
     """Handled by the session."""
     return _ok()
@@ -638,6 +643,13 @@ def build_default_registry() -> CommandRegistry:
             handler=_cmd_mcp,
             usage="/mcp [NAME]",
             search_terms=("servers", "connectors", "tools"),
+        ),
+        SlashCommand(
+            name="image",
+            description="Attach an image to your next message",
+            handler=_cmd_image,
+            usage="/image PATH | clear",
+            search_terms=("picture", "screenshot", "attach", "vision"),
         ),
         SlashCommand(
             name="btw",

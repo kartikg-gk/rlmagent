@@ -238,6 +238,10 @@ Other functions: `await web_search(query)` when `BRAVE_API_KEY`, `TAVILY_API_KEY
 conversation when the turn ends. `/btw QUESTION` answers a side question without
 adding it to the conversation.
 
+`/image PATH` attaches a PNG, JPEG, GIF or WebP file (up to 5 MB) to your next
+message, for models that accept images. It works with `--engine session`; agents in
+the default engine work from text.
+
 `rlm-agent status` shows configuration, sandbox, git, MCP, search, workers and open
 sessions; `rlm-agent doctor` reports problems and `doctor --fix` repairs the ones it
 can (stale workers and sessions, a missing Pyodide).

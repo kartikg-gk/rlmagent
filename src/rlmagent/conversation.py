@@ -98,7 +98,7 @@ COMMAND_REGISTRY = build_default_registry()
 #: callers but is never offered here.
 _RUNNABLE_COMMANDS: frozenset[str] = frozenset({
     "branch", "branches", "compact", "continue", "create-skill", "diag", "diff", "tasks", "mcp",
-    "goal", "autonomous", "btw",
+    "goal", "autonomous", "btw", "image",
     "export", "help", "model", "name", "plan", "provider", "quit", "reload",
     "refine", "rewind", "session", "shell", "skills", "stats", "system", "think", "tools", "undo",
     "version",
@@ -650,7 +650,14 @@ class CodingSession:
 
     async def _turn(self, text: str, prompt: str) -> AsyncIterator[AgentEvent]:
         prompt += await self._before_turn(text)
-        async for event in self._run_wrapped(self._harness.submit(prompt)):
+        images = getattr(self, "pending_images", None)
+        content = prompt
+        if images:
+            from rlmagent.harness.contracts.transcript import TextSegment
+
+            content = [TextSegment(text=prompt), *images]
+            self.pending_images = []
+        async for event in self._run_wrapped(self._harness.submit(content)):
             yield event
 
     async def _before_turn(self, text: str) -> str:
@@ -765,6 +772,36 @@ class CodingSession:
             except McpError as exc:
                 return str(exc)
         return hub.report()
+
+    def _cmd_image(self, arg: str) -> str:
+        """Attach an image file to the next message, for models that can see images."""
+        from rlmagent.tools.files import _MAX_IMAGE_BYTES, _read_image
+
+        raw = arg.strip().strip('"')
+        if not raw:
+            count = len(getattr(self, "pending_images", []) or [])
+            return f"{count} image(s) wait for your next message. Usage: /image PATH | clear"
+        if raw == "clear":
+            self.pending_images = []
+            return "Dropped the attached images."
+        if getattr(self, "backend", None) is not None:
+            return ("Images reach the model with --engine session; the default engine's "
+                    "agents work from text. Read the file from a cell instead.")
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            path = Path(self.cwd or ".") / path
+        if not path.is_file():
+            return f"No file at {path}."
+        if path.suffix.lower() not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+            return "Attach a PNG, JPEG, GIF or WebP image."
+        outcome = _read_image(path)
+        segment = outcome.content[0]
+        if getattr(segment, "type", "") != "image":
+            return segment.text
+        self.pending_images = [*(getattr(self, "pending_images", None) or []), segment]
+        size = path.stat().st_size / 1_000_000
+        return (f"Attached {path.name} ({size:.1f} MB, limit {_MAX_IMAGE_BYTES // 1_000_000} MB); "
+                "it goes with your next message.")
 
     async def _cmd_btw(self, arg: str) -> str:
         """Answer a side question from the conversation so far, without adding to it."""
@@ -1207,6 +1244,7 @@ class CodingSession:
             "mcp": self._cmd_mcp,
             "goal": self._cmd_goal,
             "btw": self._cmd_btw,
+            "image": self._cmd_image,
             "autonomous": self._cmd_autonomous,
             "stats": self._cmd_stats,
             "name": self._cmd_name,
