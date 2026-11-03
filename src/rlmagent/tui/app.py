@@ -16,6 +16,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Footer, Header
 
 from rlmagent.tui.adapter import (
+    AgentNote,
     RetryNotice,
     SessionBridge,
     StepChanged,
@@ -391,6 +392,8 @@ class RlmAgentApp(App[None]):
                     self._refresh_status()
                 elif isinstance(update, RetryNotice):
                     transcript.add_notice(update.message)
+                elif isinstance(update, AgentNote):
+                    transcript.add_notice(update.text)
                 elif isinstance(update, TurnFinished):
                     transcript.finish_assistant(update.text)
                     if update.error:

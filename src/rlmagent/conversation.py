@@ -856,6 +856,9 @@ class CodingSession:
         hub = getattr(self, "mcp", None)
         if hub is not None:
             await hub.close()
+        net = getattr(self, "agentnet", None)
+        if net is not None:
+            net.leave()
         self._unsubscribe()
         tree = getattr(self, "agent_tree", None)
         if tree is not None:

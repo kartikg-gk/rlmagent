@@ -69,13 +69,21 @@ class StepChanged:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentNote:
+    """Progress an agent reported, or messages other agents sent this session."""
+
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class RetryNotice:
     """A failed attempt is being retried; shown as progress, not as an error."""
 
     message: str
 
 
-Update = TextDelta | TurnFinished | ToolStarted | ToolFinished | RetryNotice | StepChanged
+Update = (TextDelta | TurnFinished | ToolStarted | ToolFinished | RetryNotice | StepChanged
+          | AgentNote)
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +331,15 @@ class SessionBridge:
 
     async def submit(self, text: str) -> AsyncIterator[Update]:
         """Send *text* and yield view-model updates as the runtime streams."""
+        net = getattr(self._session, "agentnet", None)
+        if net is not None:
+            from rlmagent.agentnet import inbox_note
+
+            net.beat()
+            if messages := net.take():
+                note = inbox_note(messages)
+                self._session.inject(note)
+                yield AgentNote(note)
         async for update in self._relay(self._session.submit(text)):
             yield update
 
@@ -372,7 +389,12 @@ class SessionBridge:
                     break
                 if kind == "error":
                     raise item
-                update = (StepChanged(step) if (step := self.steps.feed(item)) else None)                     if kind == "step" else self._translate(item)
+                if kind == "step" and item.get("kind") == "progress":
+                    update = AgentNote(f"progress: {item.get('text', '')}")
+                elif kind == "step":
+                    update = StepChanged(step) if (step := self.steps.feed(item)) else None
+                else:
+                    update = self._translate(item)
                 if update is not None:
                     yield update
             while not merged.empty():  # steps that landed after the reply ended
@@ -435,6 +457,7 @@ class SessionBridge:
 
 
 __all__ = [
+    "AgentNote",
     "RetryNotice",
     "SessionBridge",
     "SessionEntry",

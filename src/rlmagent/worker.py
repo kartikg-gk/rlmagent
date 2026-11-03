@@ -185,6 +185,10 @@ async def serve(name: str, ns: argparse.Namespace) -> int:
         log_line(name, "error", f"could not start: {message}")
         return 1
     meta.update(session=session.session_id, state="idle", model=session.model)
+    net = getattr(session, "agentnet", None)
+    if net is not None:
+        net.leave()  # a worker is reached through its worker folder, not as a session
+        net.worker = name
 
     async def beat():
         while True:

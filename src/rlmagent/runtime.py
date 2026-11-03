@@ -86,7 +86,11 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     configs, problems = load_configs(rlm_agent_home(),
                                      Path(here) if project_inputs_allowed(here) else None)
     hub = McpHub(configs, here, tree.approver, problems)
-    tree.host_functions = {"todo": tasks.todo, "mcp": hub.mcp, "mcp_tools": hub.mcp_tools}
+    from rlmagent.agentnet import AgentNet
+
+    net = AgentNet("", here)
+    tree.host_functions = {"todo": tasks.todo, "mcp": hub.mcp, "mcp_tools": hub.mcp_tools,
+                           **net.functions()}
     builtin_tools = [as_tool(name, fn) for name, fn in tree.host_functions.items()]
     extended: dict = {"tools": [], "functions": {}}
 
@@ -176,6 +180,16 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     session.load_undo()
     session.tasks = tasks
     session.mcp = hub
+    session.agentnet = net
+    net.me = f"s-{session.session_id[:8]}"
+    net.register()
+
+    def _progress(text: str) -> None:
+        backend = getattr(session, "backend", None)
+        if backend is not None and hasattr(backend, "record_event"):
+            backend.record_event({"kind": "progress", "text": text})
+
+    net.on_progress = _progress
     tasks.attach(sessions_dir / f"{session.session_id}.tasks.json" if sessions_dir else None)
     tree.attach(tree.root_id(), session)
     from rlmagent.playbook.improver import Improver
