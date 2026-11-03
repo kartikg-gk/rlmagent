@@ -78,6 +78,11 @@ class Shadow:
         self._git("commit", "-q", "--allow-empty", "--no-verify", "-m", label[:200])
         return self._git("rev-parse", "HEAD")
 
+    def diff(self, commit: str, stat: bool = False) -> str:
+        """What changed in the workspace since `commit`, as a unified diff or a summary."""
+        self.snapshot("before diff")
+        return self._git("diff", "--stat" if stat else "--no-color", commit, "HEAD")
+
     def label(self, commit: str) -> str:
         return self._git("log", "-1", "--format=%s", commit).removeprefix("before: ")
 

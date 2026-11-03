@@ -97,7 +97,7 @@ COMMAND_REGISTRY = build_default_registry()
 #: can actually type. Anything outside this set stays in the registry for other
 #: callers but is never offered here.
 _RUNNABLE_COMMANDS: frozenset[str] = frozenset({
-    "branch", "branches", "compact", "continue", "create-skill", "diag",
+    "branch", "branches", "compact", "continue", "create-skill", "diag", "diff", "tasks",
     "export", "help", "model", "name", "plan", "provider", "quit", "reload",
     "refine", "rewind", "session", "shell", "skills", "stats", "system", "think", "tools", "undo",
     "version",
@@ -728,6 +728,44 @@ class CodingSession:
                 return True
         return False
 
+    async def _cmd_diff(self, arg: str) -> str:
+        arg = arg.strip()
+        if arg not in ("", "last", "stat", "last stat"):
+            return "Usage: /diff [last | stat]"
+        if not self._undo_stack:
+            ready = self.shadow is not None and self.shadow.available
+            return "Nothing has changed yet." if ready else "Diff needs git on PATH."
+        commit = self._undo_stack[-1 if arg.startswith("last") else 0][0]
+        try:
+            text = await asyncio.to_thread(self.shadow.diff, commit, arg.endswith("stat"))
+        except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+            return f"Diff failed: {exc}"
+        if not text:
+            return "No changes in the project."
+        limit = 20_000
+        return text if len(text) <= limit else (
+            text[:limit] + f"\n... cut at {limit} characters; /diff stat lists every file")
+
+    def _cmd_tasks(self, arg: str) -> str:
+        tasks = getattr(self, "tasks", None)
+        if tasks is None:
+            return "No task list in this session."
+        action, _, value = arg.strip().partition(" ")
+        try:
+            if action in ("", "list"):
+                return tasks.render()
+            if action == "add":
+                tasks.add(value)
+            elif action in ("done", "undo", "remove"):
+                getattr(tasks, action)(value.strip() or 0)
+            elif action == "clear":
+                tasks.clear()
+            else:
+                return "Usage: /tasks [add TEXT | done N | undo N | remove N | clear]"
+        except ValueError as exc:
+            return str(exc)
+        return tasks.render()
+
     async def _cmd_undo(self, arg: str) -> str:
         if not self._undo_stack:
             ready = self.shadow is not None and self.shadow.available
@@ -1113,6 +1151,8 @@ class CodingSession:
             "refine": self._cmd_refine,
             "tools": self._cmd_tools,
             "undo": self._cmd_undo,
+            "diff": self._cmd_diff,
+            "tasks": self._cmd_tasks,
             "stats": self._cmd_stats,
             "name": self._cmd_name,
             "export": self._cmd_export,

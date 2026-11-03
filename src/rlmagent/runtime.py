@@ -71,7 +71,12 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
         provider = BackendProvider(with_external(raw_provider), provider, tree)
 
     from rlmagent.plugins import as_tool, contributions, load_extensions, reload_extensions
+    from rlmagent.tasks import TaskList
 
+    # Harness functions every agent gets: cells call them, the session engine sees tools.
+    tasks = TaskList()
+    tree.host_functions = {"todo": tasks.todo}
+    builtin_tools = [as_tool(name, fn) for name, fn in tree.host_functions.items()]
     extended: dict = {"tools": [], "functions": {}}
 
     def _take_extensions(result) -> None:
@@ -84,7 +89,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
 
     _load_extensions(verbose=verbose)
     _take_extensions(load_extensions())
-    tools = [*_load_tools(verbose=verbose, kernel=kernel), *extended["tools"]]
+    tools = [*_load_tools(verbose=verbose, kernel=kernel), *builtin_tools, *extended["tools"]]
     skills = _load_skills(os.getcwd(), verbose=verbose)
     system = root_system(
         _resolve_system(getattr(ns, "system_prompt", None), tools=tools, skills=skills),
@@ -96,7 +101,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
 
     def _tools_loader():
         _take_extensions(reload_extensions())
-        return [*_load_tools(kernel=kernel), *extended["tools"]]
+        return [*_load_tools(kernel=kernel), *builtin_tools, *extended["tools"]]
 
     def _skills_loader():
         return _load_skills(os.getcwd())
@@ -158,6 +163,8 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     session.agent_tree = tree
     session.shadow = Shadow(session.cwd, rlm_agent_home())
     session.load_undo()
+    session.tasks = tasks
+    tasks.attach(sessions_dir / f"{session.session_id}.tasks.json" if sessions_dir else None)
     tree.attach(tree.root_id(), session)
     from rlmagent.playbook.improver import Improver
     from rlmagent.plugins import rlm_agent_home

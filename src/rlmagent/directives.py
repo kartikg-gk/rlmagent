@@ -375,6 +375,16 @@ def _cmd_undo(ctx: CommandContext) -> CommandResult:
     return _ok()
 
 
+def _cmd_diff(ctx: CommandContext) -> CommandResult:
+    """Handled by the session."""
+    return _ok()
+
+
+def _cmd_tasks(ctx: CommandContext) -> CommandResult:
+    """Handled by the session."""
+    return _ok()
+
+
 def _cmd_compact(ctx: CommandContext) -> CommandResult:
     """Request context compaction."""
     return _ok(compact_requested=True)
@@ -587,6 +597,20 @@ def build_default_registry() -> CommandRegistry:
             handler=_cmd_plan,
             usage="/plan [on|off]",
             search_terms=("planning", "readonly", "research", "propose"),
+        ),
+        SlashCommand(
+            name="diff",
+            description="Show what this session changed in the project",
+            handler=_cmd_diff,
+            usage="/diff [last | stat]",
+            search_terms=("changes", "patch", "git"),
+        ),
+        SlashCommand(
+            name="tasks",
+            description="Show or edit the agent's task list",
+            handler=_cmd_tasks,
+            usage="/tasks [add TEXT | done N | undo N | remove N | clear]",
+            search_terms=("todo", "checklist", "plan"),
         ),
         SlashCommand(
             name="undo",

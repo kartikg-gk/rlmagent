@@ -205,7 +205,8 @@ class BackendProvider:
                  "rlm", "gather_rlm", "spawn", "children", "tell_parent"}
         workspace = Workspace(self.tree.cwd, self.tree.approver).functions()
         extended = getattr(self.tree, "extension_functions", {})
-        return sorted(fixed | set(workspace) | set(extended))
+        builtin = getattr(self.tree, "host_functions", {})
+        return sorted(fixed | set(workspace) | set(extended) | set(builtin))
 
     def checkpoint_state(self):
         """A copy of the saved variables for /undo, or None when they are too large to keep."""
@@ -332,6 +333,8 @@ class BackendProvider:
                        for name, fn in getattr(tree, "extension_functions", {}).items()},
                     **bridges,
                     **{name: wrap(fn) for name, fn in workspace.functions().items()},
+                    **{name: wrap(fn)
+                       for name, fn in getattr(tree, "host_functions", {}).items()},
                 }
 
                 async def playbook(id=None):

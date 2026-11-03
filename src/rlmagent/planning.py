@@ -16,7 +16,7 @@ from rlmagent.harness.contracts.values import JValue
 
 #: Tools removed entirely while plan mode is active.
 #: The python kernel can write anything, so it cannot be limited to reading.
-MUTATING_TOOLS = frozenset({"Write", "Edit", "python"})
+MUTATING_TOOLS = frozenset({"Write", "Edit", "ApplyPatch", "python"})
 
 #: Tool whose commands are filtered rather than removed.
 _SHELL_TOOL = "Bash"

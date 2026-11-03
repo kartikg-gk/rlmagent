@@ -406,6 +406,9 @@ class RlmAgentApp(App[None]):
 
         session = self._bridge.session
         self.query_one(StatusBar).show(self._bridge.status(), busy=self._busy)
+        tasks = getattr(session, "tasks", None)
+        if tasks is not None:
+            self.query_one(Sidebar).show_tasks(tasks.items)
         effort = session.thinking_level or DEFAULT_THINKING_LEVEL
         tree = getattr(session, "agent_tree", None)
         auto = tree is not None and tree.approver.policy == "auto"

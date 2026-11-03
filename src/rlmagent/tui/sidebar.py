@@ -5,7 +5,8 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.message import Message
-from textual.widgets import Label, ListItem, ListView
+from rich.markup import escape
+from textual.widgets import Label, ListItem, ListView, Static
 
 from rlmagent.tui.adapter import SessionEntry
 
@@ -55,6 +56,14 @@ class Sidebar(Vertical):
     def compose(self) -> ComposeResult:
         yield Label("Sessions", id="sidebar-title")
         yield SessionList()
+        yield Static("", id="task-panel")
+
+    def show_tasks(self, items: list[dict]) -> None:
+        """The agent's task list under the sessions; hidden while it is empty."""
+        panel = self.query_one("#task-panel", Static)
+        lines = [("✓ " if item["done"] else "· ") + escape(item["text"]) for item in items]
+        panel.update("Tasks\n" + "\n".join(lines) if lines else "")
+        panel.display = bool(lines)
 
     async def show(self, entries: list[SessionEntry]) -> None:
         """Repaint the list, highlighting the active session."""
