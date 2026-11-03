@@ -114,3 +114,13 @@ async def test_bridge_merges_step_events_with_the_reply():
     assert not any(isinstance(u, TextDelta) for u in updates)
     assert backend.listeners == [] and backend.cards is False
     assert bridge.budget_line() == "steps 1 1 running depth 0"
+
+
+def test_engine_timestamps_in_iso_text_are_read_as_times():
+    book = StepBook()
+    _run(book)
+    book.feed({"kind": "step_started", "run_id": "root", "step": 1,
+               "started": "2026-11-03T14:33:41.500000+00:00"})
+    step = book.feed({"kind": "step_completed", "run_id": "root", "step": 1,
+                      "usage": {"total_tokens": 5}, "ended": "2026-11-03T14:33:44.000000+00:00"})
+    assert step.seconds == 2.5

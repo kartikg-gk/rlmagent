@@ -710,6 +710,8 @@ class CodingSession:
         data = json.dumps({"cwd": self.cwd, "entries": entries}, default=str)
         staged = path.with_name(path.name + ".tmp")
         try:
+            # The first turn of a new session can come before its folder exists.
+            staged.parent.mkdir(parents=True, exist_ok=True)
             staged.write_text(data, encoding="utf-8")
             staged.replace(path)
         except OSError as exc:

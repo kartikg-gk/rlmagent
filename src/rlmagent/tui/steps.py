@@ -66,6 +66,18 @@ class Agent:
     steps: list[int] = field(default_factory=list)
 
 
+def _moment(value) -> float | None:
+    """Seconds since the epoch, from a number or the ISO text the engine records."""
+    if value is None or isinstance(value, (int, float)):
+        return value
+    from datetime import datetime
+
+    try:
+        return datetime.fromisoformat(str(value)).timestamp()
+    except ValueError:
+        return None
+
+
 def _usage(value) -> tuple[int, float | None]:
     if value is None:
         return 0, None
@@ -106,7 +118,7 @@ class StepBook:
         step = self._step(run_id, number)
         if kind == "step_started":
             step.state = GENERATING
-            step.started = event.get("started") or event.get("timestamp")
+            step.started = _moment(event.get("started") or event.get("timestamp"))
         elif kind == "code_generated":
             step.code = str(event.get("code") or "")
             step.state = RUNNING if step.code else FAILED
@@ -117,7 +129,7 @@ class StepBook:
         elif kind == "step_completed":
             step.tokens, step.cost = _usage(event.get("usage"))
             step.state = FAILED if event.get("error") else DONE
-            step.ended = event.get("ended") or event.get("timestamp")
+            step.ended = _moment(event.get("ended") or event.get("timestamp"))
         else:
             return None
         return step
