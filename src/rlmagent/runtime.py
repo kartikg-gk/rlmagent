@@ -109,6 +109,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
         return "older conversation will be summarized when this turn ends"
 
     from rlmagent.agents.approval import Request, check
+    from rlmagent.history import make_history
     from rlmagent.jobs import Jobs
     from rlmagent.policy import DEFAULT_OUTPUT_BYTES, Policy, git_refusal
 
@@ -130,7 +131,12 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
                            **net.functions(), **pilot.functions(),
                            **jobs.functions(inbox=lambda: net.take()),
                            "context_usage": context_usage, "compact": compact,
-                           "web_search": make_web_search(lambda: tree.network, policy)}
+                           "web_search": make_web_search(lambda: tree.network, policy),
+                           "history": make_history(
+                               lambda: getattr(getattr(built.get("session"), "_vault", None),
+                                               "path", None),
+                               lambda: getattr(getattr(built.get("session"), "backend", None),
+                                               "event_path", None))}
     builtin_tools = [as_tool(name, fn) for name, fn in tree.host_functions.items()]
     extended: dict = {"tools": [], "functions": {}}
 

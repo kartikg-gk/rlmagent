@@ -69,16 +69,52 @@ def shown_output(output: str) -> str:
     return "\n".join(lines[:SHOWN_OUTPUT_LINES]) + f"\n... ({len(lines) - SHOWN_OUTPUT_LINES} more lines)"
 
 
-def shape_cells(runtime, policy) -> None:
-    """Cap what a cell shows the model, and add a hint when it failed in a familiar way."""
+#: The engine's own first cells (its helpers, then the context): replayed after a restart.
+SETUP_CELLS = 2
+MAX_RESTARTS = 3
+
+RESTARTED = ("The kernel stopped (it crashed or was killed) and has been started again. "
+             "Variables, imports and functions from this run are gone; set up again what "
+             "you need. Files on disk and background jobs are unaffected.")
+
+
+def shape_cells(runtime, policy, rebuild=None) -> None:
+    """Cap what a cell shows the model, add a hint when it failed in a familiar way, and
+    start a fresh kernel when this one dies, rather than ending the run."""
+    from rlmness.runtime import RuntimeGone
+
     from rlmagent.hints import hint_for
     from rlmagent.policy import DEFAULT_OUTPUT_BYTES, cap_output
 
     limit = getattr(policy, "max_tool_output_bytes", DEFAULT_OUTPUT_BYTES)
-    run = runtime.execute
+    setup: list[str] = []
+
+    def run(code):
+        return type(runtime).execute(runtime, code)
+
+    def restart():
+        fresh = rebuild()
+        # The engine holds this object, so the new kernel moves into it.
+        runtime.__dict__.clear()
+        runtime.__dict__.update(fresh.__dict__)
+        runtime.execute = execute
+        for cell in setup:
+            run(cell)
 
     def execute(code):
-        outcome = run(code)
+        if len(setup) < SETUP_CELLS:
+            setup.append(code)
+        try:
+            outcome = run(code)
+        except RuntimeGone:
+            restarts = getattr(runtime, "restarts", 0)
+            if rebuild is None or restarts >= MAX_RESTARTS:
+                raise
+            restart()
+            runtime.restarts = restarts + 1
+            from rlmness.runtime import CellOutcome
+
+            return CellOutcome(error=RESTARTED)
         outcome.stdout = cap_output(outcome.stdout or "", limit)
         hint = hint_for(code, (outcome.stdout or "") + "\n" + (outcome.error or ""))
         if hint and outcome.error:
@@ -422,24 +458,28 @@ class BackendProvider:
                 )
                 # Host startup and helper installation have their own bounded window.
                 # The requested cell deadline still applies to every model-written cell.
-                runtime = runtime_type(prompt, joined, max(30.0, timeout), tools, **kwargs)
-                runtimes.append(runtime)
-                runtime.execute(
-                    "async def skill(id):\n"
-                    "    entry = await playbook(id)\n"
-                    "    namespace = {}\n"
-                    "    exec(entry['content'], namespace)\n"
-                    "    return namespace[entry['callable']]"
-                )
-                if tree.network and isinstance(runtime, WasmRuntime):
-                    from rlmagent.agents.wasm_api import NETWORK
+                def build():
+                    built = runtime_type(prompt, joined, max(30.0, timeout), tools, **kwargs)
+                    built.execute(
+                        "async def skill(id):\n"
+                        "    entry = await playbook(id)\n"
+                        "    namespace = {}\n"
+                        "    exec(entry['content'], namespace)\n"
+                        "    return namespace[entry['callable']]"
+                    )
+                    if tree.network and isinstance(built, WasmRuntime):
+                        from rlmagent.agents.wasm_api import NETWORK
 
-                    outcome = runtime.execute(NETWORK)
-                    if outcome.error:
-                        runtime.close()
-                        raise RuntimeError(outcome.error)
-                runtime.timeout = timeout
-                shape_cells(runtime, getattr(tree, "policy", None))
+                        outcome = built.execute(NETWORK)
+                        if outcome.error:
+                            built.close()
+                            raise RuntimeError(outcome.error)
+                    built.timeout = timeout
+                    return built
+
+                runtime = build()
+                runtimes.append(runtime)
+                shape_cells(runtime, getattr(tree, "policy", None), rebuild=build)
                 return runtime
 
             factory.SEALED = True
@@ -499,6 +539,11 @@ class BackendProvider:
                     "await read_messages(); await schedule(task, in_seconds=..., "
                     "every=None, worker=None) queues work on a background worker; "
                     "await heartbeat(text) reports progress on long work. "
+                    "Long commands: await job_start(cmd) then job_read(id, cursor), "
+                    "job_wait(id), job_stop(id); await service_start(name, cmd, ready=regex) "
+                    "for servers; await watch(job=id | path=p | messages=True) waits for a "
+                    "change. await history(start, end, agent=None) reads the full record "
+                    "after compaction. "
                     "When the user set a goal, await goal() shows it and "
                     "await goal_done(summary) marks it achieved. "
                     "Return the answer with FINAL. The conversation is in PROMPT."
