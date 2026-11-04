@@ -133,6 +133,17 @@ Run tests one file at a time with `bash scripts/test_each.sh`. Failing files pri
 their complete diagnostics. The backend integration tests use actual sandbox
 interpreters with scripted model replies and require the sandbox setup.
 
+End-to-end tasks give a real model real work and check the workspace it leaves, in
+place, through a tool host over stdio, and over TCP. They cost money, so they run only
+when asked:
+
+```sh
+RLM_AGENT_E2E=1 pytest tests/e2e -m e2e
+```
+
+`RLM_AGENT_E2E_PROVIDER` and `RLM_AGENT_E2E_MODEL` pick the model (default: the Claude
+Code CLI with haiku).
+
 
 ### Project tools and execution records
 
@@ -245,6 +256,56 @@ the default engine work from text.
 `rlm-agent status` shows configuration, sandbox, git, MCP, search, workers and open
 sessions; `rlm-agent doctor` reports problems and `doctor --fix` repairs the ones it
 can (stale workers and sessions, a missing Pyodide).
+
+## Background jobs and watches
+
+`await job_start(cmd)` runs a command in the background; `job_read(id, cursor)` returns
+what it wrote since `cursor`, `job_wait(id)` waits for it and `job_stop(id)` ends it and
+everything it started. `await service_start(name, cmd, ready=regex)` keeps a dev server
+or similar running and can wait for its ready line. `await watch(job=id)`,
+`watch(path=p)` or `watch(messages=True)` waits until a job writes or ends, a path
+changes, or another agent writes. Jobs belong to the session, so a sandbox restart
+does not lose them, and they need the same approval as `run()`.
+
+`await history(start, end)` reads every saved message of the session, including what
+compaction summarized away; `history(agent=RUN_ID)` reads one agent's steps. When a
+kernel process dies mid-run, a new one is started and the model is told which state
+was lost, up to three times per kernel.
+
+## Run policy
+
+| Flag | Effect |
+| --- | --- |
+| `--deny-git` | Refuse git commands that reach beyond the current branch (push, fetch, checkout, branch, tag, reset, ...) |
+| `--max-tool-output BYTES` | Most output one cell shows the model (default 20000; the start and end are kept) |
+| `--max-compactions N` | Most compactions in the session |
+| `--agent-max-tokens N` | Most completion tokens any one agent may spend |
+| `--search-block DOMAIN` | Drop web search results from a domain, `*.domain` or origin (repeatable) |
+
+A contract can set the same through an optional `policy` object with `allow_git`,
+`max_tool_output_bytes`, `max_compactions`, `agent_max_tokens` and `search_block`
+(every field given, `null` for the default). The summary a contract run prints ends
+with `stop_reason`: `done`, `max_calls`, `max_cost`, `max_tokens`, `max_seconds`,
+`agent_tokens`, `compaction_failed`, `no_answer`, `cancelled` or `error`.
+
+Cells that fail in a familiar way (a missing `await`, quotes nested in an f-string, a
+missing module, a timeout, an empty reply) get a one-line hint with the error.
+
+## Split execution
+
+The agent loop and its keys can stay on one machine while the tools work somewhere
+else. Start a tool host beside the files:
+
+```sh
+python -m rlmagent.toolhost --root /work                       # over stdio
+RLM_AGENT_TOOLS_TOKEN=... python -m rlmagent.toolhost --root /work --tcp 0.0.0.0:7700
+```
+
+Then point a session at it with `--tools-at "python -m rlmagent.toolhost --root /work"`
+or `--tools-at tcp://host:7700` (with the same `RLM_AGENT_TOOLS_TOKEN`). File reads,
+search, edits, patches, commands and jobs then run in the tool host. Approvals and the
+git guard are decided in the harness before anything is sent; the host only runs what
+it is asked, confined to its root.
 
 ## MCP servers
 
