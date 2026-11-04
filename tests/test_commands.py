@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from rlmagent_app.directives import (
+from rlmagent.directives import (
     CommandContext,
     CommandRegistry,
     CommandResult,

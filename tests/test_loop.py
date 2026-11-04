@@ -1,4 +1,4 @@
-"""Comprehensive tests for rlmagent_harness.engine.
+"""Comprehensive tests for rlmagent.harness.engine.
 
 Verifies all code paths: event sequences, transcript mutations, tool execution,
 provider streaming, parallel/sequential execution, cancellation, tool failures,
@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from rlmagent_harness.contracts.stream import (
+from rlmagent.harness.contracts.stream import (
     AgentEvent,
     MessageEndEvent,
     MessageStartEvent,
@@ -26,8 +26,8 @@ from rlmagent_harness.contracts.stream import (
     TurnEndEvent,
     TurnStartEvent,
 )
-from rlmagent_harness.contracts.tooling import CancelToken, ToolOutcome, ToolSpec
-from rlmagent_harness.contracts.transcript import (
+from rlmagent.harness.contracts.tooling import CancelToken, ToolOutcome, ToolSpec
+from rlmagent.harness.contracts.transcript import (
     CallBlock,
     HumanEntry,
     ModelEntry,
@@ -35,11 +35,11 @@ from rlmagent_harness.contracts.transcript import (
     ToolOutcomeEntry,
     TranscriptEntry,
 )
-from rlmagent_harness.contracts.values import JValue
-from rlmagent_harness.engine import (
+from rlmagent.harness.contracts.values import JValue
+from rlmagent.harness.engine import (
     run_agent_loop,
 )
-from rlmagent_harness.provider.wire import (
+from rlmagent.harness.provider.wire import (
     ContentChunkEvent,
     ContentCloseEvent,
     ContentOpenEvent,

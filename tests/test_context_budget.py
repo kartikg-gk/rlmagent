@@ -6,7 +6,7 @@ from collections.abc import Mapping
 
 import pytest
 
-from rlmagent_app.context.budget import (
+from rlmagent.context.budget import (
     CHARS_PER_TOKEN,
     DEFAULT_SUMMARY_SYSTEM,
     DEFAULT_WINDOW,
@@ -26,7 +26,7 @@ from rlmagent_app.context.budget import (
     resolve_window,
     serialize_for_summary,
 )
-from rlmagent_harness.contracts.transcript import (
+from rlmagent.harness.contracts.transcript import (
     CallBlock,
     CostBreakdown,
     HumanEntry,
@@ -37,7 +37,7 @@ from rlmagent_harness.contracts.transcript import (
     ToolOutcomeEntry,
     UsageStats,
 )
-from rlmagent_harness.contracts.values import JValue
+from rlmagent.harness.contracts.values import JValue
 
 # ── fixtures ────────────────────────────────────────────────────────────
 

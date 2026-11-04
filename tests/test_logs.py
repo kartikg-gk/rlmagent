@@ -11,7 +11,7 @@ sys.path.insert(0, str(__file__.rsplit("test_logs.py", 1)[0]))
 
 from _session_helpers import _make_session, _text_turn, _tool_turn  # noqa: E402
 
-from rlmagent_app.logs import RunLogger, log_root, logs_enabled  # noqa: E402
+from rlmagent.logs import RunLogger, log_root, logs_enabled  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

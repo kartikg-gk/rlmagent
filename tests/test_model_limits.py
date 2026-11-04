@@ -1,10 +1,10 @@
-"""Tests for rlmagent_model.limits."""
+"""Tests for rlmagent.model.limits."""
 
 from __future__ import annotations
 
 import pytest
 
-from rlmagent_model.limits import LimitsError, LimitsProbe, ModelLimits
+from rlmagent.model.limits import LimitsError, LimitsProbe, ModelLimits
 
 
 class TestModelLimits:

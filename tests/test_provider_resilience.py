@@ -7,19 +7,19 @@ import re
 
 import httpx
 
-from rlmagent_harness.contracts.transcript import (
+from rlmagent.harness.contracts.transcript import (
     CallBlock,
     HumanEntry,
     ModelEntry,
     ThoughtSegment,
     ToolOutcomeEntry,
 )
-from rlmagent_harness.provider.wire import StreamCloseEvent, StreamFaultEvent, StreamOpenEvent
-from rlmagent_model._oai.payloads import build_chat_payload, build_responses_payload
-from rlmagent_model.claude import AnthropicProvider, _compile_messages
-from rlmagent_model.correlation import wire_call_id
-from rlmagent_model.oai_compatible import OpenAIProvider
-from rlmagent_model.settings import AnthropicProfile, Credential, OpenAIProfile, RetryPolicy
+from rlmagent.harness.provider.wire import StreamCloseEvent, StreamFaultEvent, StreamOpenEvent
+from rlmagent.model._oai.payloads import build_chat_payload, build_responses_payload
+from rlmagent.model.claude import AnthropicProvider, _compile_messages
+from rlmagent.model.correlation import wire_call_id
+from rlmagent.model.oai_compatible import OpenAIProvider
+from rlmagent.model.settings import AnthropicProfile, Credential, OpenAIProfile, RetryPolicy
 
 _ANTHROPIC_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 

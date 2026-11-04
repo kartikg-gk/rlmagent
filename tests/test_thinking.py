@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from rlmagent_app.reasoning import (
+from rlmagent.reasoning import (
     DEFAULT_THINKING_LEVEL,
     THINKING_DESCRIPTIONS,
     THINKING_LEVELS,

@@ -19,7 +19,7 @@ from test_provider_resilience import (
     _chat_sse,
     _openai,
 )
-from rlmagent_harness.contracts.transcript import HumanEntry
+from rlmagent.harness.contracts.transcript import HumanEntry
 
 
 def _recording(bodies: list[str]) -> tuple[httpx.AsyncClient, list[str | None]]:

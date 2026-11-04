@@ -10,8 +10,8 @@ sys.path.insert(0, str(__file__.rsplit("test_session_naming.py", 1)[0]))
 
 from _session_helpers import _make_session, _text_turn  # noqa: E402
 
-from rlmagent_app.conversation import summarize_prompt  # noqa: E402
-from rlmagent_app.tui.adapter import SessionBridge, SessionEntry  # noqa: E402
+from rlmagent.conversation import summarize_prompt  # noqa: E402
+from rlmagent.tui.adapter import SessionBridge, SessionEntry  # noqa: E402
 
 
 class TestSummarizePrompt:

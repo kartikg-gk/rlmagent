@@ -1,11 +1,11 @@
 import pytest
 from rlmness import Allowance
 
-from rlmagent_app.agents.prompts import child_first_message, child_system, root_system
-from rlmagent_app.agents.tree import AgentTree
-from rlmagent_app.conversation import CodingSession
-from rlmagent_app.tools import build_tool_registry
-from rlmagent_model.scripted import ReplayProvider
+from rlmagent.agents.prompts import child_first_message, child_system, root_system
+from rlmagent.agents.tree import AgentTree
+from rlmagent.conversation import CodingSession
+from rlmagent.tools import build_tool_registry
+from rlmagent.model.scripted import ReplayProvider
 from _scripted import code_turn, text_turn
 
 

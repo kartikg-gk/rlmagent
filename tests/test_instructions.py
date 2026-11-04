@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rlmagent_app.instructions import system_prompt
-from rlmagent_app.skillset import Skill
-from rlmagent_harness.contracts.tooling import ToolOutcome, ToolSpec
+from rlmagent.instructions import system_prompt
+from rlmagent.skillset import Skill
+from rlmagent.harness.contracts.tooling import ToolOutcome, ToolSpec
 
 
 async def _noop_run(tool_call_id, arguments, signal=None, on_update=None) -> ToolOutcome:

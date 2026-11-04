@@ -1,0 +1,1 @@
+last_n in window.py returns one item too many. Fix it so last_n([1, 2, 3, 4], 2) == [3, 4].

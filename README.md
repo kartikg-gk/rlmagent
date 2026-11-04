@@ -1,0 +1,497 @@
+# rlmagent
+
+A terminal coding agent with a persistent Python workspace and recursive agents.
+The application supplies the terminal interface, editor protocol, workspace tools,
+and approvals. The `rlmness` backend runs the model loop, Python cells, recursive
+delegation, and shared budget.
+
+## Install
+
+Python 3.12 or newer is required. The default sandbox also requires Node.js.
+
+```sh
+pip install rlmagent
+rlmness --setup
+```
+
+Or install it as a tool with one line, which also sets up the sandbox when Node is
+present (`RLMAGENT_VERSION` pins a version):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kartikg-gk/rlmagent/main/scripts/install.sh | sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/kartikg-gk/rlmagent/main/scripts/install.ps1 | iex
+```
+
+`rlm-agent config show` prints the saved provider and model, and any
+`RLM_AGENT_PROVIDER`, `RLM_AGENT_MODEL`, `RLM_AGENT_API_KEY` or `RLM_AGENT_HOME`
+set in the environment, which take precedence for a run. `rlm-agent config path`
+prints where the file is. Providers include OpenAI, Anthropic, OpenRouter, Ollama,
+Hugging Face and Vertex.
+
+This revision requires `rlmness>=0.2.2`. When installing unreleased local builds,
+install the matching backend wheel before the application wheel.
+
+## Run
+
+Configure an API provider, or use an installed and authenticated external CLI:
+
+```sh
+rlm-agent --provider cli --model 'cli:claude-code?model=haiku' "Inspect this project"
+rlm-agent --provider cli --model 'cli:codex' "Fix the failing check"
+rlm-agent --provider cli --model 'cli:claude-code?model=haiku' -p "Summarize the project"
+```
+
+Run `rlm-agent --help` for provider, model, session, and budget settings. Keys are
+read from provider configuration or environment variables. Keep keys out of prompts.
+
+## Execution
+
+`--engine rlmness` is the default. Recursive agents execute through the backend;
+the frontend does not run another recursive model loop around each backend step.
+`--engine session` selects the previous engine for compatibility.
+
+`--kernel wasm` uses separate Pyodide interpreters in a shared Node host.
+`--kernel local` uses host Python with the backend engine; it has machine access.
+The compatibility engine uses its previous IPython kernel for local execution.
+`fetch_url` refuses local and private addresses, including through redirects, unless
+`--allow-private-fetch` is passed. Sandbox code using httpx directly and approved
+shell commands are not covered by this check.
+`--no-network` disables the sandbox network setup. With networking enabled, use
+async httpx; blocking requests-based libraries are not supported by this host.
+
+The backend exposes `rlm(piece, instruction=question)` and `gather_rlm(pieces, ...)`.
+Background work uses `await spawn(task, data, keep=False, role=None, model=None)`.
+Handles provide `result`, `status`, `send`, `messages`, `cancel`, and `id`.
+Persistent agents use `keep=True`; they retain saved variables between questions.
+`await children()` lists handles and `await tell_parent(text)` sends a child update.
+Depth, call, cost, live-agent, and time limits apply across recursive execution.
+
+## Workspace approvals
+
+Sandbox code reaches the project through `read_file` (whole files or a line range),
+`list_files`, `search_files` (regex search of file contents), `write_file`,
+`edit_file`, `apply_patch`, `ask_user`, and `run`. File paths are confined to the configured workspace.
+Writes, edits, and commands use the application's approval policy. Shell commands
+run with the user's permissions; the workspace path restriction is not an OS shell
+sandbox. Command cancellation and timeout handling terminate the process tree.
+
+Use `/auto` in line mode or Shift+Tab in the terminal UI to toggle automatic
+approval for the session. `--auto-approve` enables it at launch. Headless runs deny
+mutations by default. Approval checks bind commands and edit payloads to their content.
+
+## State and playbooks
+
+Saved frontend sessions have a matching `.backend.json` state file. Resume loads
+the backend's saved values and supported definitions; unsupported objects are
+reported as dropped. Ephemeral sessions retain state only while the app is open.
+Live background jobs end with the application session; they are not restarted
+automatically after process exit. `/undo` restores its filesystem/transcript
+checkpoint and rolls back saved backend variables, unless they are too large
+to copy; effects outside the workspace are not undone. `rlm-agent session prune
+--older-than DAYS` lists old sessions and snapshots; add `--yes` to remove them.
+
+Use `await playbook(id)` to inspect a saved entry, `await skill(id)` to load a skill,
+and `await improve(instructions, shared=False)` to queue a playbook update at the
+turn boundary. Compaction also schedules the existing automatic improvement check,
+as do every 5 finished tasks (`--improve-every`) and any task with 3 or more failed
+tool calls. A memory saved automatically is dropped 3 finished tasks later unless a
+later edit keeps it, since it describes one moment of the work.
+Contracts select their execution engine explicitly with `"engine": "rlmness"`.
+Existing contracts without this field retain the previous session engine. Contract
+settings take precedence over the normal CLI engine default.
+
+Contracts can select a playbook explicitly:
+
+```json
+"playbook": {"file": "./playbook.json", "update": false}
+```
+
+The file is relative to the contract workspace. `update: false` allows reading
+entries while rejecting changes; `true` enables updates and automatic checks.
+Contracts that omit this section have no playbook.
+
+The shared Node host can stall on a runaway cell. Recovery may reset every sandbox
+in that host. The backend state is a saved namespace, not a complete process clone;
+external effects are not rolled back or replayed by variable restoration.
+
+## Editor and external agents
+
+`rlm-agent --acp` serves the Agent Client Protocol over stdio. Configure the editor
+to launch this command with the desired provider and model arguments. Approvals
+and project trust are requested through the editor.
+
+`cli:` and `acp:` models use external agents as model providers. For supported ACP
+bridges, run `rlm-agent acp install` and inspect `rlm-agent acp status`.
+ACP model usage may be unreported; use call and time caps as well as a cost cap.
+
+## Development
+
+Run tests one file at a time with `bash scripts/test_each.sh`. Failing files print
+their complete diagnostics. The backend integration tests use actual sandbox
+interpreters with scripted model replies and require the sandbox setup.
+
+End-to-end tasks give a real model real work and check the workspace it leaves, in
+place, through a tool host over stdio, and over TCP. They cost money, so they run only
+when asked:
+
+```sh
+RLM_AGENT_E2E=1 pytest tests/e2e -m e2e
+```
+
+`RLM_AGENT_E2E_PROVIDER` and `RLM_AGENT_E2E_MODEL` pick the model (default: the Claude
+Code CLI with haiku).
+
+
+### Project tools and execution records
+
+The default backend provides `await instruction_docs()` to discover project
+instructions and skills, and `await instruction_docs(path)` to read a selected
+file. Discovery excludes build, environment and version-control folders.
+`await fetch_url(url, max_chars=50000)` returns bounded HTTP(S) text, the final
+URL and a truncation flag. It is unavailable with `--no-network`.
+
+Ordinary workspace errors return text beginning with `Error:` so a cell can
+inspect and correct a failed operation. Approval refusals still stop the operation.
+Write and edit approvals show a unified diff. A file changed while approval is
+pending must be read again before a new change can be approved.
+
+Saved sessions write `<session-id>.backend.events.jsonl` alongside their state.
+These records include generated code, outputs, host-tool results, child lifecycle
+and per-call usage. Contract runs write `<trace-file>.backend.events.jsonl`.
+Usage totals preserve input, output, cache reads/writes and reasoning counts from
+all recursive model calls. Providers that omit counts cannot supply those totals.
+
+`rlm-agent session view [id]` replays those steps as cards, and
+`rlm-agent session steps [id] [--json]` prints steps, tokens, cost and time per agent.
+
+### Terminal UI
+
+With the default engine each agent step is a card: depth, a short agent id, the step
+number and its state, then the code, the first lines of output and, once it ends,
+tokens, cost and time. Sub-agent cards are indented under their parent. Enter or a
+click opens a card in full; F2 shows the agent tree, F3 a timeline of steps and F4
+the background workers with their heartbeats and scheduled jobs. The status bar shows steps,
+running agents, depth and spend against the run's limits. Messages typed while a
+run is going are queued and sent when it ends.
+
+`/diff` shows what the session changed in the project (`/diff last` for the last
+turn, `/diff stat` for a file summary). Agents keep a task list with
+`await todo("add", text)` and `await todo("done", n)` (a `todo` tool in the session
+engine); it is saved with the session, shown in the sidebar and by `/tasks`. The
+session engine also has `ApplyPatch` for multi-file unified diffs, plus `Grep` and `Glob`.
+
+### Remote models and cloud credentials
+
+In the model picker, Ctrl+F fetches remote models, Ctrl+T checks credentials, and
+Ctrl+E sets a compatible API base URL. The model list also accepts a custom model
+identifier. The CLI offers `rlm-agent provider models openrouter` and
+`rlm-agent provider test openrouter`. A successful model-list check establishes
+access to that endpoint; it does not prove permission to generate with every model.
+
+For Google Vertex, install `rlmagent[vertex]`. Vertex support is experimental: mocked authentication checks pass,
+but a live completion with a configured cloud account has not been verified.
+Configure Application Default Credentials, and set `GOOGLE_CLOUD_PROJECT` and optionally `GOOGLE_CLOUD_LOCATION`
+(default `us-central1`). Select `--provider vertex --model google/MODEL_ID`.
+Credentials refresh when needed and remain in memory. Vertex credential checks
+verify ADC refresh; remote model discovery is unavailable for this endpoint, so
+enter a compatible model identifier. Model access still requires a live completion.
+
+Workspace commands execute through non-login Bash, with a default 120-second timeout and a maximum of 1,800 seconds.
+
+## Workers
+
+A worker is a named agent that keeps running after the terminal closes. It is an
+ordinary saved session, so `--resume` works on it once it has stopped.
+
+```text
+rlm-agent worker start nightly --auto-approve
+rlm-agent worker send nightly "check the build"
+rlm-agent worker schedule nightly "review open issues" --in 3600
+rlm-agent worker schedule nightly "run the tests" --at 2027-01-02T09:00 --every 86400
+rlm-agent worker list
+rlm-agent worker jobs nightly
+rlm-agent worker log nightly --follow
+rlm-agent worker attach nightly
+rlm-agent worker stop nightly
+```
+
+Start flags are the normal run flags. The folder's trust is decided when you start
+it, because a worker has nobody to ask. For the same reason anything needing
+approval is refused unless it was started with `--auto-approve`, and `ask_user`
+has no answer. A job that was running when a worker died is not run again; a job
+due while a worker was down runs when it next starts. Workers do not restart on
+their own after a reboot.
+
+## Goals and autonomous mode
+
+`/goal TEXT [--tokens N]` sets an objective that is put in front of the model on every
+turn until it calls `await goal_done(summary)`; `/goal pause`, `resume` and `clear`
+manage it. `/autonomous` then starts the next turn by itself while the goal is open,
+and stops at its limits (`/autonomous turns N`, `tokens N`, `seconds N`), when the
+goal is done, or when you press Esc. `/autonomous gate CMD` sets a command that must
+exit 0 before `goal_done` is accepted. A passed gate shows only what that command
+checks.
+
+## Agents working together
+
+Open sessions and workers can reach each other. In a cell: `await list_agents()`,
+`await send_message(to, text)`, `await read_messages()`. A message to a worker runs as
+its next task; a message to a session is shown to it before its next turn.
+`await schedule(task, in_seconds=..., every=None, worker=None)` queues work on a
+worker, and `await heartbeat(text)` reports progress, shown in the terminal and in
+`rlm-agent worker log`.
+
+Other functions: `await web_search(query)` when `BRAVE_API_KEY`, `TAVILY_API_KEY` or
+`SERPER_API_KEY` is set; `await context_usage()`; `await compact()` to summarize older
+conversation when the turn ends. `/btw QUESTION` answers a side question without
+adding it to the conversation.
+
+`/image PATH` attaches a PNG, JPEG, GIF or WebP file (up to 5 MB) to your next
+message. Use a model and provider that accept image input.
+
+Press F1 for keyboard help. Focus a finished step and press Space to hide or
+show its details, or Enter to open the full step.
+
+To keep a saved session running between terminals, close the original terminal
+session and start its detached process from the project folder:
+
+```sh
+rlm-agent session detach SESSION_ID
+rlm-agent session attach SESSION_ID
+rlm-agent worker stop session-SESSION_ID
+```
+
+Type `/detach` in the attached terminal to leave the process running. A detached
+session uses the same unattended approval rules as a worker. Start detachment
+between turns. A running turn cannot move between processes.
+Saved sessions have a single active writer across terminal and worker processes.
+A detached supervisor restarts a crashed worker from its saved session, with
+backoff. An interrupted turn is reported on resume.
+
+On a saved session with the default engine, agents created with
+`spawn(..., keep=True)` by the root or another kept agent retain their ID,
+last completed result, and supported
+kernel values across reopening. Find them with `children()` and send a new task
+when the child is idle. In-flight child work is not replayed after a restart.
+
+For a protected HTTP MCP server, configure an `oauth` object beside its `url`
+with `issuer`, a registered public `client_id`, and `redirect_port`. Register
+`http://127.0.0.1:PORT/oauth/callback` with the issuer. Add `scope` if needed.
+Use `/mcp login NAME` to sign in and `/mcp logout NAME` to disconnect locally.
+Access tokens refresh when the server issues a refresh token. To reuse a login
+after reopening, install `rlmagent[mcp-keyring]` and set `"persist": true` in
+the OAuth object to use your platform credential store. With persistence
+disabled, credentials live in the current process.
+
+Use `"connector": "slack"` or `"connector": "notion"` instead of a server URL
+to use a built-in endpoint. Supply your registered OAuth client details. For
+confidential clients, set `client_secret_env` to the name of the environment
+variable that holds the secret.
+
+`rlm-agent factory workflow.json` runs a sequence of contract stages. Each
+stage needs its own trace file. A failed stage stops the workflow. On success,
+its final answer is included as data in the next stage's prompt.
+
+```sh
+rlm-agent factory init my-review contract.json review
+rlm-agent factory list
+rlm-agent factory export my-review workflow.json
+rlm-agent factory import my-other-review workflow.json
+rlm-agent factory run my-review --state review-state.json
+```
+
+The bundled recipes are `build`, `review`, and `release-review`. Run a saved
+factory from a cell with `await factory_run("my-review")`, subject to workspace
+command approval. Reuse the same `--state` file to continue after completed
+stages. If a stage was interrupted or failed, review its workspace changes
+before explicitly adding `--retry-stage`.
+For a stage that needs to keep one agent and its kernel through several turns,
+use `"resident": ["first prompt", "next prompt"]` in place of `prompt`. The
+whole group shares one contract and counts as one checkpoint.
+
+Editors can launch `rlm-agent --acp`, supply stdio or streamable HTTP MCP
+servers for each session, and steer an active turn with text. Steering enters
+at the next harness step. Closing a session stops its work and reports usage
+and request counts. Saved sessions can be loaded again.
+
+Saved sessions append a request ledger beside the transcript. It records how
+model requests follow one another, delegate to children, receive child
+returns, and follow compaction. HTTP model requests carry the corresponding
+`X-Rlmagent-Request-Id`. Use `--engine session` when you need the same live
+kernel across prompts and compaction.
+
+```json
+{
+  "format": "rlmagent.factory/1",
+  "stages": [
+    {"contract": "inspect.json", "prompt": "Find the cause of the failing test."},
+    {"contract": "fix.json", "prompt": "Fix the issue and verify the result."}
+  ]
+}
+```
+
+`rlm-agent update` shows the installed version. Use `rlm-agent update --apply`
+to upgrade an installation from a package index.
+
+`rlm-agent status` shows configuration, sandbox, git, MCP, search, workers and open
+sessions; `rlm-agent doctor` reports problems and `doctor --fix` repairs the ones it
+can (stale workers and sessions, a missing Pyodide).
+
+## Background jobs and watches
+
+`await job_start(cmd)` runs a command in the background; `job_read(id, cursor)` returns
+what it wrote since `cursor`, `job_wait(id)` waits for it and `job_stop(id)` ends it and
+everything it started. `await service_start(name, cmd, ready=regex)` keeps a dev server
+or similar running and can wait for its ready line. `await watch(job=id)`,
+`watch(path=p)` or `watch(messages=True)` waits until a job writes or ends, a path
+changes, or another agent writes. Jobs belong to the session, so a sandbox restart
+does not lose them, and they need the same approval as `run()`.
+
+`await history(start, end)` reads every saved message of the session, including what
+compaction summarized away; `history(agent=RUN_ID)` reads one agent's steps. When a
+kernel process dies mid-run, a new one is started and the model is told which state
+was lost, up to three times per kernel.
+
+## Run policy
+
+| Flag | Effect |
+| --- | --- |
+| `--deny-git` | Refuse git commands that reach beyond the current branch (push, fetch, checkout, branch, tag, reset, ...) |
+| `--max-tool-output BYTES` | Most output one cell shows the model (default 20000; the start and end are kept) |
+| `--max-compactions N` | Most compactions in the session |
+| `--agent-max-tokens N` | Most completion tokens any one agent may spend |
+| `--search-block DOMAIN` | Drop web search results from a domain, `*.domain` or origin (repeatable) |
+
+A contract can set the same through an optional `policy` object with `allow_git`,
+`max_tool_output_bytes`, `max_compactions`, `agent_max_tokens` and `search_block`
+(every field given, `null` for the default). The summary a contract run prints ends
+with `stop_reason`: `done`, `max_calls`, `max_cost`, `max_tokens`, `max_seconds`,
+`agent_tokens`, `compaction_failed`, `no_answer`, `cancelled` or `error`.
+
+Cells that fail in a familiar way (a missing `await`, quotes nested in an f-string, a
+missing module, a timeout, an empty reply) get a one-line hint with the error.
+
+## Split execution
+
+The agent loop and its keys can stay on one machine while the tools work somewhere
+else. Start a tool host beside the files:
+
+```sh
+python -m rlmagent.toolhost --root /work                       # over stdio
+RLM_AGENT_TOOLS_TOKEN=... python -m rlmagent.toolhost --root /work --tcp 0.0.0.0:7700
+```
+
+Then point a session at it with `--tools-at "python -m rlmagent.toolhost --root /work"`
+or `--tools-at tcp://host:7700` (with the same `RLM_AGENT_TOOLS_TOKEN`). File reads,
+search, edits, patches, commands and jobs then run in the tool host. Approvals and the
+git guard are decided in the harness before anything is sent; the host only runs what
+it is asked, confined to its root.
+
+## MCP servers
+
+List Model Context Protocol servers in `mcp.json` in the rlm-agent home, or in
+`.rlm-agent/mcp.json` of a trusted project:
+
+```json
+{"servers": {
+  "files": {"command": "npx", "args": ["-y", "some-mcp-server"], "env": {"TOKEN": "${MY_TOKEN}"}},
+  "docs": {"url": "https://example.com/mcp", "headers": {"Authorization": "Bearer ${DOCS_KEY}"}}
+}}
+```
+
+`${NAME}` is read from the environment when a server starts, so keys stay out of the
+file. Servers start on first use. Cells call `await mcp_tools()` and
+`await mcp(server, tool, arguments)`; the session engine has matching tools. Calls
+need approval unless the server marks the tool read-only. `/mcp` lists servers,
+their state and tools; `/mcp NAME` starts one.
+
+## Project extensions
+
+A Python file in `.rlm-agent/extensions/` (or `~/.rlm-agent/extensions/`) with a
+`register()` function is loaded at startup and by `/reload`. Project files load
+only in a trusted folder. `register()` may return a mapping of names to functions,
+a `ToolSpec`, or a list of those:
+
+```python
+def word_count(path):
+    """Count the words in a file."""
+    with open(path) as handle:
+        return len(handle.read().split())
+
+def register():
+    return {"word_count": word_count}
+```
+
+A function becomes `await word_count(...)` in a cell, and a tool under `--engine
+session`. It runs in the host with your permissions, outside the sandbox and outside
+approval, so enforce any rule it needs in its own code. It cannot replace a built-in
+name. `/tools` lists what is really available; in a cell, `await capabilities()`
+reports the same along with the limits in force.
+
+## Manual harness refinement
+
+Use `/refine` when a conversation contains a correction or procedure worth
+retaining. It starts a bounded background review and returns immediately:
+
+```text
+/refine Remember the repository's focused validation command
+/refine status
+/refine cancel
+```
+
+Only one review may be pending per session. The refiner can inspect saved guidance
+and stage create, update, or delete operations. It cannot execute Python, run
+commands, modify project files, or replace the base system instructions. A review
+may make no changes. Its limits are 12 model steps, 8 edit attempts, and 300 seconds;
+the normal provider and tree budget also apply.
+
+There are three entry kinds:
+
+| Kind | Purpose |
+| --- | --- |
+| `prompt` | A focused behavioral note |
+| `skill` | A Markdown workflow with YAML `name` and `description` metadata |
+| `subagent` | Guidance for assigning and executing delegated tasks |
+
+Workflow metadata must match its stable entry id. Individual entries are limited
+to 32 KiB. Existing Python-function playbook skills keep their original meaning.
+Installed skill files are never overwritten by refinement.
+
+`/refine evidence` shows, per saved change in this project: when it was saved, how
+many later tasks actually sent it to the model, failed tool calls per task before and
+after, and your verdict from `/refine rate <change> better|same|worse`. The counts
+are signals rather than proof, because tasks differ.
+
+A proposal that changes guidance waits for you: `/refine show` lists each added,
+changed or removed entry with a diff of its text, `/refine apply` saves it and
+`/refine cancel` drops it. An approved proposal waits for a turn boundary before it
+is saved or activated; if the session is idle it commits immediately.
+`/refine status` distinguishes a running review, a proposal awaiting activation,
+completion, cancellation, and failure. Beginning the next submission or finishing
+the current turn services that boundary. Updated guidance then applies to the
+root and newly created child agents. Running children keep their existing prompt.
+Notes over 400 characters appear shortened in the prompt, with the rest available
+through `await guidance("entry-id")`.
+Workflow names and descriptions appear in the prompt; the full procedure is
+available through `await guidance("entry-id")` in Python or `/skill:entry-id`.
+
+Saved guidance is project-scoped under
+`~/.rlm-agent/harness/<project-path-hash>/state.json`, so later sessions in the
+same workspace inherit it. Read/modify/write operations are locked across
+processes and reject proposals based on superseded state. Invalid state is
+reported rather than replaced with an empty harness. The saved history includes
+the evidence, expected benefit, and edits for each committed proposal.
+
+`--no-session` keeps this harness in memory. Plan mode prevents changes, and abort,
+rewind, inference-route changes, or shutdown discard pending work. Contract runs
+do not load this ambient harness or enable `/refine`.
+
+This mechanism runs only when explicitly requested. Existing `/improve` and its
+automatic playbook scheduling are separate. Proposals from the automatic playbook
+check are held: `/improve pending` lists them, `/improve accept N` saves one and
+`/improve reject N` drops it. `--apply-auto-improve` saves them at once instead. A committed refinement means its
+structure and persistence checks passed; its expected benefit has not been
+established by a performance benchmark.

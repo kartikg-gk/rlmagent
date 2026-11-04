@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from rlmagent_app.contract import ContractError, load_contract, parse_contract
+from rlmagent.contract import ContractError, load_contract, parse_contract
 
 VALID = {
     "format": "rlmagent.run/1",
@@ -95,3 +95,20 @@ def test_ollama_needs_no_key(monkeypatch):
     c = parse_contract(_with("model", {"provider": "ollama", "name": "llama3.3",
                                        "api_key_env": None, "base_url": None}))
     assert c.api_key() == "ollama"
+
+
+POLICY = {"allow_git": False, "max_tool_output_bytes": 4000, "max_compactions": 2,
+          "agent_max_tokens": None, "search_block": ["example.com"]}
+
+
+def test_a_contract_can_set_the_run_policy():
+    assert parse_contract(VALID).policy is None
+    c = parse_contract({**VALID, "policy": POLICY})
+    assert c.policy == POLICY
+    with pytest.raises(ContractError, match="policy.agent_max_tokens: missing"):
+        parse_contract({**VALID, "policy": {k: v for k, v in POLICY.items()
+                                            if k != "agent_max_tokens"}})
+    with pytest.raises(ContractError, match="policy.search_block: expected a list of strings"):
+        parse_contract({**VALID, "policy": {**POLICY, "search_block": [1]}})
+    with pytest.raises(ContractError, match="policy.color: unknown field"):
+        parse_contract({**VALID, "policy": {**POLICY, "color": 1}})

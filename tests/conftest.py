@@ -6,7 +6,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from rlmagent_app.trust import reset_trust_cache
+from rlmagent.trust import reset_trust_cache
 
 
 @pytest.fixture(autouse=True)

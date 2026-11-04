@@ -5,8 +5,8 @@ from _scripted import code_turn, text_turn
 from rlmness import Allowance
 from test_agent_tree import _SlowProvider
 
-from rlmagent_app.agents.tree import AgentTree
-from rlmagent_model.scripted import ReplayProvider
+from rlmagent.agents.tree import AgentTree
+from rlmagent.model.scripted import ReplayProvider
 
 
 def _tree(tmp_path, provider, **kw):
@@ -170,7 +170,7 @@ async def test_a_child_finishing_cancels_its_running_children(tmp_path):
 
 
 async def test_close_does_not_cut_short_a_finished_sub_agents_cleanup(tmp_path, monkeypatch):
-    from rlmagent_app.kernel import KernelSession
+    from rlmagent.kernel import KernelSession
 
     completed = []
     original = KernelSession.shutdown

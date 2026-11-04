@@ -2,8 +2,8 @@
 
 from itertools import count
 
-from rlmagent_harness.contracts.transcript import CallBlock, ModelEntry, TextSegment
-from rlmagent_harness.provider.wire import CallCloseEvent, StreamCloseEvent
+from rlmagent.harness.contracts.transcript import CallBlock, ModelEntry, TextSegment
+from rlmagent.harness.provider.wire import CallCloseEvent, StreamCloseEvent
 
 _ids = count(1)
 

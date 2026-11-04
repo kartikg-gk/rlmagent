@@ -1,9 +1,9 @@
 import json
 
-from rlmagent_app.playbook.apply import apply_edits, reverse_edits, validate
-from rlmagent_app.playbook.digest import fingerprint, render
-from rlmagent_app.playbook.plan import build_request, parse_proposal
-from rlmagent_app.playbook.store import Entry, Playbook, load, merged, save
+from rlmagent.playbook.apply import apply_edits, reverse_edits, validate
+from rlmagent.playbook.digest import fingerprint, render
+from rlmagent.playbook.plan import build_request, parse_proposal
+from rlmagent.playbook.store import Entry, Playbook, load, merged, save
 
 SKILL = "def count_lines(path):\n    return len(open(path).read().splitlines())\n"
 

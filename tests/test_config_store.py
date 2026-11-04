@@ -1,4 +1,4 @@
-"""Tests for rlmagent_app.config.store and rlmagent_app.config.loader."""
+"""Tests for rlmagent.config.store and rlmagent.config.loader."""
 
 from __future__ import annotations
 
@@ -6,13 +6,13 @@ import os
 
 import pytest
 
-from rlmagent_app.config.loader import (
+from rlmagent.config.loader import (
     apply_config,
     load_api_key,
     load_model,
     load_provider,
 )
-from rlmagent_app.config.store import (
+from rlmagent.config.store import (
     PROVIDER_KEYS,
     RlmAgentConfig,
     config_path,
@@ -88,7 +88,7 @@ class TestStore:
         assert mask_key(raw) == expected
 
     def test_known_providers(self):
-        assert PROVIDER_KEYS == ("openai", "anthropic", "openrouter", "ollama", "huggingface")
+        assert PROVIDER_KEYS == ("openai", "anthropic", "openrouter", "ollama", "huggingface", "vertex")
 
     def test_provider_info_unknown(self):
         with pytest.raises(KeyError):

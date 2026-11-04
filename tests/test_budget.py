@@ -1,10 +1,10 @@
 import pytest
 from rlmness import Allowance
 
-from rlmagent_app.agents.budget import BudgetedProvider, to_spend
-from rlmagent_app.agents.tree import AgentTree
-from rlmagent_harness.contracts.transcript.diagnostics import CostBreakdown, UsageStats
-from rlmagent_model.scripted import ReplayProvider
+from rlmagent.agents.budget import BudgetedProvider, to_spend
+from rlmagent.agents.tree import AgentTree
+from rlmagent.harness.contracts.transcript.diagnostics import CostBreakdown, UsageStats
+from rlmagent.model.scripted import ReplayProvider
 from _scripted import code_turn, text_turn
 
 

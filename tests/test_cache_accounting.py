@@ -6,12 +6,12 @@ import json
 
 import httpx
 
-from rlmagent_app.context.budget import estimate_transcript_tokens
-from rlmagent_app.conversation import SessionStats
-from rlmagent_harness.contracts.transcript import HumanEntry, ModelEntry, UsageStats
-from rlmagent_model._oai.helpers import extract_usage
-from rlmagent_model.oai_compatible import OpenAIProvider
-from rlmagent_model.settings import Credential, OpenAIProfile, RetryPolicy
+from rlmagent.context.budget import estimate_transcript_tokens
+from rlmagent.conversation import SessionStats
+from rlmagent.harness.contracts.transcript import HumanEntry, ModelEntry, UsageStats
+from rlmagent.model._oai.helpers import extract_usage
+from rlmagent.model.oai_compatible import OpenAIProvider
+from rlmagent.model.settings import Credential, OpenAIProfile, RetryPolicy
 
 _OK = "".join(
     f"data: {json.dumps(frame)}\n\n"
@@ -124,9 +124,9 @@ def test_session_and_latest_rates_differ() -> None:
 
 async def test_providers_without_cache_key_still_work() -> None:
     """Older/custom adapters that don't declare ``cache_key`` must not receive it."""
-    from rlmagent_harness.contracts.transcript import TextSegment
-    from rlmagent_harness.driver import RuntimeConfig, RuntimeHarness
-    from rlmagent_harness.provider.wire import StreamCloseEvent
+    from rlmagent.harness.contracts.transcript import TextSegment
+    from rlmagent.harness.driver import RuntimeConfig, RuntimeHarness
+    from rlmagent.harness.provider.wire import StreamCloseEvent
 
     class Legacy:
         async def stream_response(self, *, model, system, messages, tools, signal=None):

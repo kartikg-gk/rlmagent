@@ -46,6 +46,7 @@ config.toml
 
 # Markdown files stay local
 *.md
+!README.md
 
 # Coverage
 .coverage

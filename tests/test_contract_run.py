@@ -3,9 +3,9 @@ import json
 
 from test_contract import VALID
 
-from rlmagent_app.contract import parse_contract
-from rlmagent_app.contract_run import build_contract_session
-from rlmagent_model.scripted import ReplayProvider
+from rlmagent.contract import parse_contract
+from rlmagent.contract_run import build_contract_session
+from rlmagent.model.scripted import ReplayProvider
 
 
 def _contract(tmp_path, **changes):
@@ -50,7 +50,7 @@ async def test_the_trace_starts_with_the_contract(tmp_path, monkeypatch):
 
 
 async def test_sub_agent_prompts_get_their_own_additions(tmp_path, monkeypatch):
-    from rlmagent_app.agents.tree import AgentNode
+    from rlmagent.agents.tree import AgentNode
 
     session = await _session(tmp_path, monkeypatch, limits__max_depth=2,
                              prompt__append_sub_agent="MID", prompt__append_leaf="LEAF")
@@ -75,7 +75,7 @@ async def test_system_file_replaces_the_identity(tmp_path, monkeypatch):
 
 
 def test_cli_refuses_a_bad_contract_before_running(tmp_path, capsys):
-    from rlmagent_app.cli.main import main
+    from rlmagent.cli.main import main
 
     bad = tmp_path / "run.json"
     doc = copy.deepcopy(VALID)
@@ -86,7 +86,7 @@ def test_cli_refuses_a_bad_contract_before_running(tmp_path, capsys):
 
 
 def test_cli_refuses_a_missing_key_variable(tmp_path, capsys, monkeypatch):
-    from rlmagent_app.cli.main import main
+    from rlmagent.cli.main import main
 
     monkeypatch.delenv("TEST_KEY", raising=False)
     doc = copy.deepcopy(VALID)
@@ -101,7 +101,7 @@ def test_cli_refuses_a_missing_key_variable(tmp_path, capsys, monkeypatch):
 def test_cli_contract_needs_a_prompt(tmp_path, capsys, monkeypatch):
     import io
 
-    from rlmagent_app.cli.main import main
+    from rlmagent.cli.main import main
 
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
 
@@ -109,3 +109,38 @@ def test_cli_contract_needs_a_prompt(tmp_path, capsys, monkeypatch):
     path.write_text(json.dumps(VALID))
     assert main(["--contract", str(path)]) == 2
     assert "needs a prompt" in capsys.readouterr().err
+
+
+def test_the_kernel_section_is_optional_and_strict(tmp_path):
+    import pytest
+    from rlmagent.contract import ContractError
+
+    assert _contract(tmp_path).kernel.kind == "local"
+    assert _contract(tmp_path).kernel.approve == "deny"
+    c = _contract(tmp_path, kernel={"kind": "wasm", "approve": "auto", "network": True}, tools=["python", "Read"])
+    assert (c.kernel.kind, c.kernel.approve, c.kernel.network) == ("wasm", "auto", True)
+    for bad, named in [({"kind": "docker", "approve": "deny", "network": False}, "kernel.kind"),
+                       ({"kind": "wasm", "approve": "ask", "network": False}, "kernel.approve"),
+                       ({"kind": "wasm"}, "kernel.approve"),
+                       ({"kind": "wasm", "approve": "deny", "network": False, "x": 1}, "kernel.x")]:
+        with pytest.raises(ContractError, match=named):
+            _contract(tmp_path, kernel=bad)
+    with pytest.raises(ContractError, match="Write and Edit"):
+        _contract(tmp_path, kernel={"kind": "wasm", "approve": "deny", "network": False})
+
+
+async def test_a_wasm_contract_runs_sandboxed(tmp_path, monkeypatch):
+    import pytest
+    from rlmagent.kernel.wasm import WasmKernel, available
+
+    if not available():
+        pytest.skip("sandbox not set up")
+    session = await _session(tmp_path, monkeypatch, tools=["python", "Read"],
+                             kernel={"kind": "wasm", "approve": "deny", "network": False})
+    try:
+        tree = session.agent_tree
+        assert isinstance(tree.root_kernel(), WasmKernel) and tree.approver.policy == "deny"
+        assert "read_file" in session.harness.settings.system
+        assert json.loads(json.dumps(tree.kernel_kind)) == "wasm"
+    finally:
+        await session.shutdown()

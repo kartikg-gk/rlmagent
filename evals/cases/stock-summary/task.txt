@@ -1,0 +1,1 @@
+stock.py holds a list ITEMS of (name, count, price). Create summary.py with a function `summary()` returning {'total_value': ..., 'low': [...]}, where low lists, sorted, the names with a count below 3. Do not change stock.py.

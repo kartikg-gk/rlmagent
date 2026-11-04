@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from rlmagent_app.conversation import CodingSession
-from rlmagent_app.instructions import prompt_sections, system_prompt
-from rlmagent_model.scripted import ReplayProvider
+from rlmagent.conversation import CodingSession
+from rlmagent.instructions import prompt_sections, system_prompt
+from rlmagent.model.scripted import ReplayProvider
 
 
 @pytest.fixture

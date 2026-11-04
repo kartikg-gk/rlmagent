@@ -1,0 +1,148 @@
+"""Checkpoint kept recursive agents alongside a saved conversation."""
+
+from __future__ import annotations
+
+import json
+import re
+import uuid
+from pathlib import Path
+
+from rlmness.background import Background, Job
+from rlmness.session import Session
+
+
+class KeptAgents(Background):
+    def __init__(self, max_agents):
+        super().__init__(max_agents)
+        self.directory: Path | None = None
+        self.saved: dict[str, dict] = {}
+
+    def open(self, state_path: Path | None) -> None:
+        if state_path is None or self.directory is not None:
+            return
+        self.directory = state_path.with_suffix(".children")
+        for path in sorted(self.directory.glob("*.json")):
+            if not re.fullmatch(r"[a-f0-9]{32}", path.stem):
+                continue
+            record = json.loads(path.read_text(encoding="utf-8"))
+            job = Job(parent=record.get("parent", "root"), keep=True, status="idle")
+            job.value = record.get("value")
+            job.outbox = record.get("messages", [])
+            job.ready.set()
+            self.saved[path.stem] = record
+            self.jobs[path.stem] = job
+
+    def _write(self, key: str) -> None:
+        self.directory.mkdir(parents=True, exist_ok=True)
+        path = self.directory / f"{key}.json"
+        staged = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        try:
+            staged.write_text(json.dumps(self.saved[key], allow_nan=False), encoding="utf-8")
+            staged.replace(path)
+        finally:
+            staged.unlink(missing_ok=True)
+
+    def bindings(self, parent, child):
+        owner = self.owners.get(parent)
+        if owner in self.saved:
+            # Each reopened agent gets a fresh run ID. Its mailbox and children use its saved ID.
+            parent = owner
+            self.owners[parent] = owner
+        bindings = super().bindings(parent, child)
+        if (parent != "root" and parent not in self.saved) or self.directory is None:
+            return bindings
+
+        def start(key, question):
+            job = self.jobs[key]
+            record = self.saved[key]
+            job.status = "starting"
+            job.ready.clear()
+
+            def work():
+                try:
+                    job.status = "running"
+                    state = Session.load(self.directory / f"{key}.state.json")
+                    value = child(record["data"], question, job.token, saved=state,
+                                  owner=key, model=record["model"])
+                    with self.lock:
+                        if not job.token.is_set():
+                            # The result is also available from the child session if it is not JSON.
+                            try:
+                                json.dumps(value, allow_nan=False)
+                            except (ValueError, TypeError):
+                                record["value"] = str(value)
+                            else:
+                                record["value"] = value
+                            record["messages"] = list(job.outbox)
+                            self._write(key)
+                            job.value = value
+                            job.status = "idle"
+                            job.ready.set()
+                except Exception as exc:
+                    with self.lock:
+                        if not job.token.is_set():
+                            job.error = exc
+                            job.status = "failed"
+                            job.ready.set()
+
+            job.future = self.pool.submit(work)
+
+        def spawn(task, data=None, keep=False, role=None, model=None):
+            if not keep:
+                return bindings["_spawn"](task, data, keep, role, model)
+            if role:
+                if self.resolve_role is None:
+                    raise ValueError("no role resolver configured")
+                task = self.resolve_role(role) + "\n\n" + task
+            record = {"data": data, "model": model, "parent": parent}
+            json.dumps(record, allow_nan=False)
+            with self.lock:
+                if len(self.jobs) >= self.max_agents:
+                    raise RuntimeError("background agent limit reached")
+                key = uuid.uuid4().hex
+                self.saved[key] = record
+                self.jobs[key] = Job(parent=parent, keep=True)
+                start(key, task)
+            return key
+
+        def send(key, text):
+            if key not in self.saved:
+                return bindings["_send"](key, text)
+            with self.lock:
+                job = self.jobs[key]
+                if job.parent != parent:
+                    raise ValueError("job does not belong to this agent")
+                if job.status != "idle":
+                    raise RuntimeError("wait for the kept agent to become idle before sending")
+                start(key, text)
+
+        def cancel(key):
+            with self.lock:
+                bindings["_cancel"](key)
+                pending = [key]
+                while pending:
+                    item = pending.pop()
+                    if item not in self.saved:
+                        continue
+                    del self.saved[item]
+                    job = self.jobs[item]
+                    job.token.set()
+                    job.status = "cancelled"
+                    job.ready.set()
+                    pending.extend(k for k, record in self.saved.items() if record.get("parent") == item)
+                    (self.directory / f"{item}.json").unlink(missing_ok=True)
+                    state = self.directory / f"{item}.state.json"
+                    if job.future is not None:
+                        job.future.add_done_callback(lambda _future, path=state: path.unlink(missing_ok=True))
+                    else:
+                        state.unlink(missing_ok=True)
+
+        def messages(key):
+            with self.lock:
+                items = bindings["_messages"](key)
+                if key in self.saved and self.jobs[key].status == "idle":
+                    self.saved[key]["messages"] = []
+                    self._write(key)
+                return items
+
+        return {**bindings, "_spawn": spawn, "_send": send, "_cancel": cancel, "_messages": messages}

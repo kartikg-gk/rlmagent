@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from rlmagent_app.directives import CommandRegistry, SlashCommand, build_default_registry
-from rlmagent_app.prompts import PromptTemplate
-from rlmagent_app.skillset import Skill
-from rlmagent_app.tui.suggest import (
+from rlmagent.directives import CommandRegistry, SlashCommand, build_default_registry
+from rlmagent.prompts import PromptTemplate
+from rlmagent.skillset import Skill
+from rlmagent.tui.suggest import (
     CompletionItem,
     CompletionOption,
     CompletionProvider,
@@ -52,7 +52,7 @@ def sample_templates() -> list[PromptTemplate]:
 
 
 def _handler(ctx: object) -> object:
-    from rlmagent_app.directives import CommandResult
+    from rlmagent.directives import CommandResult
     return CommandResult(handled=True)
 
 

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from rlmagent_harness.contracts.tooling import ToolSpec
-from rlmagent_harness.contracts.transcript import (
+from rlmagent.harness.contracts.tooling import ToolSpec
+from rlmagent.harness.contracts.transcript import (
     CallBlock,
     HumanEntry,
     ImageSegment,
@@ -11,8 +11,8 @@ from rlmagent_harness.contracts.transcript import (
     TextSegment,
     ToolOutcomeEntry,
 )
-from rlmagent_model.claude import _compose_body, resolve_cache_retention
-from rlmagent_model.settings import ReasoningPolicy
+from rlmagent.model.claude import _compose_body, resolve_cache_retention
+from rlmagent.model.settings import ReasoningPolicy
 
 
 async def _noop(*_args, **_kwargs):  # pragma: no cover - never executed
