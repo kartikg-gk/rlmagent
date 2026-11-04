@@ -69,6 +69,27 @@ def shown_output(output: str) -> str:
     return "\n".join(lines[:SHOWN_OUTPUT_LINES]) + f"\n... ({len(lines) - SHOWN_OUTPUT_LINES} more lines)"
 
 
+def shape_cells(runtime, policy) -> None:
+    """Cap what a cell shows the model, and add a hint when it failed in a familiar way."""
+    from rlmagent.hints import hint_for
+    from rlmagent.policy import DEFAULT_OUTPUT_BYTES, cap_output
+
+    limit = getattr(policy, "max_tool_output_bytes", DEFAULT_OUTPUT_BYTES)
+    run = runtime.execute
+
+    def execute(code):
+        outcome = run(code)
+        outcome.stdout = cap_output(outcome.stdout or "", limit)
+        hint = hint_for(code, (outcome.stdout or "") + "\n" + (outcome.error or ""))
+        if hint and outcome.error:
+            outcome.error = f"{outcome.error}\nHint: {hint}"
+        elif hint and code is not None and not code.strip():
+            outcome.stdout = f"{outcome.stdout}\nHint: {hint}".lstrip()
+        return outcome
+
+    runtime.execute = execute
+
+
 class Client:
     def __init__(
         self,
@@ -107,6 +128,13 @@ class Client:
                 if m["role"] != "system"
             ]
             tracer = getattr(self.tree, "tracer", None)
+            policy = getattr(self.tree, "policy", None)
+            limit = getattr(policy, "agent_max_tokens", None)
+            if limit and tracer is not None:
+                spent = tracer._totals.get(agent, {}).get("output", 0)
+                if spent >= limit:
+                    raise RuntimeError(f"agent {agent} reached its limit of {limit} "
+                                       "completion tokens")
             call = tracer.begin(agent, model) if tracer is not None else None
             async for event in self.provider.stream_response(
                 model=model, system=system, messages=entries, tools=[], signal=self.signal
@@ -245,6 +273,7 @@ class BackendProvider:
             if hasattr(tree, "provider"):
                 self.provider = with_external(tree.provider.inner)
             workspace = Workspace(tree.cwd, tree.approver)
+            workspace.policy = getattr(tree, "policy", None)
             workspace.on_output = lambda text: updates.put({"kind": "command_output", "text": text})
             updates = queue.Queue()
             context = threading.local()
@@ -410,6 +439,7 @@ class BackendProvider:
                         runtime.close()
                         raise RuntimeError(outcome.error)
                 runtime.timeout = timeout
+                shape_cells(runtime, getattr(tree, "policy", None))
                 return runtime
 
             factory.SEALED = True

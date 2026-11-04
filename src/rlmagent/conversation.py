@@ -924,6 +924,9 @@ class CodingSession:
         hub = getattr(self, "mcp", None)
         if hub is not None:
             await hub.close()
+        jobs = getattr(self, "jobs", None)
+        if jobs is not None:
+            await jobs.close()
         net = getattr(self, "agentnet", None)
         if net is not None:
             net.leave()
@@ -1068,6 +1071,11 @@ class CodingSession:
     # ── context compaction ─────────────────────────────────────────────
 
     async def compact(self) -> PruneSummaryEntry:
+        limit = getattr(getattr(self, "policy", None), "max_compactions", None)
+        done = getattr(self, "compactions", 0)
+        if limit is not None and done >= limit:
+            raise RuntimeError(f"this run allows {limit} compaction(s) and has used them")
+        self.compactions = done + 1
         """Compact the transcript by summarising older entries."""
         transcript = list(self._harness.transcript)
         plan = plan_compaction(transcript, self._record_ids, limits=_CONTEXT_LIMITS)

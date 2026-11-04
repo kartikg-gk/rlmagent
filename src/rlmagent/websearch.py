@@ -44,7 +44,7 @@ async def _serper(client, key, query, count):
 _CALLS = {"BRAVE_API_KEY": _brave, "TAVILY_API_KEY": _tavily, "SERPER_API_KEY": _serper}
 
 
-def make_web_search(network_allowed):
+def make_web_search(network_allowed, policy=None):
     """web_search for agents; network_allowed() says whether this run may go online."""
 
     async def web_search(query: str, count: int = 5) -> list[dict]:
@@ -63,6 +63,10 @@ def make_web_search(network_allowed):
             except httpx.HTTPStatusError as exc:
                 # The key is in a header, never in the message.
                 raise ValueError(f"search failed with HTTP {exc.response.status_code}") from None
+        if policy is not None and policy.search_block:
+            from rlmagent.policy import blocked_url
+
+            rows = [row for row in rows if not blocked_url(str(row.get("url", "")), policy)]
         return [{k: str(v)[:500] for k, v in row.items()} for row in rows[:count]]
 
     return web_search

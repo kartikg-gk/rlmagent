@@ -147,6 +147,18 @@ def _build_run_parser() -> argparse.ArgumentParser:
     p.add_argument("--verbose", "-v", action="store_true", help="Verbose diagnostics.")
     p.add_argument("--no-auto-improve", dest="auto_improve", action="store_false",
                    help="Do not update the playbook automatically.")
+    p.add_argument("--deny-git", action="store_true",
+                   help="Refuse git commands that reach beyond the current branch "
+                        "(push, fetch, checkout, branch, tag, reset, ...).")
+    p.add_argument("--max-tool-output", type=int, default=None, metavar="BYTES",
+                   help="Most output one cell shows the model (default 20000).")
+    p.add_argument("--max-compactions", type=int, default=None, metavar="N",
+                   help="Most context compactions in this session.")
+    p.add_argument("--agent-max-tokens", type=int, default=None, metavar="N",
+                   help="Most completion tokens any one agent may spend.")
+    p.add_argument("--search-block", action="append", default=None, metavar="DOMAIN",
+                   help="Drop web search results from this domain, *.domain or origin "
+                        "(repeatable).")
     p.add_argument("--apply-auto-improve", dest="review_auto_improve", action="store_false",
                    help="Save automatic playbook proposals at once instead of holding them "
                         "for /improve accept.")

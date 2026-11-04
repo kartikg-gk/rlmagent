@@ -41,6 +41,7 @@ class Workspace:
         self.root = Path(root).resolve()
         self.approver = approver
         self.on_output = None  # called with command output as it arrives
+        self.policy = None  # rlmagent.policy.Policy, when the run sets one
 
     def _path(self, raw: str) -> Path:
         path = (self.root / raw).resolve()  # symlinks followed, so a link out is caught
@@ -214,6 +215,11 @@ class Workspace:
         return answer or "Error: the user did not answer. Decide yourself and say what you assumed."
 
     async def run(self, cmd: str, timeout: float = 120.0) -> dict:
+        if self.policy is not None:
+            from rlmagent.policy import git_refusal
+
+            if reason := git_refusal(cmd, self.policy):
+                raise ValueError(reason)
         approved = await self.approver.approve(Request("run", cmd))
         check(approved, Request("run", cmd))
         bash = shutil.which("bash")

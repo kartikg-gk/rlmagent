@@ -108,10 +108,29 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
         built["session"].compact_requested = True
         return "older conversation will be summarized when this turn ends"
 
+    from rlmagent.agents.approval import Request, check
+    from rlmagent.jobs import Jobs
+    from rlmagent.policy import DEFAULT_OUTPUT_BYTES, Policy, git_refusal
+
+    policy = tree.policy = Policy(
+        allow_git=not getattr(ns, "deny_git", False),
+        max_tool_output_bytes=getattr(ns, "max_tool_output", None) or DEFAULT_OUTPUT_BYTES,
+        max_compactions=getattr(ns, "max_compactions", None),
+        agent_max_tokens=getattr(ns, "agent_max_tokens", None),
+        search_block=list(getattr(ns, "search_block", None) or []),
+    )
+
+    async def _approve_job(command: str) -> None:
+        request = Request("run", command)
+        check(await tree.approver.approve(request), request)
+
+    jobs = Jobs(here, (sessions_dir or rlm_agent_home()) / "jobs", _approve_job,
+                lambda command: git_refusal(command, policy))
     tree.host_functions = {"todo": tasks.todo, "mcp": hub.mcp, "mcp_tools": hub.mcp_tools,
                            **net.functions(), **pilot.functions(),
+                           **jobs.functions(inbox=lambda: net.take()),
                            "context_usage": context_usage, "compact": compact,
-                           "web_search": make_web_search(lambda: tree.network)}
+                           "web_search": make_web_search(lambda: tree.network, policy)}
     builtin_tools = [as_tool(name, fn) for name, fn in tree.host_functions.items()]
     extended: dict = {"tools": [], "functions": {}}
 
@@ -202,6 +221,8 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     session.tasks = tasks
     session.mcp = hub
     session.agentnet = net
+    session.jobs = jobs
+    session.policy = policy
     built["session"] = session
     session.autopilot = pilot
     pilot.path = sessions_dir / f"{session.session_id}.goal.json" if sessions_dir else None
