@@ -81,6 +81,7 @@ class Contract:
     kernel: KernelSpec = KernelSpec()
     playbook: dict | None = None
     engine: str = "session"
+    policy: dict | None = None
 
     def api_key(self) -> str:
         if self.model.provider in _KEYLESS and self.model.api_key_env is None:
@@ -144,6 +145,17 @@ def parse_contract(doc: object) -> Contract:
         if not playbook["file"].strip():
             raise ContractError("playbook.file: must not be empty")
         doc = {key: value for key, value in doc.items() if key != "playbook"}
+    policy = None
+    if isinstance(doc, dict) and "policy" in doc:
+        # Optional: every field must be given, null where the default applies.
+        policy = _fields(doc["policy"], "policy", {
+            "allow_git": (bool,), "max_tool_output_bytes": (int, N),
+            "max_compactions": (int, N), "agent_max_tokens": (int, N),
+            "search_block": (list,),
+        })
+        if not all(isinstance(rule, str) for rule in policy["search_block"]):
+            raise ContractError("policy.search_block: expected a list of strings")
+        doc = {key: value for key, value in doc.items() if key != "policy"}
     kernel = KernelSpec()
     if isinstance(doc, dict) and "kernel" in doc:
         # Optional, so contracts written before it still run the same way.
@@ -204,6 +216,7 @@ def parse_contract(doc: object) -> Contract:
         kernel=kernel,
         playbook=playbook,
         engine=engine,
+        policy=policy,
     )
 
 

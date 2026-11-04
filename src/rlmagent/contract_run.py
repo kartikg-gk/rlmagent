@@ -88,6 +88,16 @@ async def build_contract_session(c: Contract, *, provider=None, engine="session"
         kernel=c.kernel.kind, restore_kernel=c.kernel.restore, approver=Approver(c.kernel.approve), network=c.kernel.network,
     )
     tree.tool_filter = lambda kernel: _tools(c, kernel)
+    from rlmagent.policy import DEFAULT_OUTPUT_BYTES, Policy
+
+    p = c.policy or {}
+    tree.policy = Policy(
+        allow_git=p.get("allow_git", True),
+        max_tool_output_bytes=p.get("max_tool_output_bytes") or DEFAULT_OUTPUT_BYTES,
+        max_compactions=p.get("max_compactions"),
+        agent_max_tokens=p.get("agent_max_tokens"),
+        search_block=list(p.get("search_block") or []),
+    )
     await tree.start()
     kernel = tree.root_kernel()
     tools = _tools(c, kernel)
@@ -111,6 +121,25 @@ async def build_contract_session(c: Contract, *, provider=None, engine="session"
         if sessions_dir is not None:
             session_provider.state = BackendState.load(sessions_dir / f"{session.session_id}.backend.json")
     session.agent_tree = tree
+    session.policy = tree.policy
+    if engine == "rlmness":
+        # Background jobs, watches and the full record, under the contract's policy.
+        from rlmagent.agents.approval import Request, check
+        from rlmagent.history import make_history
+        from rlmagent.jobs import Jobs
+        from rlmagent.policy import git_refusal
+
+        async def approve(command: str) -> None:
+            request = Request("run", command)
+            check(await tree.approver.approve(request), request)
+
+        session.jobs = Jobs(workdir, Path(str(c.trace.file) + ".jobs"), approve,
+                            lambda command: git_refusal(command, tree.policy))
+        tree.host_functions = {
+            **session.jobs.functions(),
+            "history": make_history(lambda: getattr(getattr(session, "_vault", None), "path", None),
+                                    lambda: session_provider.event_path),
+        }
     tree.attach(tree.root_id(), session)
     if c.playbook is not None:
         from rlmagent.playbook.improver import Improver
@@ -147,6 +176,10 @@ async def run_contract(ns) -> int:
     try:
         return await _run_one_shot(session, ns.prompt, print_mode=True)
     finally:
+        from rlmagent.stops import of_session
+
+        stop = of_session(session, tree.provider.refusal)
         await session.shutdown()
         summary = tree.finish_trace() or tree.tracer.records[-1]
-        print(json.dumps({k: v for k, v in summary.items() if k != "kind"}), file=sys.stderr)
+        print(json.dumps({**{k: v for k, v in summary.items() if k != "kind"}, **stop}),
+              file=sys.stderr)
