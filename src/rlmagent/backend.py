@@ -401,6 +401,11 @@ class BackendProvider:
                     **{name: wrap(fn)
                        for name, fn in getattr(tree, "host_functions", {}).items()},
                 }
+                remote = getattr(tree, "remote_tools", None)
+                if remote is not None:
+                    # Split execution: files, commands and jobs live in the tool host.
+                    joined.update({name: wrap(fn) for name, fn in remote.functions(
+                        tree.approver, getattr(tree, "policy", None)).items()})
 
                 async def playbook(id=None):
                     improver = getattr(tree, "improver", None)

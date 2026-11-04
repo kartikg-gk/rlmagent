@@ -147,6 +147,10 @@ def _build_run_parser() -> argparse.ArgumentParser:
     p.add_argument("--verbose", "-v", action="store_true", help="Verbose diagnostics.")
     p.add_argument("--no-auto-improve", dest="auto_improve", action="store_false",
                    help="Do not update the playbook automatically.")
+    p.add_argument("--tools-at", default=None, metavar="SPEC",
+                   help="Run the workspace tools in a tool host instead of here: "
+                        "tcp://HOST:PORT (token in RLM_AGENT_TOOLS_TOKEN) or a command "
+                        "that serves over stdio, e.g. 'python -m rlmagent.toolhost --root /w'.")
     p.add_argument("--deny-git", action="store_true",
                    help="Refuse git commands that reach beyond the current branch "
                         "(push, fetch, checkout, branch, tag, reset, ...).")

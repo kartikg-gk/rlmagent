@@ -127,6 +127,16 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
 
     jobs = Jobs(here, (sessions_dir or rlm_agent_home()) / "jobs", _approve_job,
                 lambda command: git_refusal(command, policy))
+    tools_at = getattr(ns, "tools_at", None)
+    if tools_at:
+        if getattr(ns, "engine", "session") != "rlmness":
+            _die("--tools-at needs the default engine (--engine rlmness).")
+        from rlmagent.toolhost import connect
+
+        try:
+            tree.remote_tools = await connect(tools_at)
+        except (OSError, ValueError, ConnectionError) as exc:
+            _die(f"Cannot reach the tool host at {tools_at}: {exc}")
     tree.host_functions = {"todo": tasks.todo, "mcp": hub.mcp, "mcp_tools": hub.mcp_tools,
                            **net.functions(), **pilot.functions(),
                            **jobs.functions(inbox=lambda: net.take()),
@@ -228,6 +238,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     session.mcp = hub
     session.agentnet = net
     session.jobs = jobs
+    session.remote_tools = getattr(tree, "remote_tools", None)
     session.policy = policy
     built["session"] = session
     session.autopilot = pilot

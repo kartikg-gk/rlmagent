@@ -927,6 +927,9 @@ class CodingSession:
         jobs = getattr(self, "jobs", None)
         if jobs is not None:
             await jobs.close()
+        remote = getattr(self, "remote_tools", None)
+        if remote is not None:
+            await remote.close()
         net = getattr(self, "agentnet", None)
         if net is not None:
             net.leave()
