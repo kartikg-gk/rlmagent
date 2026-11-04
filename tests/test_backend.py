@@ -95,6 +95,29 @@ async def test_backend_restores_saved_state_in_new_adapter(tmp_path):
         await second.close()
 
 
+async def test_backend_reopens_a_kept_child(tmp_path):
+    from rlmness.session import Session
+
+    model = ReplayProvider([
+        text_turn("```python\nh = await spawn('set value', 21, keep=True)\n"
+                  "value = await h.result()\nFINAL(value)\n```"),
+        text_turn("```python\nnumber = PROMPT\nFINAL(number)\n```"),
+        text_turn("```python\nh = (await children())[0]\nawait h.send('double the saved value')\n"
+                  "value = await h.result()\nFINAL(value)\n```"),
+        text_turn("```python\nFINAL(number * 2)\n```"),
+    ])
+    tree = SimpleNamespace(cwd=str(tmp_path), approver=Approver("deny"), network=False,
+                           cell_timeout=30, allowance=Allowance(max_calls=10, max_cost=2))
+    state = tmp_path / "parent.json"
+    for expected in ("21", "42"):
+        backend = BackendProvider(model, model, tree)
+        backend.state = Session.load(state)
+        try:
+            assert (await _run_backend(backend))[0] == expected
+        finally:
+            await backend.close()
+
+
 async def test_backend_playbook_helpers_and_denied_write(tmp_path):
     from rlmagent.playbook.improver import Improver
     improver = Improver(SimpleNamespace(), None, None)

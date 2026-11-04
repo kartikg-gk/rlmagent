@@ -30,11 +30,41 @@ async def test_an_attached_image_goes_with_the_next_message_only(tmp_path):
     await session.shutdown()
 
 
-async def test_the_default_engine_says_images_need_the_session_engine(tmp_path):
-    (tmp_path / "shot.png").write_bytes(PNG)
-    session = await CodingSession.create(provider=ReplayProvider([]), provider_name="replay",
-                                         model="m", system="s", tools=[], cwd=str(tmp_path))
-    session.backend = object()
-    assert "--engine session" in await session.handle_command("/image shot.png")
-    session.backend = None
-    await session.shutdown()
+async def test_the_default_engine_passes_images_to_the_root_model(tmp_path):
+    from types import SimpleNamespace
+
+    import pytest
+    from rlmness import Allowance
+
+    from rlmagent.agents.approval import Approver
+    from rlmagent.backend import BackendProvider
+    from rlmagent.harness.contracts.transcript import HumanEntry
+    from rlmagent.kernel.wasm import available
+    from rlmagent.tools.files import _read_image
+
+    if not available():
+        pytest.skip("sandbox unavailable")
+    path = tmp_path / "shot.png"
+    path.write_bytes(PNG)
+    image = _read_image(path).content[0]
+    provider = ReplayProvider([
+        text_turn("```python\nvalue = await rlm(21)\nFINAL(value)\n```"),
+        text_turn("```python\nFINAL(PROMPT * 2)\n```"),
+        text_turn("```python\nFINAL(43)\n```"),
+    ])
+    tree = SimpleNamespace(cwd=str(tmp_path), approver=Approver("deny"), network=False,
+                           cell_timeout=30, allowance=Allowance(max_calls=10, max_cost=2))
+    backend = BackendProvider(provider, provider, tree)
+    try:
+        messages = [HumanEntry(content=[image])]
+        for question, expected in [(messages, "42"), ([*messages, HumanEntry(content="next")], "43")]:
+            events = [event async for event in backend.stream_response(
+                model="m", system="", messages=question, tools=[SimpleNamespace(name="python")],
+            )]
+            assert events[-1].message.text == expected
+        first, child, second = [call[2][0].content for call in provider.calls]
+        assert first[1] == image
+        assert isinstance(child, str)
+        assert isinstance(second, str)
+    finally:
+        await backend.close()

@@ -41,7 +41,8 @@ async def build_contract_session(c: Contract, *, provider=None, engine="session"
     provider = provider or _provider(c)
     workdir = str(Path(c.workdir).resolve())
     identity = Path(c.prompt.system_file).read_text(encoding="utf-8") if c.prompt.system_file else None
-    tracer = Tracer(c.trace.file, contract=c.raw)
+    trace_file = Path(c.trace.file).resolve()
+    tracer = Tracer(trace_file, contract=c.raw)
     lim = c.limits
     allowance = Allowance(
         max_depth=lim.max_depth, max_calls=lim.max_calls, max_cost=lim.max_cost,
@@ -109,7 +110,7 @@ async def build_contract_session(c: Contract, *, provider=None, engine="session"
         from rlmagent.model.external import with_external
         session_provider = BackendProvider(with_external(provider), session_provider, tree)
         session_provider.instructions = base([]) + extra(c.prompt.append)
-        session_provider.event_path = Path(str(c.trace.file) + ".backend.events.jsonl")
+        session_provider.event_path = Path(str(trace_file) + ".backend.events.jsonl")
     session = await CodingSession.create(
         provider=session_provider, provider_name=c.model.provider, model=c.model.name,
         system=system, tools=tools, sessions_dir=sessions_dir, cwd=workdir,
@@ -133,7 +134,7 @@ async def build_contract_session(c: Contract, *, provider=None, engine="session"
             request = Request("run", command)
             check(await tree.approver.approve(request), request)
 
-        session.jobs = Jobs(workdir, Path(str(c.trace.file) + ".jobs"), approve,
+        session.jobs = Jobs(workdir, Path(str(trace_file) + ".jobs"), approve,
                             lambda command: git_refusal(command, tree.policy))
         tree.host_functions = {
             **session.jobs.functions(),
@@ -157,8 +158,6 @@ async def build_contract_session(c: Contract, *, provider=None, engine="session"
 
 
 async def run_contract(ns) -> int:
-    from rlmagent.cli.main import _run_one_shot
-
     if ns.prompt is None and not sys.stdin.isatty():
         ns.prompt = sys.stdin.read().strip()
     if not ns.prompt:
@@ -171,15 +170,29 @@ async def run_contract(ns) -> int:
     except (ContractError, OSError) as exc:
         print(f"rlm-agent: {exc}", file=sys.stderr)
         return 2
-    os.chdir(session.agent_tree.cwd)
+    return await execute_session(session, ns.prompt)
+
+
+async def execute_session(session, prompt: str | list[str]) -> int:
+    from rlmagent.cli.main import _run_one_shot
+
+    previous_dir = Path.cwd()
     tree = session.agent_tree
     try:
-        return await _run_one_shot(session, ns.prompt, print_mode=True)
-    finally:
-        from rlmagent.stops import of_session
+        os.chdir(tree.cwd)
+        try:
+            for text in [prompt] if isinstance(prompt, str) else prompt:
+                status = await _run_one_shot(session, text, print_mode=True)
+                if status:
+                    return status
+            return 0
+        finally:
+            from rlmagent.stops import of_session
 
-        stop = of_session(session, tree.provider.refusal)
-        await session.shutdown()
-        summary = tree.finish_trace() or tree.tracer.records[-1]
-        print(json.dumps({**{k: v for k, v in summary.items() if k != "kind"}, **stop}),
-              file=sys.stderr)
+            stop = of_session(session, tree.provider.refusal)
+            await session.shutdown()
+            summary = tree.finish_trace() or tree.tracer.records[-1]
+            print(json.dumps({**{k: v for k, v in summary.items() if k != "kind"}, **stop}),
+                  file=sys.stderr)
+    finally:
+        os.chdir(previous_dir)

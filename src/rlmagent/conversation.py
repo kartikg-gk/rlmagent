@@ -767,6 +767,13 @@ class CodingSession:
         if name:
             from rlmagent.mcp import McpError
 
+            action, _, server_name = name.partition(" ")
+            if action in ("login", "logout") and server_name.strip():
+                try:
+                    operation = hub.login if action == "login" else hub.logout
+                    return await operation(server_name.strip())
+                except McpError as exc:
+                    return str(exc)
             if name not in hub.servers:
                 return f"No MCP server named {name!r}."
             try:
@@ -786,9 +793,6 @@ class CodingSession:
         if raw == "clear":
             self.pending_images = []
             return "Dropped the attached images."
-        if getattr(self, "backend", None) is not None:
-            return ("Images reach the model with --engine session; the default engine's "
-                    "agents work from text. Read the file from a cell instead.")
         path = Path(raw).expanduser()
         if not path.is_absolute():
             path = Path(self.cwd or ".") / path
@@ -915,6 +919,15 @@ class CodingSession:
 
     async def shutdown(self) -> None:
         """Flush pending state and release resources."""
+        try:
+            await self._shutdown()
+        finally:
+            lease = getattr(self, "_writer_lease", None)
+            if lease is not None:
+                lease.close()
+                self._writer_lease = None
+
+    async def _shutdown(self) -> None:
         refinement = getattr(self, "refinement", None)
         if refinement is not None:
             await refinement.close()
@@ -1476,6 +1489,7 @@ class CodingSession:
         sessions_dir: Path | None = None,
     ) -> CodingSession:
         """Create a fresh session, preserving the current provider/model/tools."""
+        leased = getattr(self, "_writer_lease", None) is not None
         await self.shutdown()
         base = sessions_dir
         if base is None and self._vault:
@@ -1491,6 +1505,10 @@ class CodingSession:
             skills_loader=self._skills_loader,
             templates_loader=self._templates_loader,
         )
+        if leased and base is not None:
+            from rlmagent.harness.session.lease import acquire
+
+            replacement._writer_lease = acquire(base, replacement.session_id)
         refinement = getattr(self, 'refinement', None)
         if refinement is not None:
             refinement.transfer(replacement)
@@ -1500,19 +1518,33 @@ class CodingSession:
         """Switch to a different existing session."""
         if self._vault is None:
             raise RuntimeError("Replace requires a persistent session.")
-        await self.shutdown()
-        replacement = await CodingSession.resume(
-            session_id,
-            provider=self._provider,
-            provider_name=self._provider_name,
-            model=self._model,
-            system=self._system,
-            tools=list(self._all_tools),
-            sessions_dir=self._vault.path.parent,
-            tools_loader=self._tools_loader,
-            skills_loader=self._skills_loader,
-            templates_loader=self._templates_loader,
-        )
+        if session_id == self.session_id:
+            return self
+        lease = None
+        base = self._vault.path.parent
+        if getattr(self, "_writer_lease", None) is not None:
+            from rlmagent.harness.session.lease import acquire
+
+            lease = acquire(base, session_id)
+        try:
+            await self.shutdown()
+            replacement = await CodingSession.resume(
+                session_id,
+                provider=self._provider,
+                provider_name=self._provider_name,
+                model=self._model,
+                system=self._system,
+                tools=list(self._all_tools),
+                sessions_dir=base,
+                tools_loader=self._tools_loader,
+                skills_loader=self._skills_loader,
+                templates_loader=self._templates_loader,
+            )
+        except BaseException:
+            if lease is not None:
+                lease.close()
+            raise
+        replacement._writer_lease = lease
         refinement = getattr(self, 'refinement', None)
         if refinement is not None:
             refinement.transfer(replacement)

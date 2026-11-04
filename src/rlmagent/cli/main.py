@@ -46,8 +46,8 @@ _PACKAGE = "rlmagent"
 _DEFAULT_ANTHROPIC_MODEL = "claude-opus-5"
 _DEFAULT_OPENAI_MODEL = "gpt-5"
 _DEFAULT_SYSTEM = "You are a helpful coding assistant."
-_SUBCOMMANDS = frozenset({"acp", "config", "doctor", "provider", "session", "status", "tui",
-                          "worker"})
+_SUBCOMMANDS = frozenset({"acp", "config", "doctor", "factory", "provider", "session", "status", "tui",
+                          "update", "worker"})
 
 
 # ---------------------------------------------------------------------------
@@ -628,6 +628,10 @@ def _should_launch_tui(ns: argparse.Namespace) -> bool:
 
 
 def _handle_session(argv: list[str]) -> int:
+    if argv[:1] in (["detach"], ["attach"]):
+        from rlmagent.worker import handle_session
+
+        return handle_session(argv)
     ns = _build_session_parser().parse_args(argv)
     session_dir = ns.session_dir or getattr(ns, "sub_session_dir", None)
     base = _sessions_dir(session_dir)
@@ -972,6 +976,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if cmd == "config":
             from rlmagent.cli.config_cmd import handle_config
             return handle_config(rest)
+        if cmd == "factory":
+            from rlmagent.factory import run
+
+            return run(rest)
         if cmd == "tui":
             return _handle_tui(_build_run_parser().parse_args(rest))
         if cmd == "provider":
@@ -982,6 +990,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             from rlmagent.worker import handle
 
             return handle(rest)
+        if cmd == "update":
+            from rlmagent.cli.update import run
+
+            return run(rest)
         if cmd in ("status", "doctor"):
             from rlmagent.cli.health import run
 

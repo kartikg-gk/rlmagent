@@ -88,6 +88,11 @@ def state_of(name: str) -> dict:
     return meta
 
 
+def _supervised(meta: dict) -> bool:
+    pid = meta.get("supervisor_pid")
+    return bool(pid and _pid_alive(pid))
+
+
 def send(name: str, text: str, source: str = "user") -> None:
     message = {"text": text, "source": source, "time": time.time()}
     _write(folder(name) / "inbox" / f"{time.time_ns()}-{uuid.uuid4().hex[:6]}.json", message)
@@ -113,17 +118,19 @@ def log_line(name: str, kind: str, text: str) -> None:
                                 ensure_ascii=False) + "\n")
 
 
-def _take_inbox(name: str) -> list[dict]:
+def _take_inbox(name: str, *, limit: int | None = None) -> list[dict]:
     taken = []
     for path in sorted((folder(name) / "inbox").glob("*.json")):
         message = _read(path)
         path.unlink(missing_ok=True)
         if message:
             taken.append(message)
+            if len(taken) == limit:
+                break
     return taken
 
 
-def _take_due(name: str, now: float) -> list[dict]:
+def _take_due(name: str, now: float, *, limit: int | None = None) -> list[dict]:
     """Due jobs, marked as started first: a crash must not run one a second time."""
     taken = []
     for job in jobs_of(name):
@@ -137,6 +144,8 @@ def _take_due(name: str, now: float) -> list[dict]:
             job["status"] = "started"
         _write(folder(name) / "jobs" / f"{job['id']}.json", job)
         taken.append(job)
+        if len(taken) == limit:
+            break
     return taken
 
 
@@ -173,9 +182,11 @@ async def serve(name: str, ns: argparse.Namespace) -> int:
 
     ns.print_mode = True
     base = folder(name)
-    (base / "stop").unlink(missing_ok=True)
     meta = {"pid": os.getpid(), "cwd": os.getcwd(), "started": time.time(), "beat": time.time(),
             "state": "starting", "session": None, "error": None}
+    supervisor = os.environ.get("RLM_AGENT_WORKER_SUPERVISOR_PID")
+    if supervisor:
+        meta["supervisor_pid"] = int(supervisor)
     _write(base / "meta.json", meta)
     try:
         session = await build_session(ns)
@@ -200,9 +211,11 @@ async def serve(name: str, ns: argparse.Namespace) -> int:
     log_line(name, "note", f"started in {os.getcwd()}, session {session.session_id}")
     try:
         while not (base / "stop").exists():
-            due = _take_due(name, time.time())
+            # Claim only the task we are about to run so a crash leaves the rest queued.
+            due = _take_due(name, time.time(), limit=1)
             work = [(job["text"], job) for job in due]
-            work += [(message["text"], None) for message in _take_inbox(name)]
+            if not work:
+                work = [(message["text"], None) for message in _take_inbox(name, limit=1)]
             for text, job in work:
                 if (base / "stop").exists():
                     if job is not None:
@@ -232,6 +245,7 @@ def _spawn(name: str, run_args: list[str]) -> None:
     base = folder(name)
     base.mkdir(parents=True, exist_ok=True)
     (base / "meta.json").unlink(missing_ok=True)
+    (base / "stop").unlink(missing_ok=True)
     options: dict = {}
     if os.name == "nt":
         options["creationflags"] = (
@@ -241,17 +255,64 @@ def _spawn(name: str, run_args: list[str]) -> None:
         options["start_new_session"] = True
     with (base / "output.log").open("ab") as output:
         subprocess.Popen(
-            [sys.executable, "-m", "rlmagent.cli.main", "worker", "serve", name, *run_args],
+            [sys.executable, "-m", "rlmagent.cli.main", "worker", "supervise", name, *run_args],
             stdin=subprocess.DEVNULL, stdout=output, stderr=output, cwd=os.getcwd(),
             env={**os.environ, "PYTHONUNBUFFERED": "1"}, **options,
         )
 
 
+def _supervise(name: str, run_args: list[str]) -> int:
+    """Restart a failed worker using its last saved session."""
+    base = folder(name)
+    failures = 0
+    initial_args = run_args
+    while not (base / "stop").exists():
+        started = time.monotonic()
+        status = subprocess.run(
+            [sys.executable, "-m", "rlmagent.cli.main", "worker", "serve", name, *run_args],
+            check=False,
+            env={**os.environ, "RLM_AGENT_WORKER_SUPERVISOR_PID": str(os.getpid())},
+        ).returncode
+        meta = _read(base / "meta.json") or {}
+        session_id = meta.get("session")
+        if status == 0 or not session_id or "--no-session" in initial_args or (base / "stop").exists():
+            return status
+        failures = 0 if time.monotonic() - started >= 60 else failures + 1
+        if failures >= 5:
+            return status
+        delay = min(15, 2 ** failures)
+        _write(base / "meta.json", {**meta, "state": "recovering", "pid": None,
+                                    "supervisor_pid": os.getpid()})
+        log_line(name, "note", f"worker exited with status {status}; recovering in {delay}s")
+        deadline = time.monotonic() + delay
+        while time.monotonic() < deadline:
+            if (base / "stop").exists():
+                _write(base / "meta.json", {**meta, "state": "stopped", "pid": None,
+                                            "supervisor_pid": None})
+                return 0
+            time.sleep(0.2)
+        run_args = [*initial_args, "--resume", session_id]
+    return 0
+
+
 def _start(name: str, run_args: list[str], wait: float = 180.0) -> int:
+    from rlmagent.harness.session.lease import SessionBusy, acquire
+
+    try:
+        lease = acquire(folder(name), "start")
+    except SessionBusy:
+        print(f"Worker {name} is already starting.", file=sys.stderr)
+        return 1
+    with lease:
+        return _start_locked(name, run_args, wait)
+
+
+def _start_locked(name: str, run_args: list[str], wait: float) -> int:
     from rlmagent.cli.main import _build_run_parser
     from rlmagent.runtime import settle_project_trust
 
-    if state_of(name)["alive"]:
+    current = state_of(name)
+    if current["alive"] or _supervised(current):
         print(f"Worker {name} is already running.", file=sys.stderr)
         return 1
     ns = _build_run_parser().parse_args(run_args)
@@ -277,10 +338,15 @@ def _start(name: str, run_args: list[str], wait: float = 180.0) -> int:
 
 def _stop(name: str, wait: float) -> int:
     meta = state_of(name)
+    if meta.get("state") == "recovering" and _supervised(meta):
+        (folder(name) / "stop").touch()
+        print(f"Worker {name} will stop instead of restarting.")
+        return 0
     if not meta["alive"]:
         print(f"Worker {name} is not running.")
         return 0
-    (folder(name) / "stop").touch()
+    stop = folder(name) / "stop"
+    stop.touch()
     limit = time.monotonic() + wait
     while time.monotonic() < limit:
         if not state_of(name)["alive"]:
@@ -300,7 +366,8 @@ def _list() -> int:
         print("No workers.")
     for name in names:
         meta = state_of(name)
-        state = meta.get("state", "?") if meta["alive"] else "not running"
+        recovering = meta.get("state") == "recovering" and _supervised(meta)
+        state = meta.get("state", "?") if meta["alive"] or recovering else "not running"
         waiting = sum(job["status"] == "waiting" for job in jobs_of(name))
         print(f"{name}  {state}  session {meta.get('session')}  {meta.get('cwd', '')}  "
               f"{waiting} job(s) waiting")
@@ -352,6 +419,36 @@ def _attach(name: str) -> int:
     return 0
 
 
+def handle_session(argv: list[str]) -> int:
+    """Give a saved conversation a detached process and a stable terminal address."""
+    from rlmagent import agentnet
+    from rlmagent.cli.main import _build_run_parser
+
+    action = argv[0]
+    parser = argparse.ArgumentParser(prog=f"rlm-agent session {action}")
+    parser.add_argument("session_id")
+    if action == "detach":
+        args, run_args = parser.parse_known_args(argv[1:])
+    else:
+        args, run_args = parser.parse_args(argv[1:]), []
+    session_id = args.session_id
+    name = f"session-{session_id}"
+    if not _NAME.fullmatch(name):
+        parser.error("invalid session ID")
+    if action == "attach":
+        if not state_of(name)["alive"]:
+            parser.error("session is offline; start it with session detach first")
+        return _attach(name)
+
+    ns = _build_run_parser().parse_args(run_args)
+    if ns.resume or ns.no_session or ns.contract or ns.prompt:
+        parser.error("give the saved session ID followed by provider and runtime options")
+    registered = agentnet._read(agentnet._home() / f"s-{session_id[:8]}" / "meta.json")
+    if registered and registered.get("pid") and _pid_alive(registered["pid"]):
+        parser.error("close the session's current terminal before detaching it")
+    return _start(name, [*run_args, "--resume", session_id])
+
+
 def _when(moment: str) -> float:
     return datetime.fromisoformat(moment).timestamp()
 
@@ -387,6 +484,8 @@ def handle(argv: list[str]) -> int:
     cancel.add_argument("name")
     cancel.add_argument("job")
 
+    if argv[:1] == ["supervise"]:
+        return _supervise(argv[1], argv[2:])
     if argv[:1] == ["serve"]:
         from rlmagent.cli.main import _build_run_parser
 
@@ -435,7 +534,8 @@ def handle(argv: list[str]) -> int:
             (folder(ns.name) / "jobs" / f"{ns.job}.json").unlink(missing_ok=True)
             return 0
         if ns.action == "remove":
-            if state_of(ns.name)["alive"]:
+            meta = state_of(ns.name)
+            if meta["alive"] or _supervised(meta):
                 print(f"Worker {ns.name} is running; stop it first.", file=sys.stderr)
                 return 1
             shutil.rmtree(folder(ns.name), ignore_errors=True)

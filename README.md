@@ -250,8 +250,91 @@ conversation when the turn ends. `/btw QUESTION` answers a side question without
 adding it to the conversation.
 
 `/image PATH` attaches a PNG, JPEG, GIF or WebP file (up to 5 MB) to your next
-message, for models that accept images. It works with `--engine session`; agents in
-the default engine work from text.
+message. Use a model and provider that accept image input.
+
+Press F1 for keyboard help. Focus a finished step and press Space to hide or
+show its details, or Enter to open the full step.
+
+To keep a saved session running between terminals, close the original terminal
+session and start its detached process from the project folder:
+
+```sh
+rlm-agent session detach SESSION_ID
+rlm-agent session attach SESSION_ID
+rlm-agent worker stop session-SESSION_ID
+```
+
+Type `/detach` in the attached terminal to leave the process running. A detached
+session uses the same unattended approval rules as a worker. Start detachment
+between turns. A running turn cannot move between processes.
+Saved sessions have a single active writer across terminal and worker processes.
+A detached supervisor restarts a crashed worker from its saved session, with
+backoff. An interrupted turn is reported on resume.
+
+On a saved session with the default engine, agents created with
+`spawn(..., keep=True)` by the root or another kept agent retain their ID,
+last completed result, and supported
+kernel values across reopening. Find them with `children()` and send a new task
+when the child is idle. In-flight child work is not replayed after a restart.
+
+For a protected HTTP MCP server, configure an `oauth` object beside its `url`
+with `issuer`, a registered public `client_id`, and `redirect_port`. Register
+`http://127.0.0.1:PORT/oauth/callback` with the issuer. Add `scope` if needed.
+Use `/mcp login NAME` to sign in and `/mcp logout NAME` to disconnect locally.
+Access tokens refresh when the server issues a refresh token. To reuse a login
+after reopening, install `rlmagent[mcp-keyring]` and set `"persist": true` in
+the OAuth object to use your platform credential store. With persistence
+disabled, credentials live in the current process.
+
+Use `"connector": "slack"` or `"connector": "notion"` instead of a server URL
+to use a built-in endpoint. Supply your registered OAuth client details. For
+confidential clients, set `client_secret_env` to the name of the environment
+variable that holds the secret.
+
+`rlm-agent factory workflow.json` runs a sequence of contract stages. Each
+stage needs its own trace file. A failed stage stops the workflow. On success,
+its final answer is included as data in the next stage's prompt.
+
+```sh
+rlm-agent factory init my-review contract.json review
+rlm-agent factory list
+rlm-agent factory export my-review workflow.json
+rlm-agent factory import my-other-review workflow.json
+rlm-agent factory run my-review --state review-state.json
+```
+
+The bundled recipes are `build`, `review`, and `release-review`. Run a saved
+factory from a cell with `await factory_run("my-review")`, subject to workspace
+command approval. Reuse the same `--state` file to continue after completed
+stages. If a stage was interrupted or failed, review its workspace changes
+before explicitly adding `--retry-stage`.
+For a stage that needs to keep one agent and its kernel through several turns,
+use `"resident": ["first prompt", "next prompt"]` in place of `prompt`. The
+whole group shares one contract and counts as one checkpoint.
+
+Editors can launch `rlm-agent --acp`, supply stdio or streamable HTTP MCP
+servers for each session, and steer an active turn with text. Steering enters
+at the next harness step. Closing a session stops its work and reports usage
+and request counts. Saved sessions can be loaded again.
+
+Saved sessions append a request ledger beside the transcript. It records how
+model requests follow one another, delegate to children, receive child
+returns, and follow compaction. HTTP model requests carry the corresponding
+`X-Rlmagent-Request-Id`. Use `--engine session` when you need the same live
+kernel across prompts and compaction.
+
+```json
+{
+  "format": "rlmagent.factory/1",
+  "stages": [
+    {"contract": "inspect.json", "prompt": "Find the cause of the failing test."},
+    {"contract": "fix.json", "prompt": "Fix the issue and verify the result."}
+  ]
+}
+```
+
+`rlm-agent update` shows the installed version. Use `rlm-agent update --apply`
+to upgrade an installation from a package index.
 
 `rlm-agent status` shows configuration, sandbox, git, MCP, search, workers and open
 sessions; `rlm-agent doctor` reports problems and `doctor --fix` repairs the ones it

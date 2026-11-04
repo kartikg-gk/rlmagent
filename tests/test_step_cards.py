@@ -75,6 +75,11 @@ async def test_cards_show_code_and_fold_long_output():
         view.show_step(step)
         await pilot.pause()
         assert not card.has_class("step-live")
+        card.focus()
+        await pilot.press("space")
+        assert not card._code.display and not card._out.display and not card._more.display
+        await pilot.press("space")
+        assert card._code.display and card._out.display and card._more.display
         view.new_run()
         again = view.show_step(book.feed({"kind": "step_started", "run_id": "root", "step": 1}))
         assert again is not card

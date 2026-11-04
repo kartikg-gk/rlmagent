@@ -13,6 +13,31 @@ from rlmagent.tui.messages import highlighted_code
 from rlmagent.tui.steps import Step, StepBook, footer_text, header_text, short_id
 
 
+class HelpScreen(ModalScreen[None]):
+    BINDINGS = [("escape", "dismiss", "Close"), ("f1", "dismiss", "Close")]
+
+    def __init__(self) -> None:
+        super().__init__(classes="inspect-screen")
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(classes="inspect-body"):
+            yield Static("Keyboard shortcuts", classes="step-head")
+            for line in (
+                "F1  Help",
+                "F2  Agent tree",
+                "F3  Timeline",
+                "F4  Workers",
+                "Ctrl+N  New session",
+                "Ctrl+Q  Quit",
+                "Shift+Tab  Toggle auto-accept",
+                "Esc  Stop a turn or close a panel",
+                "Enter on a step  Inspect its code and output",
+                "Space on a finished step  Show or hide its details",
+                "Type / at the prompt to browse commands.",
+            ):
+                yield Static(line, markup=False)
+
+
 class StepScreen(ModalScreen[None]):
     """Everything one step has: code, the whole output, usage and time."""
 

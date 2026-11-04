@@ -5,10 +5,41 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from contextvars import ContextVar
 from pathlib import Path
 
 from rlmagent.agents.budget import REFUSED
 from rlmagent.harness.provider.wire import StreamCloseEvent, StreamFaultEvent
+
+request_id: ContextVar[str | None] = ContextVar("model_request_id", default=None)
+
+
+def correlate_headers(headers: dict[str, str]) -> dict[str, str]:
+    call = request_id.get()
+    if call is None:
+        return headers
+    result = {key: value for key, value in headers.items()
+              if key.lower() != "x-rlmagent-request-id"}
+    result["X-Rlmagent-Request-Id"] = call
+    return result
+
+
+async def correlated(stream, call: str | None):
+    """Give each provider read the same ID without leaking it to other streams."""
+    iterator = aiter(stream)
+    try:
+        while True:
+            token = request_id.set(call)
+            try:
+                event = await anext(iterator)
+            except StopAsyncIteration:
+                return
+            finally:
+                request_id.reset(token)
+            yield event
+    finally:
+        if close := getattr(iterator, "aclose", None):
+            await close()
 
 
 class Tracer:
@@ -32,6 +63,16 @@ class Tracer:
         if self.path is not None:
             with self.path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(record, default=str) + "\n")
+
+    def persist(self, path: Path) -> None:
+        """Append this runtime's request ledger to the saved session."""
+        if self.path is not None:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as output:
+            for record in self.records:
+                output.write(json.dumps(record, default=str) + "\n")
+        self.path = path
 
     def begin(self, agent: str, model: str) -> str:
         call = uuid.uuid4().hex
@@ -121,7 +162,9 @@ class TracedProvider:
         call = tracer.begin(self._agent, model)
         usage, stop, refused = None, None, False
         try:
-            async for event in self._tree.provider.stream_response(model=model, **kwargs):
+            async for event in correlated(
+                self._tree.provider.stream_response(model=model, **kwargs), call
+            ):
                 if isinstance(event, StreamCloseEvent):
                     usage, stop = event.message.usage, event.reason
                 elif isinstance(event, StreamFaultEvent):

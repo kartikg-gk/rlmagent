@@ -102,11 +102,12 @@ async def open_event_stream(
     on_accept: Callable[[httpx.Response], None] | None = None,
 ) -> AsyncIterator[ServerSentEvent]:
     """Execute a streaming POST and yield parsed SSE events."""
+    from rlmagent.agents.trace import correlate_headers
     async with client.stream(
         "POST",
         url,
         json=payload,
-        headers=headers,
+        headers=correlate_headers(headers),
     ) as response:
         if response.status_code != 200:
             body = (await response.aread()).decode("utf-8", errors="replace")

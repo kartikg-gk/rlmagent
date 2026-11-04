@@ -14,14 +14,20 @@ from pathlib import Path
 from time import time
 
 from rlmness import Config, solve
-from rlmness.background import Background
 from rlmness.providers import Spend
 from rlmness.session import Session
 from rlmness.wasm_runtime import WasmRuntime
 
 from rlmagent.agents.workspace import Workspace
-from rlmagent.harness.contracts.transcript import HumanEntry, ModelEntry, TextSegment, UsageStats
+from rlmagent.harness.contracts.transcript import (
+    HumanEntry,
+    ImageSegment,
+    ModelEntry,
+    TextSegment,
+    UsageStats,
+)
 from rlmagent.harness.provider.wire import ContentChunkEvent, StreamCloseEvent, StreamFaultEvent
+from rlmagent.kept_agents import KeptAgents
 
 
 def wait_for_host(future, agent, background):
@@ -139,6 +145,7 @@ class Client:
         background=None,
         accounting=None,
         record=None,
+        images=(),
     ):
         self.provider, self.loop, self.signal = provider, loop, signal
         self.pending = pending if pending is not None else set()
@@ -146,6 +153,7 @@ class Client:
         self.instructions = instructions
         self.background = background
         self.accounting, self.record = accounting, record
+        self.images = images
         self.host_context = contextvars.copy_context()
 
     def complete(self, messages, *, model):
@@ -163,6 +171,13 @@ class Client:
                 for m in messages
                 if m["role"] != "system"
             ]
+            if agent == "root" and self.images:
+                for index, entry in enumerate(entries):
+                    if isinstance(entry, HumanEntry):
+                        entries[index] = HumanEntry(
+                            content=[TextSegment(text=entry.text), *self.images]
+                        )
+                        break
             tracer = getattr(self.tree, "tracer", None)
             policy = getattr(self.tree, "policy", None)
             limit = getattr(policy, "agent_max_tokens", None)
@@ -172,10 +187,15 @@ class Client:
                     raise RuntimeError(f"agent {agent} reached its limit of {limit} "
                                        "completion tokens")
             call = tracer.begin(agent, model) if tracer is not None else None
-            async for event in self.provider.stream_response(
+            from rlmagent.agents.trace import correlated
+
+            stream = self.provider.stream_response(
                 model=model, system=system, messages=entries, tools=[], signal=self.signal
-            ):
+            )
+            async for event in correlated(stream, call):
                 if isinstance(event, StreamFaultEvent):
+                    if tracer is not None:
+                        tracer.end(call, event.error.usage, event.reason)
                     raise RuntimeError(event.error.error_message or "model request failed")
                 if isinstance(event, StreamCloseEvent):
                     usage = event.message.usage
@@ -185,6 +205,7 @@ class Client:
                         self.record(
                             {
                                 "kind": "model_usage",
+                                "request_id": call,
                                 "run_id": agent,
                                 "model": model,
                                 "usage": usage.model_dump(by_alias=False),
@@ -202,6 +223,8 @@ class Client:
                         cached_tokens=usage.cache_read,
                         reasoning_tokens=usage.reasoning,
                     )
+            if tracer is not None:
+                tracer.end(call, None, "no_completion")
             raise RuntimeError("model returned no completion")
 
         future = self.host_context.copy().run(
@@ -223,7 +246,7 @@ class BackendProvider:
         self.provider, self.fallback, self.tree = provider, fallback, tree
         self.follows_tree = True
         self.active = None
-        self.background = Background(getattr(tree, "max_agents", 50))
+        self.background = KeptAgents(getattr(tree, "max_agents", 50))
         self.background.resolve_role = getattr(tree, "_role", None)
         self.pending = set()
         self.state = Session()
@@ -300,7 +323,13 @@ class BackendProvider:
     async def _run(self, model, messages, signal):
         from rlmagent.model.external.textcalls import render
 
+        latest = next((entry for entry in reversed(messages) if isinstance(entry, HumanEntry)), None)
+        images = (
+            [part for part in latest.content if isinstance(part, ImageSegment)]
+            if latest is not None and isinstance(latest.content, list) else []
+        )
         async with self._serial:
+            self.background.open(self.state.path)
             loop = asyncio.get_running_loop()
             host_context = contextvars.copy_context()
             tree = self.tree
@@ -537,6 +566,8 @@ class BackendProvider:
                     "await todo('done', n), await todo() to see it; the user sees it too. "
                     "await mcp_tools() lists tools on configured MCP servers and "
                     "await mcp(server, tool, arguments) calls one. "
+                    "await factory_run(name) runs a named workflow from the user's library "
+                    "when workspace approval allows it. "
                     "await web_search(query) searches the web when a search key is set. "
                     "await context_usage() reports how full the context is; await compact() "
                     "summarizes older conversation when this turn ends. "
@@ -569,6 +600,7 @@ class BackendProvider:
                         self.background,
                         accounting,
                         self.record_event,
+                        images=images,
                     ),
                     config=config,
                     instruction=instruction,
@@ -691,3 +723,4 @@ class BackendProvider:
     async def close(self):
         self.cancel()
         self.background.close()
+        await asyncio.to_thread(self.background.pool.shutdown, wait=True, cancel_futures=True)

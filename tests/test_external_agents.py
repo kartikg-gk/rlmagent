@@ -230,6 +230,20 @@ async def test_an_acp_agent_that_exits_is_an_error_not_a_hang(tmp_path, monkeypa
     assert events[-1].type == "error" and "exited" in events[-1].error.error_message
 
 
+async def test_an_acp_agent_that_never_finishes_has_a_deadline(tmp_path, monkeypatch):
+    from rlmagent.model.external import acp
+
+    script = tmp_path / "stalled.py"
+    setup = FAKE_ACP.split('    elif method == "session/prompt":')[0]
+    script.write_text(setup, encoding="utf-8")
+    monkeypatch.setattr(acp, "agents", lambda: {"stall": {
+        "command": sys.executable, "args": [str(script)],
+    }})
+    monkeypatch.setattr(acp, "TURN_TIMEOUT", 0.2)
+    with pytest.raises(ValueError, match="did not finish its ACP turn"):
+        await acp.answer("stall", None, "hello", tmp_path, None)
+
+
 def test_a_bridge_preset_needs_acp_install_first(tmp_path, monkeypatch):
     from rlmagent.model.external.acp_install import bridge_spec, pin_file
 

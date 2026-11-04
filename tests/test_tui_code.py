@@ -5,6 +5,17 @@ from rlmagent.tui.composer import ModelBadge
 from rlmagent.tui.messages import render_message
 
 
+async def test_f1_opens_help_and_escape_closes_it():
+    from rlmagent.tui.app import RlmAgentApp
+    from rlmagent.tui.inspect import HelpScreen
+
+    async with RlmAgentApp().run_test() as pilot:
+        await pilot.press("f1")
+        assert isinstance(pilot.app.screen, HelpScreen)
+        await pilot.press("escape")
+        assert not isinstance(pilot.app.screen, HelpScreen)
+
+
 def _shown(renderable) -> str:
     console = Console(width=60, record=True, file=None, force_terminal=False)
     with console.capture() as capture:

@@ -19,6 +19,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -27,6 +28,10 @@ START_SECONDS = 30.0
 CALL_SECONDS = 300.0
 MAX_RESULT_CHARS = 100_000
 _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_CONNECTORS = {
+    "slack": ("https://mcp.slack.com/mcp", "https://mcp.slack.com"),
+    "notion": ("https://mcp.notion.com/mcp", "https://mcp.notion.com"),
+}
 
 
 class McpError(RuntimeError):
@@ -52,15 +57,40 @@ class ServerConfig:
     url: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
     source: str = ""
+    oauth: dict | None = None
+    expand_env: bool = True
+
+    def expand(self, value):
+        return _fill(value) if self.expand_env else value
 
     @classmethod
     def parse(cls, name: str, raw: dict, source: str) -> ServerConfig:
+        if isinstance(raw, dict) and "connector" in raw:
+            connector = raw["connector"]
+            if not isinstance(connector, str) or connector not in _CONNECTORS:
+                raise McpError(f"{source}: unknown MCP connector {connector!r}")
+            oauth = raw.get("oauth")
+            if not isinstance(oauth, dict):
+                raise McpError(f"{source}: connector {name!r} needs OAuth client configuration")
+            url, issuer = _CONNECTORS[connector]
+            raw = {**raw, "url": url, "oauth": {**oauth, "issuer": issuer}}
         if not isinstance(raw, dict) or bool(raw.get("command")) == bool(raw.get("url")):
             raise McpError(f"{source}: server {name!r} needs either command or url")
+        oauth = raw.get("oauth")
+        if oauth is not None and (
+            not raw.get("url") or not isinstance(oauth, dict)
+            or not all(isinstance(oauth.get(k), str) and oauth[k] for k in ("issuer", "client_id"))
+            or type(oauth.get("redirect_port")) is not int
+            or not 1 <= oauth["redirect_port"] <= 65535
+            or not isinstance(oauth.get("scope", ""), str)
+            or type(oauth.get("persist", False)) is not bool
+            or not isinstance(oauth.get("client_secret_env", ""), str)
+        ):
+            raise McpError(f"{source}: server {name!r} needs OAuth issuer, client_id and redirect_port")
         return cls(name, raw.get("command"), [str(a) for a in raw.get("args", [])],
                    {str(k): str(v) for k, v in raw.get("env", {}).items()},
                    raw.get("url"), {str(k): str(v) for k, v in raw.get("headers", {}).items()},
-                   source)
+                   source, oauth)
 
 
 def load_configs(home: Path, project: Path | None) -> tuple[dict[str, ServerConfig], list[str]]:
@@ -98,8 +128,8 @@ class _Stdio:
 
         command = shutil.which(self.config.command) or self.config.command
         self.proc = await asyncio.create_subprocess_exec(
-            command, *_fill(self.config.args), cwd=self.cwd,
-            env={**os.environ, **_fill(self.config.env)},
+            command, *self.config.expand(self.config.args), cwd=self.cwd,
+            env={**os.environ, **self.config.expand(self.config.env)},
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL, limit=16 * 1024 * 1024, **own_group())
         self._reader = asyncio.create_task(self._read())
@@ -146,6 +176,9 @@ class _Http:
         self.config = config
         self.session_id: str | None = None
         self.client = None
+        self.credential = None
+        self.credential_key = None
+        self._auth_lock = asyncio.Lock()
 
     async def open(self) -> None:
         import httpx
@@ -155,10 +188,17 @@ class _Http:
     async def send(self, message: dict) -> dict | None:
         headers = {"Content-Type": "application/json",
                    "Accept": "application/json, text/event-stream",
-                   "MCP-Protocol-Version": PROTOCOL, **_fill(self.config.headers)}
+                   "MCP-Protocol-Version": PROTOCOL, **self.config.expand(self.config.headers)}
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
-        response = await self.client.post(_fill(self.config.url), json=message, headers=headers)
+        url = self.config.expand(self.config.url)
+        token = await self._token(url) if self.config.oauth else None
+        if token:
+            headers = {k: v for k, v in headers.items() if k.lower() != "authorization"}
+            headers["Authorization"] = f"Bearer {token}"
+        response = await self.client.post(url, json=message, headers=headers)
+        if response.status_code == 401 and self.config.oauth:
+            raise McpError(f"{self.config.name} requires login. Run /mcp login {self.config.name}.")
         if response.status_code >= 400:
             raise McpError(f"{self.config.name} answered HTTP {response.status_code}")
         self.session_id = response.headers.get("mcp-session-id", self.session_id)
@@ -175,6 +215,21 @@ class _Http:
                         return data
             raise McpError(f"{self.config.name} sent no answer")
         return response.json()
+
+    async def _token(self, url: str) -> str | None:
+        from rlmagent.mcp_oauth import keyring_io, refresh
+
+        config = _fill(self.config.oauth)
+        key = (url, config)
+        async with self._auth_lock:
+            if key != self.credential_key:
+                self.credential = await asyncio.to_thread(keyring_io, url, config, "load")
+                self.credential_key = key
+            value = self.credential
+            if value is not None and value.expires is not None and time.time() >= value.expires:
+                self.credential = value = await refresh(url, config, value)
+                await asyncio.to_thread(keyring_io, url, config, "save", value)
+            return value.access if value is not None else None
 
     async def close(self) -> None:
         if self.client is not None:
@@ -277,6 +332,44 @@ class McpHub:
                       "description": (t.get("description") or "")[:300],
                       "input": t.get("inputSchema", {})} for t in target.tools]
         return rows
+
+    async def login(self, name: str) -> str:
+        from rlmagent.mcp_oauth import keyring_io, login
+
+        target = self._server(name)
+        transport = target.transport
+        if not isinstance(transport, _Http) or target.config.oauth is None:
+            raise McpError(f"{name} has no HTTP OAuth configuration")
+        async with target._lock:
+            url = _fill(target.config.url)
+            config = _fill(target.config.oauth)
+            if config.get("persist"):
+                await asyncio.to_thread(keyring_io, url, config, "load")
+            credential = await login(url, config)
+            await asyncio.to_thread(keyring_io, url, config, "save", credential)
+            await target.close()
+            transport.session_id = None
+            transport.credential = credential
+            transport.credential_key = (url, config)
+        await target.start()
+        return f"Signed in to {name}."
+
+    async def logout(self, name: str) -> str:
+        from rlmagent.mcp_oauth import keyring_io
+
+        target = self._server(name)
+        transport = target.transport
+        if not isinstance(transport, _Http) or target.config.oauth is None:
+            raise McpError(f"{name} has no HTTP OAuth configuration")
+        async with target._lock:
+            url, config = _fill(target.config.url), _fill(target.config.oauth)
+            await asyncio.to_thread(keyring_io, url, config, "delete")
+            await target.close()
+            transport.session_id = None
+            transport.credential = None
+            transport.credential_key = (url, config)
+            target.tools.clear()
+        return f"Signed out of {name}."
 
     async def mcp(self, server: str, tool: str, arguments: dict | None = None) -> str:
         """Call one tool on an MCP server; see mcp_tools() for what exists."""

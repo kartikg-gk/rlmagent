@@ -75,10 +75,14 @@ class WasmKernel:
         self._loop = asyncio.get_running_loop()
         bridges = {name: self._blocking(fn) for name, fn in self.bridges.items()}
         options = {"session": self._checkpoint} if self.restore else {}
-        self._runtime = await asyncio.to_thread(WasmRuntime, None, bridges, self.timeout, **options)
+        # Loading Pyodide on a cold host has a separate deadline from user code.
+        self._runtime = await asyncio.to_thread(
+            WasmRuntime, None, bridges, max(30.0, self.timeout), **options
+        )
         if self.startup_code:
             outcome = await asyncio.to_thread(self._runtime.execute, self.startup_code)
             if outcome.error:
+                await self._drop()
                 return outcome.error
         if self.restore:
             if self._owned is None:
@@ -95,6 +99,7 @@ class WasmKernel:
                                        + (", ".join(restored) or "no values")
                                        + "; unavailable: " + (", ".join(missing) or "none")
                                        + ". Changes in the interrupted cell were not recovered.]\n")
+        self._runtime.timeout = self.timeout
         return None
 
     async def _save_checkpoint(self, code: str) -> None:
@@ -124,6 +129,8 @@ class WasmKernel:
                 failure = await self._start()
                 if failure:
                     return CellResult(output="", error=f"sandbox start-up failed:\n{failure}")
+            cell_timeout = self.timeout if timeout is None else timeout
+            self._runtime.timeout = cell_timeout
             try:
                 outcome = await asyncio.to_thread(self._runtime.execute, code)
             except CellTimeout:
@@ -133,12 +140,15 @@ class WasmKernel:
 
                 self._runtime = None
                 await asyncio.to_thread(reset_host)
-                return CellResult(output=self._lost(why=f"no answer within {self.timeout:.0f}s; "
+                return CellResult(output=self._lost(why=f"no answer within {cell_timeout:.0f}s; "
                                                      "every agent's sandbox was restarted"),
                                   timed_out=True, restarted=True)
             except RuntimeGone:
                 await self._drop()
                 return CellResult(output=self._lost(why="it stopped"), restarted=True)
+            finally:
+                if self._runtime is not None:
+                    self._runtime.timeout = self.timeout
             if self.restore and not outcome.error:
                 await self._save_checkpoint(code)
             recovery_note, self._recovery_note = self._recovery_note, ""

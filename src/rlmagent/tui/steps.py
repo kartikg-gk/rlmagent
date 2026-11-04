@@ -183,7 +183,7 @@ def output_preview(output: str) -> tuple[str, int]:
 class StepCard(Vertical, can_focus=True):
     """One step on screen: title, code, output preview, usage. Enter or a click opens it."""
 
-    BINDINGS = [("enter", "inspect", "Open step")]
+    BINDINGS = [("enter", "inspect", "Open step"), ("space", "toggle_details", "Toggle details")]
 
     class Inspect(Message):
         def __init__(self, step: Step) -> None:
@@ -193,12 +193,18 @@ class StepCard(Vertical, can_focus=True):
     def action_inspect(self) -> None:
         self.post_message(self.Inspect(self.step))
 
+    def action_toggle_details(self) -> None:
+        if self.step.state in (DONE, FAILED):
+            self._collapsed = not self._collapsed
+            self.refresh_step(self.step)
+
     def on_click(self) -> None:
         self.action_inspect()
 
     def __init__(self, step: Step) -> None:
         super().__init__(classes="step-card")
         self.step = step
+        self._collapsed = False
         self.styles.margin = (0, 0, 0, 2 * step.depth)
         self._head = Static(classes="step-head")
         self._code = Static(classes="step-code")
@@ -221,10 +227,10 @@ class StepCard(Vertical, can_focus=True):
         self.set_class(step.state == FAILED, "step-failed")
         self.set_class(step.state in (GENERATING, RUNNING), "step-live")
         self._code.update(highlighted_code(step.code) if step.code else "")
-        self._code.display = bool(step.code)
+        self._code.display = bool(step.code) and not self._collapsed
         shown, hidden = output_preview(step.output)
         self._out.update(escape(shown) if shown else "")
-        self._out.display = bool(shown)
+        self._out.display = bool(shown) and not self._collapsed
         if hidden and self._more is None:
             self._more = Collapsible(Static(escape(step.output)), collapsed=True,
                                      title=f"{hidden} more lines")
@@ -232,6 +238,8 @@ class StepCard(Vertical, can_focus=True):
         elif self._more is not None:
             self._more.title = f"{hidden} more lines"
             self._more.query_one(Static).update(escape(step.output))
+        if self._more is not None:
+            self._more.display = bool(hidden) and not self._collapsed
         done = step.state in (DONE, FAILED)
         self._foot.update(footer_text(step) if done else "")
         self._foot.display = done

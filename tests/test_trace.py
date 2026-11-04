@@ -109,6 +109,66 @@ def test_a_call_after_compaction_links_as_compact():
     assert not _links(tracer, "next")
 
 
+def test_saved_request_ledger_appends_across_reopen(tmp_path):
+    path = tmp_path / "requests.jsonl"
+    ids = []
+    for _ in range(2):
+        tracer = Tracer()
+        tracer.persist(path)
+        first = tracer.begin("root", "m")
+        tracer.end(first, None, "stop")
+        tracer.compacted("root")
+        second = tracer.begin("root", "m")
+        tracer.end(second, None, "stop")
+        ids.extend([first, second])
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [record["id"] for record in records if record["kind"] == "call"] == ids
+    assert [(r["from"], r["to"], r["how"]) for r in records if r["kind"] == "link"] == [
+        (ids[0], ids[1], "compact"), (ids[2], ids[3], "compact"),
+    ]
+
+
+async def test_model_http_request_carries_its_ledger_id():
+    import httpx
+
+    from rlmagent.agents.trace import correlated, request_id
+    from rlmagent.model._oai.transport import open_event_stream
+
+    seen = []
+
+    def response(request):
+        seen.append(request.headers["X-Rlmagent-Request-Id"])
+        return httpx.Response(200, content=b"data: {}\n\n")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
+        stream = open_event_stream(client, "https://model.test/v1", {}, {})
+        async for _event in correlated(stream, "ledger-call"):
+            assert request_id.get() is None
+    assert seen == ["ledger-call"]
+
+
+async def test_live_session_kernel_keeps_variables_through_compaction(tmp_path):
+    from test_improve import _setup, _submit
+
+    session, _, _ = await _setup(tmp_path, [
+        code_turn("retained_number = 42"), paid_text("stored"),
+        paid_text("acknowledged"), paid_text("acknowledged"), paid_text("summary"),
+        code_turn("print(retained_number)"), paid_text("done"),
+    ])
+    try:
+        await _submit(session, "Store a value")
+        await _submit(session, "Keep working")
+        await _submit(session, "Continue")
+        kernel = session.agent_tree.root_kernel()
+        await session.compact()
+        await _submit(session, "Read the stored value")
+        assert session.agent_tree.root_kernel() is kernel
+        assert any(entry.role == "toolResult" and "42" in str(entry.content)
+                   for entry in session.transcript)
+    finally:
+        await session.shutdown()
+
+
 async def test_compaction_tells_the_tracer():
     from test_coding_session import _collect_events, _make_provider, _make_reply
 
@@ -152,5 +212,5 @@ def test_the_app_builds_the_root_session_on_a_traced_provider():
 
     from rlmagent import runtime
 
-    source = inspect.getsource(runtime.build_session)
+    source = inspect.getsource(runtime._build_session)
     assert 'tree.provider_for("root")' in source and "on_compacted" in source

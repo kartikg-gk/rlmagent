@@ -126,6 +126,10 @@ def test_a_detached_worker_survives_its_starter_and_runs_a_scheduled_prompt(tmp_
         assert meta["pid"] != os.getpid()
         # The process that started it has exited; it is still there.
         assert "idle" in _cli(env, work, "list").stdout or "busy" in _cli(env, work, "list").stdout
+        conflict = _cli(env, work, "start", "other", "--provider", "openai", "--model", "m",
+                        "--no-approve", "--resume", meta["session"])
+        assert conflict.returncode != 0
+        assert "active writer" in (home / "workers" / "other" / "output.log").read_text()
 
         assert _cli(env, work, "schedule", "w", "first prompt", "--in", "1").returncode == 0
         log = home / "workers" / "w" / "log.jsonl"
@@ -136,6 +140,20 @@ def test_a_detached_worker_survives_its_starter_and_runs_a_scheduled_prompt(tmp_
         assert _wait(replied), log.read_text(encoding="utf-8")
         assert "first prompt" in log.read_text(encoding="utf-8")
         assert "done" in _cli(env, work, "jobs", "w").stdout
+
+        import signal
+
+        os.kill(meta["pid"], signal.SIGTERM)
+        meta_file = home / "workers" / "w" / "meta.json"
+
+        def recovered():
+            current = worker._read(meta_file) or {}
+            return (current.get("state") == "idle" and current.get("pid") != meta["pid"]
+                    and current.get("session") == meta["session"])
+
+        assert _wait(recovered, seconds=30), meta_file.read_text(encoding="utf-8")
+        assert _cli(env, work, "send", "w", "after recovery").returncode == 0
+        assert _wait(lambda: log.read_text(encoding="utf-8").count('"reply"') >= 2, seconds=30)
 
         stopped = _cli(env, work, "stop", "w")
         assert "stopped" in stopped.stdout

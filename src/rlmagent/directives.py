@@ -641,7 +641,7 @@ def build_default_registry() -> CommandRegistry:
             name="mcp",
             description="List MCP servers and their tools; /mcp NAME starts one",
             handler=_cmd_mcp,
-            usage="/mcp [NAME]",
+            usage="/mcp [NAME | login NAME | logout NAME]",
             search_terms=("servers", "connectors", "tools"),
         ),
         SlashCommand(

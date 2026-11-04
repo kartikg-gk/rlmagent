@@ -29,6 +29,7 @@ dependencies = [
 
 [project.optional-dependencies]
 vertex = ["google-auth[requests]>=2.0"]
+mcp-keyring = ["keyring>=25"]
 
 [project.urls]
 Homepage = "https://github.com/kartikg-gk/rlmagent"

@@ -33,6 +33,7 @@ PRESETS: dict[str, dict] = {
 }
 
 START_TIMEOUT = 180.0
+TURN_TIMEOUT = 180.0
 
 
 def agents() -> dict[str, dict]:
@@ -153,33 +154,45 @@ async def answer(name: str, sub: str | None, prompt: str, cwd: Path,
         )
     conn = _Connection(proc, approve=bool(spec.get("approve")))
     pump = asyncio.create_task(conn.pump())
+    turn = None
     try:
-        await asyncio.wait_for(conn.request("initialize", {
-            "protocolVersion": 1,
-            "clientCapabilities": {"fs": {"readTextFile": False, "writeTextFile": False},
-                                   "terminal": False},
-            "clientInfo": {"name": "rlm-agent", "version": "0"},
-        }), START_TIMEOUT)
-        session = await conn.request("session/new", {"cwd": str(cwd), "mcpServers": []})
-        sid = session["sessionId"]
-        modes = {m.get("id") for m in (session.get("modes") or {}).get("availableModes", [])}
-        if spec.get("readonly_mode") in modes:
-            await conn.request("session/set_mode", {"sessionId": sid, "modeId": spec["readonly_mode"]})
-        model = sub or spec.get("model")
-        if model and session.get("models"):
-            await conn.request("session/set_model", {"sessionId": sid, "modelId": model})
-        turn = asyncio.ensure_future(conn.request("session/prompt", {
-            "sessionId": sid, "prompt": [{"type": "text", "text": prompt}]}))
-        while not turn.done():
-            if signal is not None and signal.is_cancelled():
-                await conn.notify("session/cancel", {"sessionId": sid})
-                turn.cancel()
-                raise Cancelled
-            await asyncio.wait({turn}, timeout=0.2)
-        result = turn.result()
+        try:
+            async with asyncio.timeout(START_TIMEOUT):
+                await conn.request("initialize", {
+                    "protocolVersion": 1,
+                    "clientCapabilities": {"fs": {"readTextFile": False, "writeTextFile": False},
+                                           "terminal": False},
+                    "clientInfo": {"name": "rlm-agent", "version": "0"},
+                })
+                session = await conn.request("session/new", {"cwd": str(cwd), "mcpServers": []})
+                sid = session["sessionId"]
+                modes = {m.get("id") for m in (session.get("modes") or {}).get("availableModes", [])}
+                if spec.get("readonly_mode") in modes:
+                    await conn.request("session/set_mode", {
+                        "sessionId": sid, "modeId": spec["readonly_mode"],
+                    })
+                model = sub or spec.get("model")
+                if model and session.get("models"):
+                    await conn.request("session/set_model", {"sessionId": sid, "modelId": model})
+        except TimeoutError:
+            raise ValueError(f"{name} did not initialize within {START_TIMEOUT:g}s") from None
+        try:
+            async with asyncio.timeout(TURN_TIMEOUT):
+                turn = asyncio.create_task(conn.request("session/prompt", {
+                    "sessionId": sid, "prompt": [{"type": "text", "text": prompt}]}))
+                while not turn.done():
+                    if signal is not None and signal.is_cancelled():
+                        await conn.notify("session/cancel", {"sessionId": sid})
+                        raise Cancelled
+                    await asyncio.wait({turn}, timeout=0.2)
+                result = turn.result()
+        except TimeoutError:
+            raise ValueError(f"{name} did not finish its ACP turn within {TURN_TIMEOUT:g}s") from None
     finally:
         from rlmagent.model.external.cli import kill_tree
 
+        if turn is not None and not turn.done():
+            turn.cancel()
         kill_tree(proc)
         await proc.wait()
         pump.cancel()

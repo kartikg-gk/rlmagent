@@ -14,6 +14,28 @@ if TYPE_CHECKING:
 
 async def build_session(ns: argparse.Namespace) -> CodingSession:
     """Resolve configuration and return a ready ``CodingSession``."""
+    from uuid import uuid4
+
+    from rlmagent.cli.main import _die, _sessions_dir
+    from rlmagent.harness.session.lease import SessionBusy, acquire
+
+    if getattr(ns, "no_session", False):
+        return await _build_session(ns)
+    session_id = getattr(ns, "resume", None) or uuid4().hex[:12]
+    try:
+        lease = acquire(_sessions_dir(getattr(ns, "session_dir", None)), session_id)
+    except (SessionBusy, ValueError) as exc:
+        _die(str(exc))
+    try:
+        session = await _build_session(ns, session_id=session_id)
+    except BaseException:
+        lease.close()
+        raise
+    session._writer_lease = lease
+    return session
+
+
+async def _build_session(ns: argparse.Namespace, *, session_id: str | None = None) -> CodingSession:
     from rlmagent.cli.main import (
         _die,
         _info,
@@ -85,6 +107,10 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
     here = os.getcwd()
     configs, problems = load_configs(rlm_agent_home(),
                                      Path(here) if project_inputs_allowed(here) else None)
+    supplied = getattr(ns, "acp_mcp", {})
+    if conflicts := sorted(configs.keys() & supplied.keys()):
+        _die("Editor MCP names already configured: " + ", ".join(conflicts))
+    configs.update(supplied)
     hub = McpHub(configs, here, tree.approver, problems)
     from rlmagent.agentnet import AgentNet
 
@@ -125,6 +151,21 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
         request = Request("run", command)
         check(await tree.approver.approve(request), request)
 
+    async def factory_run(name: str) -> dict:
+        """Run a named factory from the user's library after workspace approval."""
+        import shlex
+
+        from rlmagent.agents.workspace import Workspace
+        from rlmagent.factory import template
+
+        if not template(name).is_file():
+            raise ValueError(f"no factory named {name!r}")
+        command = shlex.join([Path(sys.executable).as_posix(), "-m", "rlmagent.cli.main",
+                              "factory", "run", name])
+        workspace = Workspace(here, tree.approver)
+        workspace.policy = policy
+        return await workspace.run(command, timeout=1800)
+
     jobs = Jobs(here, (sessions_dir or rlm_agent_home()) / "jobs", _approve_job,
                 lambda command: git_refusal(command, policy))
     tools_at = getattr(ns, "tools_at", None)
@@ -141,6 +182,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
                            **net.functions(), **pilot.functions(),
                            **jobs.functions(inbox=lambda: net.take()),
                            "context_usage": context_usage, "compact": compact,
+                           "factory_run": factory_run,
                            "web_search": make_web_search(lambda: tree.network, policy),
                            "history": make_history(
                                lambda: getattr(getattr(built.get("session"), "_vault", None),
@@ -210,6 +252,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
                   "Send a message, or /continue, to carry on.")
     else:
         session = await CodingSession.create(
+            session_id=session_id,
             provider=provider,
             provider_name=provider_name,
             model=model,
@@ -247,6 +290,8 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
                                  + session.usage.total_output_tokens)
     pilot.load()
     net.me = f"s-{session.session_id[:8]}"
+    if sessions_dir is not None:
+        tree.tracer.persist(sessions_dir / f"{session.session_id}.requests.jsonl")
     net.register()
 
     def _progress(text: str) -> None:

@@ -93,6 +93,72 @@ async def test_unknown_methods_and_sessions_are_errors(tmp_path):
         await _stop(pipe, task)
 
 
+async def test_client_mcp_and_session_close(tmp_path):
+    original = _builder(tmp_path, [text_turn("hello")])
+    seen = {}
+
+    async def build(ns):
+        seen.update(ns.acp_mcp)
+        return await original(ns)
+
+    pipe = Pipe()
+    server = Server(pipe.read_line, pipe.write, build=build)
+    task = asyncio.create_task(server.serve())
+    try:
+        pipe.send(2, "session/new", {"cwd": str(tmp_path), "mcpServers": [{
+            "type": "http", "name": "remote", "url": "https://example.test/mcp",
+            "headers": [{"name": "Authorization", "value": "${LITERAL}"}],
+        }, {"name": "local", "command": "fixture", "args": []}]})
+        sid = (await pipe.reply(2))["result"]["sessionId"]
+        pipe.send(3, "session/prompt", {"sessionId": sid, "prompt": [{"type": "text", "text": "hi"}]})
+        assert (await pipe.reply(3))["result"]["stopReason"] == "end_turn"
+        assert seen["remote"].expand(seen["remote"].headers)["Authorization"] == "${LITERAL}"
+        assert seen["local"].command == "fixture"
+        pipe.send(4, "session/close", {"sessionId": sid})
+        snapshot = (await pipe.reply(4))["result"]["_meta"]["rlmagent/session-v1"]
+        assert snapshot["usage"]["message_count"] >= 2
+        assert sid not in server.sessions and sid not in server.mcp_servers
+        pipe.send(5, "_session/steering", {"sessionId": sid, "prompt": []})
+        assert (await pipe.reply(5))["result"]["status"] == "promptRequired"
+    finally:
+        await _stop(pipe, task)
+
+
+async def test_steering_reaches_the_next_model_request(tmp_path):
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class Gated(ReplayProvider):
+        async def stream_response(self, **kwargs):
+            if not self.calls:
+                started.set()
+                await release.wait()
+            async for event in super().stream_response(**kwargs):
+                yield event
+
+    model = Gated([text_turn("first"), text_turn("steered")])
+
+    async def build(ns):
+        return await CodingSession.create(provider=model, provider_name="replay", model="m",
+                                          system="s", tools=[], cwd=str(tmp_path))
+
+    pipe = Pipe()
+    task = asyncio.create_task(Server(pipe.read_line, pipe.write, build=build).serve())
+    try:
+        pipe.send(1, "session/new", {"cwd": str(tmp_path)})
+        sid = (await pipe.reply(1))["result"]["sessionId"]
+        pipe.send(2, "session/prompt", {"sessionId": sid, "prompt": [{"type": "text", "text": "go"}]})
+        await asyncio.wait_for(started.wait(), 5)
+        pipe.send(3, "_session/steering", {"sessionId": sid,
+                  "prompt": [{"type": "text", "text": "adjust course"}]})
+        assert (await pipe.reply(3))["result"]["status"] == "injected"
+        release.set()
+        assert (await pipe.reply(2))["result"]["stopReason"] == "end_turn"
+        assert any(entry.text == "adjust course" for entry in model.calls[-1][2])
+    finally:
+        release.set()
+        await _stop(pipe, task)
+
+
 async def test_approval_goes_to_the_editor(tmp_path):
     pipe, server, task, sid = await _start(tmp_path, [])
     try:

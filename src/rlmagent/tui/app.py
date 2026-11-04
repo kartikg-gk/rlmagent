@@ -73,6 +73,7 @@ class RlmAgentApp(App[None]):
         Binding("f2", "agent_tree", "Agents"),
         Binding("f3", "timeline", "Timeline"),
         Binding("f4", "workers", "Workers"),
+        Binding("f1", "show_help", "Help"),
     ]
 
     def __init__(self, bridge: SessionBridge | None = None) -> None:
@@ -241,6 +242,11 @@ class RlmAgentApp(App[None]):
         from rlmagent.tui.inspect import WorkersScreen
 
         self.push_screen(WorkersScreen())
+
+    def action_show_help(self) -> None:
+        from rlmagent.tui.inspect import HelpScreen
+
+        self.push_screen(HelpScreen())
 
     def action_escape(self) -> None:
         """Esc stops a running turn; when idle with an empty prompt it leaves the app."""

@@ -399,7 +399,9 @@ class AnthropicProvider:
             if attempt > 0 and self._profile.resolver is not None:
                 cred = await self._profile.resolver()
 
-            headers = _auth_headers(cred)
+            from rlmagent.agents.trace import correlate_headers
+
+            headers = correlate_headers(_auth_headers(cred))
             if idempotency_key is not None:
                 headers["Idempotency-Key"] = idempotency_key
             machine = ResponseMachine(model=model, provider=self._profile.name)
