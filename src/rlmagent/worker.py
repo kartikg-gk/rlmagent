@@ -829,7 +829,8 @@ def _attach(name: str, *, tui: bool = False) -> int:
         print(f"Worker {name} is not running; what you send waits for its next start.",
               file=sys.stderr)
     done = threading.Event()
-    threading.Thread(target=_follow, args=(name, done, 20), daemon=True).start()
+    follower = threading.Thread(target=_follow, args=(name, done, 20), daemon=True)
+    follower.start()
     print("Attached. Lines you type go to the worker. /detach leaves it running.", flush=True)
     try:
         while True:
@@ -854,6 +855,9 @@ def _attach(name: str, *, tui: bool = False) -> int:
     except KeyboardInterrupt:
         pass
     done.set()
+    # A follower still printing while the interpreter shuts down aborts the
+    # process, so it finishes its current line before this one exits.
+    follower.join(timeout=5)
     return 0
 
 
