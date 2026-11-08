@@ -813,7 +813,7 @@ class CodingSession:
                 "it goes with your next message.")
 
     async def _cmd_btw(self, arg: str) -> str:
-        """Answer a side question from the conversation so far, without adding to it."""
+        """Answer from the conversation so far; the exchange is not kept in it."""
         question = arg.strip()
         if not question:
             return "Usage: /btw QUESTION"

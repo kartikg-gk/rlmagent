@@ -337,8 +337,8 @@ worker, and `await heartbeat(text)` reports progress, shown in the terminal and 
 
 Other functions: `await web_search(query)` when `BRAVE_API_KEY`, `TAVILY_API_KEY` or
 `SERPER_API_KEY` is set; `await context_usage()`; `await compact()` to summarize older
-conversation when the turn ends. `/btw QUESTION` answers a side question without
-adding it to the conversation.
+conversation when the turn ends. `/btw QUESTION` answers from the conversation so far; neither the
+question nor the answer is kept in it.
 
 `/image PATH` attaches a PNG, JPEG, GIF or WebP file (up to 5 MB) to your next
 message. Use a model and provider that accept image input.
@@ -498,7 +498,7 @@ was lost, up to three times per kernel.
 
 | Flag | Effect |
 | --- | --- |
-| `--deny-git` | Refuse git commands that reach beyond the current branch (push, fetch, checkout, branch, tag, reset, ...) |
+| `--deny-git` | Refuse git commands that touch other branches, remotes or history (push, fetch, checkout, branch, tag, reset, ...) |
 | `--max-tool-output BYTES` | Most output one cell shows the model (default 20000; zero disables this cap; the start and end are kept) |
 | `--max-compactions N` | Most compactions in the session |
 | `--agent-max-tokens N` | Most completion tokens any one agent may spend |

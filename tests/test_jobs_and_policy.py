@@ -45,7 +45,7 @@ async def test_timeouts_stops_and_services(tmp_path):
                   f'time.sleep(30)"')
         svc = await jobs.service_start("web", server, ready="listening", wait=20)
         assert svc["ready"] and svc["service"] and not svc["done"]
-        with pytest.raises(ValueError, match="already running"):
+        with pytest.raises(ValueError, match="is up; stop it"):
             await jobs.service_start("web", server)
         assert (await jobs.job_stop("web"))["stopped"]
     finally:
@@ -84,7 +84,7 @@ async def test_jobs_ask_first_and_honour_the_git_guard(tmp_path):
 
     policy = Policy(allow_git=False)
     jobs = _jobs(tmp_path, approve, lambda c: git_refusal(c, policy))
-    with pytest.raises(ValueError, match="git push reaches beyond"):
+    with pytest.raises(ValueError, match="git push touches other branches"):
         await jobs.job_start("git push origin main")
     with pytest.raises(PermissionError):
         await jobs.job_start("echo hi")
@@ -151,7 +151,7 @@ async def test_workspace_run_honours_the_git_guard(tmp_path):
 
     ws = Workspace(tmp_path, Approver("auto"))
     ws.policy = Policy(allow_git=False)
-    with pytest.raises(ValueError, match="git fetch reaches beyond"):
+    with pytest.raises(ValueError, match="git fetch touches other branches"):
         await ws.run("git fetch")
 
 

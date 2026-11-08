@@ -63,7 +63,7 @@ def git_refusal(command: str, policy: Policy) -> str | None:
         return None
     for sub, args in _git_calls(command):
         if sub in _GIT_REACHING:
-            return (f"git {sub} reaches beyond the current branch and is turned off for this "
+            return (f"git {sub} touches other branches, remotes or history, which this run does not allow; "
                     "run; work with status, diff, add, commit and log")
         if sub == "log" and any(a in ("--all", "--branches", "--remotes", "--tags") for a in args):
             return "git log over other refs is turned off for this run"

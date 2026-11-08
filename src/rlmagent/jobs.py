@@ -244,7 +244,7 @@ class Jobs:
         for job in self.jobs.values():
             job.refresh()
             if job.name == name and not job.done:
-                raise ValueError(f"service {name!r} is already running; job_stop it first")
+                raise ValueError(f"a service named {name!r} is up; stop it with job_stop first")
         job = await self._launch(str(command), None, True, str(name), persist, env=env)
         summary = job.summary()
         if ready:

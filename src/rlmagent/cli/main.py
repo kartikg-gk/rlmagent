@@ -153,7 +153,7 @@ def _build_run_parser() -> argparse.ArgumentParser:
                         "tcp://HOST:PORT (token in RLM_AGENT_TOOLS_TOKEN) or a command "
                         "that serves over stdio, e.g. 'python -m rlmagent.toolhost --root /w'.")
     p.add_argument("--deny-git", action="store_true",
-                   help="Refuse git commands that reach beyond the current branch "
+                   help="Refuse git commands that touch other branches, remotes or history "
                         "(push, fetch, checkout, branch, tag, reset, ...).")
     p.add_argument("--shell-access", choices=("workspace", "host"), default="workspace",
                    help="Shell filesystem access: isolated workspace (default), or grant host access.")

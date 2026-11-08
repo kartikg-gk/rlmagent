@@ -667,7 +667,7 @@ def build_default_registry() -> CommandRegistry:
         ),
         SlashCommand(
             name="btw",
-            description="Ask a side question about the conversation without adding to it",
+            description="Ask about the conversation so far; the exchange is not kept",
             handler=_cmd_btw,
             usage="/btw QUESTION",
             search_terms=("aside", "question", "quick"),
