@@ -28,7 +28,17 @@ def main():
             state["heartbeat"] = time.time()
             stage = meta.with_suffix(".tmp")
             stage.write_text(json.dumps(state), encoding="utf-8")
-            stage.replace(meta)
+            # Windows refuses the swap while a reader has the file open; that
+            # reader is gone in moments, and giving up here would abandon the
+            # job's process with its state half written.
+            for attempt in range(50):
+                try:
+                    stage.replace(meta)
+                    return
+                except PermissionError:
+                    if attempt == 49:
+                        raise
+                    time.sleep(0.02)
 
     proc = None
     try:

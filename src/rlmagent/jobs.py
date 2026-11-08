@@ -54,7 +54,10 @@ class Job:
     def refresh(self):
         if not self.metadata.exists():
             return
-        state = json.loads(self.metadata.read_text(encoding="utf-8"))
+        try:
+            state = json.loads(self.metadata.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return  # caught mid-update; the next refresh reads the new state
         if state.get("ended") is None and time.time() - state.get("heartbeat", 0) > 3:
             import psutil
             try:
