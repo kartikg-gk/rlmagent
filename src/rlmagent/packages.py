@@ -63,6 +63,22 @@ def _records(store: Path | None = None) -> dict:
     return entries
 
 
+def _installer(target: Path, source: str) -> list[str]:
+    """The command that installs `source` into `target`.
+
+    Environments made by uv (including `uv tool install`) carry no pip, so uv
+    installs there for this interpreter; pip is used wherever it exists.
+    """
+    import importlib.util
+
+    if importlib.util.find_spec("pip") is not None:
+        return [sys.executable, "-m", "pip", "install", "--target", str(target), source]
+    uv = shutil.which("uv")
+    if uv is None:
+        raise ValueError("Installing a package needs pip or uv in this environment")
+    return [uv, "pip", "install", "--python", sys.executable, "--target", str(target), source]
+
+
 def _location(directory: str, store: Path | None = None) -> Path:
     store = store or root()
     if not isinstance(directory, str) or not re.fullmatch(r"[a-f0-9]{32}", directory):
@@ -194,10 +210,7 @@ def run(argv: list[str]) -> int:
                     raise ValueError("Use a package-index requirement or a local package path")
                 directory = uuid4().hex
                 target = _location(directory, store)
-                result = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "--target", str(target), source],
-                    check=False,
-                )
+                result = subprocess.run(_installer(target, source), check=False)
                 if result.returncode:
                     return result.returncode
                 # Validate declared resources before making the installation active.

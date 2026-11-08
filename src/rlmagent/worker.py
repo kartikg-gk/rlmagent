@@ -75,7 +75,16 @@ def _pid_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True
-    return True
+    # A child that exited but was never reaped (a long-lived watcher's recovered
+    # supervisor, say) still answers signal 0; it is not running.
+    import psutil
+
+    try:
+        return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.Error:
+        return True
 
 
 def state_of(name: str) -> dict:
