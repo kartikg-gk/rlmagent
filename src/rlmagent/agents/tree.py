@@ -17,7 +17,7 @@ from rlmagent.agents.budget import BudgetedProvider
 from rlmagent.agents.trace import TracedProvider, Tracer
 from rlmagent.agents.bridge import BridgeServer, kernel_env
 from rlmagent.agents.kernel_api import KERNEL_API
-from rlmagent.agents.approval import Approver
+from rlmagent.agents.approval import Approver, Refused
 from rlmagent.agents.wasm_api import wasm_api
 from rlmagent.agents.workspace import Workspace
 from rlmagent.kernel import KernelSession
@@ -169,6 +169,8 @@ class AgentTree:
     def attach(self, agent_id: str, session) -> None:
         """Record sub-agents this agent starts in `session`'s saved file."""
         self._session_of[agent_id] = session
+        if agent_id == self.root_id():
+            self.session = session
 
     def root_id(self) -> str:
         if self._root_id is None:
@@ -199,6 +201,11 @@ class AgentTree:
     def _sandbox_for(self, node: AgentNode) -> WasmKernel:
         """Give each recursive agent a private interpreter in the shared Node host."""
         workspace = Workspace(self.cwd, self.approver)
+        workspace.policy = getattr(self, "policy", None)
+        functions = workspace.functions()
+        if workspace.policy is not None:
+            functions = {name: fn for name, fn in functions.items()
+                         if workspace.policy.allows_tool(name)}
 
         async def call(op, args):
             return await self._handle(node.id, op, args)
@@ -207,7 +214,7 @@ class AgentTree:
             await self._handle(node.id, "final", {"value": value, "note": ""})
 
         kernel = WasmKernel(
-            cwd=self.cwd, bridges={"_rlmagent": call, **workspace.functions()},
+            cwd=self.cwd, bridges={"_rlmagent": call, **functions},
             startup_code=wasm_api(self._can_delegate(node), node.parent_id is not None,
                                   network=self.network),
             timeout=self.cell_timeout, on_final=final, restore=self.restore_kernel,
@@ -227,6 +234,9 @@ class AgentTree:
         node = self.nodes.get(agent_id)
         if node is None:
             raise RuntimeError(f"unknown agent {agent_id!r}")
+        policy = getattr(self, "policy", None)
+        if op in ("guidance", "improve", "playbook") and policy is not None and not policy.allows_tool(op):
+            raise Refused(f"{op} is disabled by the tool policy")
         if op == "context":
             return node.context
         if op == "final":

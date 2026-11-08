@@ -46,7 +46,7 @@ _PACKAGE = "rlmagent"
 _DEFAULT_ANTHROPIC_MODEL = "claude-opus-5"
 _DEFAULT_OPENAI_MODEL = "gpt-5"
 _DEFAULT_SYSTEM = "You are a helpful coding assistant."
-_SUBCOMMANDS = frozenset({"acp", "config", "doctor", "factory", "provider", "session", "status", "tui",
+_SUBCOMMANDS = frozenset({"acp", "config", "doctor", "factory", "package", "provider", "session", "status", "tui",
                           "update", "worker"})
 
 
@@ -126,6 +126,7 @@ def _build_run_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--model", "-m", default=None, help="Override model identifier.")
     p.add_argument("--provider", default=None, help="Override provider backend.")
+    p.add_argument("--offline", action="store_true", help="Skip optional network discovery and update checks.")
     p.add_argument(
         "--resume", "-r", metavar="ID", default=None,
         help="Resume a previous session by its ID.",
@@ -154,8 +155,12 @@ def _build_run_parser() -> argparse.ArgumentParser:
     p.add_argument("--deny-git", action="store_true",
                    help="Refuse git commands that reach beyond the current branch "
                         "(push, fetch, checkout, branch, tag, reset, ...).")
+    p.add_argument("--shell-access", choices=("workspace", "host"), default="workspace",
+                   help="Shell filesystem access: isolated workspace (default), or grant host access.")
+    p.add_argument("--shell-network", action="store_true",
+                   help="Allow network access from workspace-isolated shell commands.")
     p.add_argument("--max-tool-output", type=int, default=None, metavar="BYTES",
-                   help="Most output one cell shows the model (default 20000).")
+                   help="Most output one cell shows the model (default 20000; 0 disables this cap).")
     p.add_argument("--max-compactions", type=int, default=None, metavar="N",
                    help="Most context compactions in this session.")
     p.add_argument("--agent-max-tokens", type=int, default=None, metavar="N",
@@ -201,12 +206,22 @@ def _build_run_parser() -> argparse.ArgumentParser:
                         help="Wall-clock limit for the whole run (default none).")
     budget.add_argument("--cell-timeout", type=float, default=300.0,
                         help="Seconds one kernel cell may run before it is interrupted (default 300).")
+    budget.add_argument("--request-timeout", type=float, default=300.0,
+                        help="Deadline in seconds for each complete model response (default 300).")
     p.add_argument(
         "--no-session", action="store_true", help="Disable session persistence.",
     )
     p.add_argument(
         "--repl", action="store_true",
         help="Use the line-based REPL instead of the Textual UI.",
+    )
+    ownership = p.add_mutually_exclusive_group()
+    ownership.add_argument(
+        "--supervised", action="store_true",
+        help="Start or reconnect to a saved interactive session owned by a worker.",
+    )
+    ownership.add_argument(
+        "--foreground", action="store_true", help="Run the interactive session in this process.",
     )
     trust = p.add_mutually_exclusive_group()
     trust.add_argument(
@@ -225,6 +240,12 @@ def _build_provider_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="action", required=True)
     sub.add_parser("list", help="List configured providers.")
     sub.add_parser("setup", help="Interactive provider setup.")
+    for action in ("login", "logout"):
+        auth = sub.add_parser(action, help=f"{action.title()} a subscription account.")
+        auth.add_argument("name", choices=["codex", "copilot", "claude-subscription", "xai-subscription"])
+        if action == "login":
+            auth.add_argument("--new-account", action="store_true")
+            auth.add_argument("--client-registration", type=Path, default=None)
     for action in ("models", "test"):
         remote = sub.add_parser(action, help="Query the provider model endpoint.")
         remote.add_argument("name")
@@ -242,9 +263,17 @@ def _build_session_parser() -> argparse.ArgumentParser:
     exp = sub.add_parser("export", help="Export a session to stdout.")
     exp.add_argument("session_id", help="Session ID to export.")
     exp.add_argument(
-        "--format", "-f", choices=["jsonl", "json", "text"], default="jsonl",
+        "--format", "-f", choices=["jsonl", "json", "text", "html"], default="jsonl",
     )
     exp.add_argument("--session-dir", default=None, dest="sub_session_dir")
+    share = sub.add_parser("share", help="Preview or explicitly publish an unlisted session gist.")
+    share.add_argument("session_id")
+    share.add_argument("--publish", action="store_true")
+    share.add_argument("--sha256", default=None, help="Digest of the exact previously reviewed payload")
+    share.add_argument("--session-dir", default=None, dest="sub_session_dir")
+    imp = sub.add_parser("import", help="Import a validated JSONL session under a new ID.")
+    imp.add_argument("file", type=Path)
+    imp.add_argument("--session-dir", default=None, dest="sub_session_dir")
     st = sub.add_parser("stats", help="Print a session's token and cost totals as JSON.")
     st.add_argument(
         "session_id", nargs="?", default=None,
@@ -302,6 +331,10 @@ def _resolve_model(override: str | None, provider_name: str = "anthropic") -> st
         return "cli:claude-code"
     if provider_name == "vertex":
         return "google/gemini-3.5-flash"
+    if provider_name in ("google", "mistral", "azure", "codex", "copilot", "claude-subscription", "xai", "xai-subscription"):
+        from rlmagent.config.store import provider_info
+
+        return provider_info(provider_name).models[0]
     return _DEFAULT_ANTHROPIC_MODEL
 
 
@@ -515,6 +548,10 @@ async def _export_session(base: Path, sid: str, fmt: str, out: TextIO) -> None:
         out.write(
             TypeAdapter(list[SessionRecord]).dump_json(records, indent=2).decode() + "\n"
         )
+    elif fmt == "html":
+        from rlmagent.session_html import render
+
+        out.write(render([], sid, records=records))
     elif fmt == "text":
         for r in records:
             if isinstance(r, TranscriptRecord):
@@ -556,6 +593,53 @@ async def _session_stats(base: Path, sid: str | None, out: TextIO) -> None:
 
 def _handle_provider(argv: list[str]) -> int:
     ns = _build_provider_parser().parse_args(argv)
+
+    if ns.action in ("login", "logout"):
+        from rlmagent.model.settings import ConfigError
+        from rlmagent.model.subscription import login, logout
+
+        if ns.name == "xai-subscription":
+            from rlmagent.model import registered_oauth
+
+            try:
+                if ns.action == "login":
+                    asyncio.run(registered_oauth.login(ns.client_registration))
+                    _info("Registered OAuth token saved. Verify inference access separately.")
+                else:
+                    asyncio.run(registered_oauth.logout())
+                    _info("Local OAuth tokens cleared; provider-side revocation was not attempted.")
+                return 0
+            except (ConfigError, OSError, ValueError) as error:
+                _info(str(error))
+                return 1
+        if ns.name != "codex":
+            import shutil
+            import subprocess
+
+            executable = shutil.which("copilot" if ns.name == "copilot" else "claude")
+            if executable is None:
+                _info("Install the provider's official CLI to use its account sign-in.")
+                return 1
+            if ns.name == "copilot" and ns.action == "logout":
+                _info("Run /logout inside the official Copilot CLI to sign out.")
+                return 0
+            command = [executable, ns.action] if ns.name == "copilot" else [executable, "auth", ns.action]
+            return subprocess.run(command, check=False).returncode
+
+        try:
+            if ns.action == "login":
+                _info("Continue with ChatGPT in your browser. Waiting for consent...")
+                asyncio.run(login(new_account=ns.new_account))
+                _info("Subscription sign-in saved in the platform credential store. "
+                      "Use --provider codex to run an inference check.")
+            else:
+                confirmed = asyncio.run(logout())
+                _info("Signed out locally." + ("" if confirmed else
+                      " Remote revocation was not confirmed; disconnect in ChatGPT Settings."))
+            return 0
+        except ConfigError as exc:
+            _info(str(exc))
+            return 1
 
     if ns.action in ("models", "test"):
         from rlmagent.model.discovery import discover_models, check_provider
@@ -642,6 +726,43 @@ def _handle_session(argv: list[str]) -> int:
 
     if ns.action == "export":
         asyncio.run(_export_session(base, ns.session_id, ns.format, sys.stdout))
+        return 0
+    if ns.action == "share":
+        import json
+        import re
+
+        from rlmagent.harness.session.store import serialize_record
+        from rlmagent.session_html import render
+        from rlmagent.session_share import prepare, publish
+
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", ns.session_id):
+            _die("Invalid session identifier")
+        async def share_session():
+            records = await JsonlVault(_session_path(base, ns.session_id)).read_all()
+            if not records:
+                raise ValueError("No session records found")
+            body, digest = prepare(ns.session_id, render(
+                [record.message for record in records if isinstance(record, TranscriptRecord)],
+                ns.session_id, records=records), "".join(serialize_record(record) for record in records))
+            if not ns.publish:
+                print(json.dumps(body, indent=2, ensure_ascii=False))
+                print(f"SHA-256: {digest}")
+                print("Unlisted gist: anyone with the link can read it. Nothing uploaded.")
+                return
+            print(await publish(body, expected_digest=ns.sha256,
+                                token=os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")))
+        try:
+            asyncio.run(share_session())
+        except (OSError, ValueError) as error:
+            _die(str(error))
+        return 0
+    if ns.action == "import":
+        from rlmagent.session_import import import_session
+
+        try:
+            print(import_session(ns.file, base))
+        except (OSError, ValueError) as exc:
+            _die(f"Cannot import session: {exc}")
         return 0
 
     if ns.action == "stats":
@@ -796,6 +917,8 @@ async def _run_interactive(session: CodingSession) -> int:
             if text == "/help":
                 response = f"{response}\n{_HELP_SUFFIX}"
             _info(response)
+            if text.split() in (["/autonomous"], ["/autonomous", "on"]):
+                await _keep_going(session, True, print_mode=False)
             continue
 
         # A registered command the session does not run (terminal-UI pickers and
@@ -960,6 +1083,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     args = list(argv if argv is not None else sys.argv[1:])
+    if "--offline" in args:
+        os.environ["RLM_AGENT_OFFLINE"] = "1"
+        args.remove("--offline")
+    from rlmagent.packages import activate
+
+    activate()
 
     if "--acp" in args:
         from rlmagent.acp.server import run as serve_acp
@@ -970,6 +1099,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Subcommand dispatch (checked before argparse to avoid positional conflicts)
     if args and args[0] in _SUBCOMMANDS:
         cmd, rest = args[0], args[1:]
+        if cmd == "package":
+            from rlmagent.packages import run
+
+            return run(rest)
         if cmd == "acp":
             from rlmagent.model.external.acp_install import main as acp_main
             return acp_main(rest)
@@ -981,7 +1114,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             return run(rest)
         if cmd == "tui":
-            return _handle_tui(_build_run_parser().parse_args(rest))
+            ns = _build_run_parser().parse_args(rest)
+            if ns.supervised or _saved_interactive(ns):
+                return _handle_supervised(ns, rest, tui=True)
+            return _handle_tui(ns)
         if cmd == "provider":
             return _handle_provider(rest)
         if cmd == "session":
@@ -1002,8 +1138,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Default: run mode
     ns = _build_run_parser().parse_args(args)
 
-    # A bare interactive `rlm-agent` opens the Textual UI. It needs no provider or
-    # session, so this runs before any credential resolution.
+    if ns.supervised or (_saved_interactive(ns) and sys.stdin.isatty()):
+        tui = not ns.repl and sys.stdin.isatty() and sys.stdout.isatty() and _textual_available()
+        return _handle_supervised(ns, args, tui=tui)
+
+    # Explicit foreground and no-session runs can still use the in-process TUI.
     if not ns.contract and _should_launch_tui(ns):
         return _handle_tui(ns)
 
@@ -1012,6 +1151,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         _info("\nInterrupted.")
         return 130
+
+
+def _saved_interactive(ns: argparse.Namespace) -> bool:
+    return not (ns.foreground or ns.no_session or ns.contract or ns.print_mode or ns.prompt is not None)
+
+
+def _handle_supervised(ns: argparse.Namespace, args: list[str], *, tui: bool) -> int:
+    if ns.no_session or ns.contract or ns.print_mode or ns.prompt is not None:
+        _die("--supervised requires an interactive saved session")
+    from rlmagent.worker import start_interactive
+
+    if tui and not _textual_available():
+        _die("The TUI requires the 'textual' extra. Install it with: pip install rlmagent[tui]")
+    try:
+        return start_interactive(args, session_id=ns.resume, tui=tui)
+    except ValueError as error:
+        _die(str(error))
 
 
 if __name__ == "__main__":

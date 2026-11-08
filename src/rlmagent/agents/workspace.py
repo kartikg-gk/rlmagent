@@ -10,6 +10,7 @@ import re
 import shutil
 import time
 from pathlib import Path
+from rlmness.environment import execution_environment
 
 from rlmagent.agents.approval import Approver, Request, Refused, check
 from rlmagent.agents.patch import PatchError, parse, patched
@@ -215,6 +216,7 @@ class Workspace:
         return answer or "Error: the user did not answer. Decide yourself and say what you assumed."
 
     async def run(self, cmd: str, timeout: float = 120.0) -> dict:
+        isolated = self.policy is not None and self.policy.shell_access == "workspace"
         if self.policy is not None:
             from rlmagent.policy import git_refusal
 
@@ -229,19 +231,24 @@ class Workspace:
             )
             if candidate.is_file():
                 bash = str(candidate)
-        if bash is None:
+        if bash is None and not isolated:
             raise OSError("Bash is required for workspace commands")
         timeout = max(0.1, min(float(timeout), 1800.0))
+        argv = [bash, "--noprofile", "--norc", "-c", cmd]
+        if isolated:
+            from rlmagent.shell_sandbox import plan
+            argv = await asyncio.to_thread(plan, str(self.root), cmd,
+                                           network=self.policy.shell_network)
+        return await self._execute_argv(argv, timeout, isolated=isolated)
+
+    async def _execute_argv(self, argv, timeout, *, isolated=False):
         proc = await asyncio.create_subprocess_exec(
-            bash,
-            "--noprofile",
-            "--norc",
-            "-c",
-            cmd,
+            *argv,
             cwd=str(self.root),
-            stdin=asyncio.subprocess.DEVNULL,
+            stdin=asyncio.subprocess.PIPE if isolated else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env=execution_environment({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}),
             **own_group(),
         )
         from rlmagent.agents.output import OutputTail
@@ -282,12 +289,19 @@ class Workspace:
             await asyncio.gather(reader, return_exceptions=True)
             return {
                 "exit": None,
+                "process_exit": proc.returncode,
+                "signal": -proc.returncode if proc.returncode is not None and proc.returncode < 0 else None,
                 "output": tail.text(),
+                "truncated": tail.truncated,
+                "output_bytes": tail.total,
                 "timed_out": True,
                 "message": f"timed out after {timeout:.0f}s",
             }
         return {
             "exit": proc.returncode,
+            "process_exit": proc.returncode,
+            "signal": -proc.returncode if proc.returncode < 0 else None,
+            "timed_out": False,
             "output": tail.text(),
             "truncated": tail.truncated,
             "output_bytes": tail.total,

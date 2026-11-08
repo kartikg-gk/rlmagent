@@ -122,6 +122,7 @@ class HarnessStore:
         self.path = path
         self._memory = Snapshot()
         self._mutex = threading.RLock()
+        self._versions: dict[int, Snapshot] = {}
 
     def _read(self) -> Snapshot:
         if self.path is None:
@@ -153,8 +154,15 @@ class HarnessStore:
             if candidate.revision != baseline.revision + 1:
                 raise ValueError("Candidate must advance the harness revision once")
             if self.path is None:
+                self._versions[baseline.revision] = baseline.model_copy(deep=True)
                 self._memory = candidate.model_copy(deep=True)
             else:
+                versions = self.path.parent / "snapshots"
+                versions.mkdir(exist_ok=True)
+                saved = versions / f"{baseline.revision}.json"
+                if not saved.exists():
+                    with saved.open("x", encoding="utf-8") as output:
+                        output.write(baseline.model_dump_json(indent=2))
                 descriptor, name = tempfile.mkstemp(prefix=".harness-", dir=self.path.parent)
                 temporary = Path(name)
                 try:
@@ -166,3 +174,20 @@ class HarnessStore:
                 finally:
                     temporary.unlink(missing_ok=True)
             return candidate.model_copy(deep=True)
+
+    def version(self, revision: int) -> Snapshot:
+        if revision < 0:
+            raise ValueError("revision must be nonnegative")
+        current = self.read()
+        if current.revision == revision:
+            return current
+        if self.path is None:
+            if revision not in self._versions:
+                raise ValueError("no saved snapshot for this revision")
+            return self._versions[revision].model_copy(deep=True)
+        try:
+            return Snapshot.model_validate_json(
+                (self.path.parent / "snapshots" / f"{revision}.json").read_text(encoding="utf-8")
+            )
+        except FileNotFoundError:
+            raise ValueError("no saved snapshot for this revision") from None

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from contextlib import suppress
 from pathlib import Path
 from uuid import uuid4
@@ -15,14 +16,17 @@ from rlmagent.skillset import Skill
 
 #: A saved note is sent with every request, so a long one is paid for every time.
 DIGEST_CHARS = 400
+AUTO_COOLDOWN_TURNS = 3
+BUSY_PHASES = ("reviewing", "awaiting review", "ready", "applying")
 
 
 class Signal:
-    def __init__(self):
+    def __init__(self, enabled=None):
         self.cancelled = False
+        self.enabled = enabled
 
     def is_cancelled(self):
-        return self.cancelled
+        return self.cancelled or (self.enabled is not None and not self.enabled())
 
 
 class Refinement:
@@ -33,27 +37,138 @@ class Refinement:
         self.base_backend = getattr(getattr(session, "backend", None), "instructions", None)
         self.installed = list(session._skills)
         self.task = None
-        self.signal = Signal()
+        self.signal = Signal(self.enabled)
         self.generation = 0
         self.phase = "idle"
         self.detail = "No manual review has been requested."
         self.job_id = None
         self.draft = None
+        self.automatic = "off"
+        self._automatic_job = False
+        self._pending_evidence = None
+        self._settled_turns = 0
+        self._next_review_turn = 0
         # A proposal that changes guidance waits for /refine apply before it is saved.
         self.review_first = True
         self._apply_active()
 
     def writable(self):
+        if not self.enabled():
+            return False
         if self.session.plan_mode:
             return False
         improver = getattr(self.session, "improver", None)
         return getattr(improver, "writable", True)
+
+    def enabled(self) -> bool:
+        home = getattr(self, "home", None)
+        if home is None:
+            return getattr(self, "_enabled", True)
+        try:
+            value = json.loads((home / "refinement.json").read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return True
+        if not isinstance(value, dict) or value.keys() != {"enabled"} or type(value["enabled"]) is not bool:
+            raise ValueError("Invalid global refinement preference")
+        return value["enabled"]
 
     def status(self):
         identity = f" {self.job_id}" if self.job_id else ""
         return f"Refinement{identity}: {self.phase}. {self.detail}"
 
     async def command(self, argument):
+        mode = argument.strip()
+        if mode == "auto" or mode.startswith("auto "):
+            selection = mode.removeprefix("auto").strip()
+            if not selection:
+                return f"Automatic harness refinement: {self.automatic}."
+            if selection not in ("review", "apply", "off"):
+                return "Use /refine auto review|apply|off."
+            if selection != "off" and not self.writable():
+                return "Automatic refinement requires writable harness guidance."
+            if self._automatic_job and selection != self.automatic:
+                self.cancel()
+            self.automatic = selection
+            if selection == "off":
+                self._pending_evidence = None
+            return f"Automatic harness refinement: {selection}."
+        if mode.startswith("scope"):
+            words = mode.split()
+            if len(words) == 1:
+                return "Refinement scope: " + getattr(self, "scope", "project")
+            if len(words) != 2 or words[1] not in ("session", "project"):
+                return "Use /refine scope session|project."
+            if self.session.harness.active or not self.writable():
+                return "Changing scope requires an idle writable session."
+            self.cancel()
+            from rlmagent.refinement.scoped import ScopedStore
+
+            if not hasattr(self, "project_store"):
+                self.project_store = self.store
+            if words[1] == "session":
+                folder = (project_folder(self.home, self.session.cwd) / "sessions" /
+                          self.session.session_id) if hasattr(self, "home") and self.store.path else None
+                path = folder / "state.json" if folder else None
+                self.store = ScopedStore(path, self.session, self.active)
+                self.store.initialize()
+            else:
+                self.store = self.project_store
+            self.scope = words[1]
+            self.active = self.store.read()
+            if hasattr(self, "home") and self.project_store.path is not None:
+                folder = project_folder(self.home, self.session.cwd) / "sessions" / self.session.session_id
+                folder.mkdir(parents=True, exist_ok=True)
+                preference = folder / "scope.json"
+                temporary = preference.with_suffix(f".{uuid4().hex}.tmp")
+                try:
+                    temporary.write_text(json.dumps({"scope": self.scope}), encoding="utf-8")
+                    temporary.replace(preference)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            self._apply_active()
+            return "Refinement scope: " + self.scope
+        if mode in ("on", "off"):
+            self.cancel()
+            self._enabled = mode == "on"
+            if home := getattr(self, "home", None):
+                from rlmagent.refinement.store import _lock
+
+                home.mkdir(parents=True, exist_ok=True)
+                with _lock(home / "refinement.lock"):
+                    path = home / "refinement.json"
+                    staged = path.with_suffix(f".{uuid4().hex}.tmp")
+                    try:
+                        staged.write_text(json.dumps({"enabled": self._enabled}), encoding="utf-8")
+                        staged.replace(path)
+                    finally:
+                        staged.unlink(missing_ok=True)
+            self._apply_active()
+            return "Harness refinements " + ("enabled." if self._enabled else "disabled.")
+        if mode.startswith("rollback "):
+            if self.session.harness.active or not self.writable():
+                return "Rollback requires an idle writable session with refinements enabled."
+            from rlmagent.refinement.store import ChangeNote
+
+            try:
+                revision = int(mode.split()[1])
+                baseline = self.store.read()
+                target = self.store.version(revision)
+                candidate = baseline.model_copy(deep=True)
+                candidate.entries = target.entries
+                candidate.revision += 1
+                candidate.history.append(ChangeNote(
+                    id=uuid4().hex, summary=f"Restore guidance from revision {revision}",
+                    evidence="User requested rollback", expected="Restore the selected saved guidance",
+                    edits=[{"action": "rollback", "revision": revision}],
+                ))
+                self.cancel()
+                self.active = self.store.commit(baseline, candidate)
+                self._apply_active()
+                return f"Restored guidance from revision {revision}."
+            except (ValueError, IndexError) as exc:
+                return str(exc)
+        if not self.enabled() and mode not in ("status", "cancel"):
+            return "Harness refinements are disabled. Use /refine on to enable them."
         if argument.strip() == "status":
             return self.status()
         if argument.strip() == "cancel":
@@ -80,16 +195,40 @@ class Refinement:
             return evidence.rate(words[1], words[2])
         if not self.writable():
             return "Refinement is unavailable while guidance is read-only."
-        if self.phase in ("reviewing", "awaiting review", "ready", "applying"):
+        if self.phase in BUSY_PHASES:
             return self.status() + " Finish or cancel this review before starting another."
+        return self._start_review(argument.strip() or None, evidence_text(list(self.session.transcript)))
+
+    def compacted(self, transcript) -> None:
+        if self.automatic != "off" and self.writable():
+            self._pending_evidence = evidence_text(transcript)
+            self._maybe_start_review()
+
+    def settled(self) -> None:
+        self._settled_turns += 1
+        self._maybe_start_review()
+
+    def _maybe_start_review(self) -> None:
+        if (
+            self._pending_evidence is None or self.session.harness.active
+            or self.phase in BUSY_PHASES or self._settled_turns < self._next_review_turn
+            or not self.writable()
+        ):
+            return
+        evidence, self._pending_evidence = self._pending_evidence, None
+        self._next_review_turn = self._settled_turns + AUTO_COOLDOWN_TURNS
+        self._start_review("Review the run that led to compaction.", evidence, automatic=True)
+
+    def _start_review(self, focus, evidence, *, automatic=False):
         baseline = self.store.read()
-        evidence = evidence_text(list(self.session.transcript))
         provider, model = self.session._provider, self.session.model
         self.generation += 1
         generation = self.generation
-        self.signal = Signal()
+        self.signal = Signal(self.enabled)
         self.job_id = uuid4().hex[:12]
         self.phase, self.detail = "reviewing", "Starting a bounded harness review."
+        self._automatic_job = automatic
+        review_first = self.automatic != "apply" if automatic else self.review_first
         signal = self.signal
 
         def progress(text):
@@ -104,7 +243,7 @@ class Refinement:
                         model,
                         baseline,
                         evidence,
-                        argument.strip() or None,
+                        focus,
                         signal,
                         progress,
                     ),
@@ -112,7 +251,7 @@ class Refinement:
                 )
                 if generation == self.generation and not self.signal.is_cancelled():
                     self.draft = candidate
-                    if self.review_first and candidate.changed:
+                    if review_first and candidate.changed:
                         self.phase, self.detail = "awaiting review", (
                             "/refine show lists the proposed changes; /refine apply saves "
                             "them; /refine cancel drops them.")
@@ -137,9 +276,10 @@ class Refinement:
         self.generation += 1
         self.signal.cancelled = True
         self.draft = None
+        self._pending_evidence = None
         if self.task is not None and not self.task.done():
             self.task.cancel()
-        if self.phase in ("reviewing", "awaiting review", "ready", "applying"):
+        if self.phase in BUSY_PHASES:
             self.phase, self.detail = "cancelled", "Discarded the pending review."
 
     async def close(self):
@@ -149,6 +289,10 @@ class Refinement:
                 await self.task
 
     def at_boundary(self):
+        if not self.enabled():
+            self.cancel()
+            self._apply_active()
+            return
         if self.session.harness.active:
             return
         if self.phase == "ready":
@@ -184,7 +328,9 @@ class Refinement:
         except Exception as error:
             self.phase, self.detail = "failed", str(error)[:1000]
 
-    def render(self, base: str) -> str:
+    def render(self, base: str, *, ignore_gate=False) -> str:
+        if not ignore_gate and not self.enabled():
+            return base
         parts = []
         for entry in self.active.entries.values():
             if entry.kind == "skill":
@@ -201,7 +347,15 @@ class Refinement:
             "/skill:<id>. Read its full procedure before using it."
         )
 
+    def filter_system(self, text):
+        if self.enabled():
+            return text
+        supplemental = self.render("", ignore_gate=True)
+        return text.replace(supplemental, "") if supplemental else text
+
     def read_guidance(self, entry_id=None):
+        if not self.enabled():
+            raise ValueError("Harness refinements are disabled")
         if entry_id is not None:
             return self.active.entries[entry_id].model_dump()
         return [
@@ -215,7 +369,7 @@ class Refinement:
             self.session.backend.instructions = self.render(self.base_backend)
         self.session._apply_plan_mode()
         skills = {skill.name: skill for skill in self.installed}
-        for entry in self.active.entries.values():
+        for entry in self.active.entries.values() if self.enabled() else ():
             if entry.kind == "skill":
                 description, body = skill_parts(entry.id, entry.content)
                 skills[entry.id] = Skill(
@@ -269,6 +423,21 @@ def attach(session, home: Path, *, persist: bool):
     path = project_folder(home, session.cwd) / "state.json" if persist else None
     controller = Refinement(session, HarnessStore(path))
     controller.home = home
+    controller.project_store = controller.store
+    controller.scope = "project"
+    if persist:
+        from rlmagent.refinement.scoped import ScopedStore
+
+        folder = project_folder(home, session.cwd) / "sessions" / session.session_id
+        try:
+            selected = json.loads((folder / "scope.json").read_text(encoding="utf-8"))["scope"]
+        except FileNotFoundError:
+            selected = "project"
+        if selected == "session":
+            controller.store = ScopedStore(folder / "state.json", session, controller.active)
+            controller.active = controller.store.read()
+            controller.scope = "session"
+    controller._apply_active()
     session.refinement = controller
     tree = getattr(session, "agent_tree", None)
     if tree is not None:

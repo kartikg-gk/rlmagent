@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -95,7 +96,8 @@ async def test_backend_restores_saved_state_in_new_adapter(tmp_path):
         await second.close()
 
 
-async def test_backend_reopens_a_kept_child(tmp_path):
+@pytest.mark.parametrize("recursive_engine", ["python", "node"])
+async def test_backend_reopens_a_kept_child(tmp_path, recursive_engine):
     from rlmness.session import Session
 
     model = ReplayProvider([
@@ -107,6 +109,7 @@ async def test_backend_reopens_a_kept_child(tmp_path):
         text_turn("```python\nFINAL(number * 2)\n```"),
     ])
     tree = SimpleNamespace(cwd=str(tmp_path), approver=Approver("deny"), network=False,
+                           recursive_engine=recursive_engine,
                            cell_timeout=30, allowance=Allowance(max_calls=10, max_cost=2))
     state = tmp_path / "parent.json"
     for expected in ("21", "42"):
@@ -116,6 +119,9 @@ async def test_backend_reopens_a_kept_child(tmp_path):
             assert (await _run_backend(backend))[0] == expected
         finally:
             await backend.close()
+        if recursive_engine == "node":
+            from rlmness.node_engine import reset_engine
+            await asyncio.to_thread(reset_engine)
 
 
 async def test_backend_playbook_helpers_and_denied_write(tmp_path):

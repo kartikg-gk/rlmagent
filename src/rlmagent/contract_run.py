@@ -7,32 +7,54 @@ import os
 import sys
 from pathlib import Path
 
-from rlmness import Allowance
-
 from rlmagent.agents.approval import Approver
+from rlmagent.agents.budget import ContractAllowance, NewTokenBudget
 from rlmagent.agents.prompts import child_first_message, child_system, root_system
 from rlmagent.agents.trace import Tracer
 from rlmagent.agents.tree import AgentTree
-from rlmagent.contract import Contract, ContractError, load_contract
+from rlmagent.contract import ACCOUNT_PROVIDERS, Contract, ContractError, load_contract
 from rlmagent.instructions import system_prompt
 from rlmagent.tools import build_tool_registry
 
 
-def _provider(c: Contract):
+def _provider(c: Contract, credential=None):
     from rlmagent.model.settings import AnthropicProfile, Credential, OpenAIProfile
 
-    credential = Credential(api_key=c.api_key(), base_url=c.model.base_url)
+    if c.model.provider in ACCOUNT_PROVIDERS:
+        if credential is not None:
+            raise ContractError("Account routes do not accept injected credentials")
+        if c.model.provider == "claude-subscription":
+            from rlmagent.model.external import ExternalAgentProvider
+
+            return ExternalAgentProvider()
+        from rlmagent.model.oai_compatible import OpenAIProvider
+        from rlmagent.model.subscription import RESOURCE, resolve
+
+        return OpenAIProvider(OpenAIProfile(name="codex", credential=Credential(None, RESOURCE),
+            resolver=resolve, endpoint="responses", transport="http", idempotency=True))
+    credential = credential or Credential(api_key=c.api_key(), base_url=c.model.base_url)
+    if c.model.provider == "google":
+        from rlmagent.model.google import GoogleProvider
+
+        return GoogleProvider(credential)
     if c.model.provider == "anthropic":
         from rlmagent.model.claude import AnthropicProvider
 
-        return AnthropicProvider(AnthropicProfile(name="anthropic", credential=credential))
+        return AnthropicProvider(AnthropicProfile(name="anthropic", credential=credential,
+                                                  idempotency=True))
     from rlmagent.model.oai_compatible import OpenAIProvider
 
-    return OpenAIProvider(OpenAIProfile(name=c.model.provider, credential=credential))
+    if c.model.provider == "azure":
+        credential = Credential(None, credential.base_url,
+                                (*credential.extra_headers, ("api-key", credential.api_key)))
+    return OpenAIProvider(OpenAIProfile(
+        name=c.model.provider, credential=credential, idempotency=True,
+        endpoint="responses" if c.model.provider == "azure" else "chat" if c.model.provider == "mistral" else None,
+    ))
 
 
-def _tools(c: Contract, kernel) -> list:
-    return [t for t in build_tool_registry(kernel) if t.name in c.tools]
+def _tools(c: Contract, kernel, policy) -> list:
+    return [t for t in build_tool_registry(kernel) if t.name in c.tools and policy.allows_tool(t.name)]
 
 
 async def build_contract_session(c: Contract, *, provider=None, engine="session"):
@@ -44,9 +66,11 @@ async def build_contract_session(c: Contract, *, provider=None, engine="session"
     trace_file = Path(c.trace.file).resolve()
     tracer = Tracer(trace_file, contract=c.raw)
     lim = c.limits
-    allowance = Allowance(
+    allowance = ContractAllowance(
         max_depth=lim.max_depth, max_calls=lim.max_calls, max_cost=lim.max_cost,
         max_live=lim.max_live, max_seconds=lim.max_seconds,
+        new_token_budget=(NewTokenBudget(lim.max_new_tokens)
+                          if lim.max_new_tokens is not None else None),
     )
 
     def base(tools) -> str:
@@ -88,20 +112,25 @@ async def build_contract_session(c: Contract, *, provider=None, engine="session"
         max_agents=lim.max_agents, tracer=tracer,
         kernel=c.kernel.kind, restore_kernel=c.kernel.restore, approver=Approver(c.kernel.approve), network=c.kernel.network,
     )
-    tree.tool_filter = lambda kernel: _tools(c, kernel)
+    tree.request_timeout = lim.request_timeout
     from rlmagent.policy import DEFAULT_OUTPUT_BYTES, Policy
 
     p = c.policy or {}
     tree.policy = Policy(
         allow_git=p.get("allow_git", True),
-        max_tool_output_bytes=p.get("max_tool_output_bytes") or DEFAULT_OUTPUT_BYTES,
+        max_tool_output_bytes=(p["max_tool_output_bytes"] if p.get("max_tool_output_bytes") is not None
+                               else DEFAULT_OUTPUT_BYTES),
         max_compactions=p.get("max_compactions"),
         agent_max_tokens=p.get("agent_max_tokens"),
         search_block=list(p.get("search_block") or []),
+        shell_access=p.get("shell_access", "workspace"),
+        shell_network=p.get("shell_network", False),
+        allowed_tools=frozenset(p["allowed_tools"]) if "allowed_tools" in p else None,
     )
+    tree.tool_filter = lambda kernel: _tools(c, kernel, tree.policy)
     await tree.start()
     kernel = tree.root_kernel()
-    tools = _tools(c, kernel)
+    tools = tree.tool_filter(kernel)
     system = root_system(base(tools), can_delegate=lim.max_depth > 0,
                          sandboxed=sandboxed, network=c.kernel.network) + extra(c.prompt.append)
     session_provider = tree.provider_for("root")
@@ -122,6 +151,7 @@ async def build_contract_session(c: Contract, *, provider=None, engine="session"
         if sessions_dir is not None:
             session_provider.state = BackendState.load(sessions_dir / f"{session.session_id}.backend.json")
     session.agent_tree = tree
+    session.runtime_contract = c
     session.policy = tree.policy
     if engine == "rlmness":
         # Background jobs, watches and the full record, under the contract's policy.
@@ -135,7 +165,9 @@ async def build_contract_session(c: Contract, *, provider=None, engine="session"
             check(await tree.approver.approve(request), request)
 
         session.jobs = Jobs(workdir, Path(str(trace_file) + ".jobs"), approve,
-                            lambda command: git_refusal(command, tree.policy))
+                            lambda command: git_refusal(command, tree.policy),
+                            shell_access=tree.policy.shell_access,
+                            shell_network=tree.policy.shell_network)
         tree.host_functions = {
             **session.jobs.functions(),
             "history": make_history(lambda: getattr(getattr(session, "_vault", None), "path", None),

@@ -20,6 +20,18 @@ VALID = {
 }
 
 
+def test_request_deadline_defaults_and_override_preserve_input():
+    doc = copy.deepcopy(VALID)
+    assert parse_contract(doc).limits.request_timeout == 300
+    assert "request_timeout" not in doc["limits"]
+    doc["limits"]["request_timeout"] = 12.5
+    assert parse_contract(doc).limits.request_timeout == 12.5
+    for bad in (0, -1, True, float("nan")):
+        doc["limits"]["request_timeout"] = bad
+        with pytest.raises(ContractError):
+            parse_contract(doc)
+
+
 def _with(path, value):
     doc = copy.deepcopy(VALID)
     *parents, last = path.split(".")
@@ -99,6 +111,11 @@ def test_ollama_needs_no_key(monkeypatch):
 
 POLICY = {"allow_git": False, "max_tool_output_bytes": 4000, "max_compactions": 2,
           "agent_max_tokens": None, "search_block": ["example.com"]}
+
+
+def test_allowlist_rejects_unrestricted_local_python():
+    with pytest.raises(ContractError, match="restricted Python requires a Wasm kernel"):
+        parse_contract({**VALID, "policy": {**POLICY, "allowed_tools": ["python"]}})
 
 
 def test_a_contract_can_set_the_run_policy():

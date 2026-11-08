@@ -61,6 +61,27 @@ async def finish(session):
     assert session.refinement.phase == "completed", session.refinement.status()
 
 
+async def test_compaction_can_queue_a_whole_harness_proposal(tmp_path):
+    session = await session_for(good_turns(), tmp_path / "harness.json")
+    controller = session.refinement
+    try:
+        assert "review" in await controller.command("auto review")
+        session.harness._running = True
+        controller.compacted([HumanEntry(content="The useful correction before compaction")])
+        assert controller.task is None
+        session.harness._running = False
+        controller.settled()
+        await controller.task
+        assert controller.phase == "awaiting review"
+        assert controller.read_guidance() == []
+        assert "The useful correction before compaction" in session._provider.calls[0][2][0].text
+        await controller.command("apply")
+        assert ENTRY["content"] in session._system
+    finally:
+        session.harness._running = False
+        await session.shutdown()
+
+
 async def test_manual_job_is_single_flight_and_activates_only_at_boundary(tmp_path):
     path = tmp_path / "harness.json"
     session = await session_for(good_turns(), path)

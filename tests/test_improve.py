@@ -113,10 +113,25 @@ def test_root_prompt_mentions_improve_only_when_the_playbook_is_on():
     assert "improve(" not in root_system("B", can_delegate=True)
 
 
-def test_the_app_attaches_an_improver():
-    import inspect
+async def test_the_app_attaches_an_improver(tmp_path, monkeypatch):
+    import importlib
 
     from rlmagent import runtime
 
-    source = inspect.getsource(runtime.build_session)
-    assert "Improver(" in source and "show_digest()" in source and "playbook=True" in source
+    cli = importlib.import_module("rlmagent.cli.main")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RLM_AGENT_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(cli, "_resolve_provider", lambda name: ReplayProvider([]))
+    ns = cli._build_run_parser().parse_args([
+        "--no-session", "--no-approve", "--provider", "openai", "--model", "fixture",
+        "--kernel", "local",
+    ])
+    session = await runtime.build_session(ns)
+    try:
+        assert isinstance(session.improver, Improver)
+        assert session.agent_tree.improver is session.improver
+        assert "improve(" in session._system
+        assert session.improver.entries() == []
+    finally:
+        await session.shutdown()

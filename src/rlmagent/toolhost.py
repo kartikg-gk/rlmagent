@@ -39,14 +39,17 @@ _POSITIONAL = {"run": ("cmd",), "write_file": ("path", "content"),
 
 
 class ToolHost:
-    def __init__(self, root: str) -> None:
+    def __init__(self, root: str, *, shell_access="host", shell_network=False) -> None:
         from rlmagent.agents.approval import Approver
         from rlmagent.agents.workspace import Workspace
         from rlmagent.jobs import Jobs
 
         self.root = str(Path(root).resolve())
         workspace = Workspace(self.root, Approver("auto"))
-        self.jobs = Jobs(self.root, Path(self.root) / ".rlm-agent" / "jobs")
+        from rlmagent.policy import Policy
+        workspace.policy = Policy(shell_access=shell_access, shell_network=shell_network)
+        self.jobs = Jobs(self.root, Path(self.root) / ".rlm-agent" / "jobs",
+                         shell_access=shell_access, shell_network=shell_network)
         self.functions = {**workspace.functions(), **self.jobs.functions()}
 
     async def answer(self, request: dict) -> dict:
@@ -166,9 +169,18 @@ class RemoteTools:
                 given = {**dict(zip(_POSITIONAL.get(name, ()), args)), **kwargs}
                 if name in ("run", "job_start", "service_start"):
                     command = str(given.get("cmd", given.get("command", "")))
+                    argv = given.get("argv") if name == "job_start" else None
+                    if argv is not None:
+                        import shlex
+                        if not isinstance(argv, list) or not argv or not all(
+                            isinstance(item, str) for item in argv
+                        ):
+                            raise ValueError("argv must be a nonempty list of strings")
+                        command = shlex.join(argv)
                     if policy is not None and (reason := git_refusal(command, policy)):
                         raise ValueError(reason)
-                    await approve(Request("run", command))
+                    payload = ("argv", tuple(argv)) if argv is not None else ()
+                    await approve(Request("run", command, payload))
                 elif name == "write_file":
                     path, content = str(given.get("path")), str(given.get("content", ""))
                     try:
@@ -233,8 +245,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=".", help="The workspace the tools work in.")
     parser.add_argument("--tcp", default=None, metavar="HOST:PORT",
                         help=f"Listen on TCP; clients must send the token in {TOKEN_ENV}.")
+    parser.add_argument("--shell-access", choices=("workspace", "host"), default="workspace")
+    parser.add_argument("--shell-network", action="store_true")
     ns = parser.parse_args(argv)
-    host = ToolHost(ns.root)
+    host = ToolHost(ns.root, shell_access=ns.shell_access, shell_network=ns.shell_network)
 
     async def run() -> None:
         try:

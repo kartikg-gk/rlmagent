@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from rlmagent.trust import Asker, Choice, TrustOutcome, TrustRequest
 
 
-async def build_session(ns: argparse.Namespace) -> CodingSession:
+async def build_session(ns: argparse.Namespace, *, session_id: str | None = None) -> CodingSession:
     """Resolve configuration and return a ready ``CodingSession``."""
     from uuid import uuid4
 
@@ -21,7 +21,7 @@ async def build_session(ns: argparse.Namespace) -> CodingSession:
 
     if getattr(ns, "no_session", False):
         return await _build_session(ns)
-    session_id = getattr(ns, "resume", None) or uuid4().hex[:12]
+    session_id = getattr(ns, "resume", None) or session_id or uuid4().hex[:12]
     try:
         lease = acquire(_sessions_dir(getattr(ns, "session_dir", None)), session_id)
     except (SessionBusy, ValueError) as exc:
@@ -78,11 +78,22 @@ async def _build_session(ns: argparse.Namespace, *, session_id: str | None = Non
     from rlmagent.tools._shared import set_workspace
 
     set_workspace(os.getcwd())
-    from rlmagent.plugins import rlm_agent_home
     from rlmagent.undo import Shadow
 
     tree = make_agent_tree(ns, provider, provider_name, model, sessions_dir, cwd=os.getcwd(),
                            backend=getattr(ns, "engine", "session") == "rlmness")
+    from rlmagent.policy import DEFAULT_OUTPUT_BYTES, Policy, git_refusal
+
+    output_limit = getattr(ns, "max_tool_output", None)
+    policy = tree.policy = Policy(
+        allow_git=not getattr(ns, "deny_git", False),
+        max_tool_output_bytes=DEFAULT_OUTPUT_BYTES if output_limit is None else output_limit,
+        max_compactions=getattr(ns, "max_compactions", None),
+        agent_max_tokens=getattr(ns, "agent_max_tokens", None),
+        search_block=list(getattr(ns, "search_block", None) or []),
+        shell_access=getattr(ns, "shell_access", "workspace"),
+        shell_network=getattr(ns, "shell_network", False),
+    )
     await tree.start()
     kernel = tree.root_kernel()
     raw_provider = provider
@@ -137,15 +148,6 @@ async def _build_session(ns: argparse.Namespace, *, session_id: str | None = Non
     from rlmagent.agents.approval import Request, check
     from rlmagent.history import make_history
     from rlmagent.jobs import Jobs
-    from rlmagent.policy import DEFAULT_OUTPUT_BYTES, Policy, git_refusal
-
-    policy = tree.policy = Policy(
-        allow_git=not getattr(ns, "deny_git", False),
-        max_tool_output_bytes=getattr(ns, "max_tool_output", None) or DEFAULT_OUTPUT_BYTES,
-        max_compactions=getattr(ns, "max_compactions", None),
-        agent_max_tokens=getattr(ns, "agent_max_tokens", None),
-        search_block=list(getattr(ns, "search_block", None) or []),
-    )
 
     async def _approve_job(command: str) -> None:
         request = Request("run", command)
@@ -158,16 +160,20 @@ async def _build_session(ns: argparse.Namespace, *, session_id: str | None = Non
         from rlmagent.agents.workspace import Workspace
         from rlmagent.factory import template
 
-        if not template(name).is_file():
+        manifest = template(name)
+        if not manifest.is_file():
             raise ValueError(f"no factory named {name!r}")
-        command = shlex.join([Path(sys.executable).as_posix(), "-m", "rlmagent.cli.main",
-                              "factory", "run", name])
+        argv = [sys.executable, "-m", "rlmagent.cli.main", "factory", str(manifest)]
+        request = Request("run", shlex.join(argv))
+        check(await tree.approver.approve(request), request)
         workspace = Workspace(here, tree.approver)
-        workspace.policy = policy
-        return await workspace.run(command, timeout=1800)
+        return await workspace._execute_argv(argv, timeout=1800)
 
-    jobs = Jobs(here, (sessions_dir or rlm_agent_home()) / "jobs", _approve_job,
-                lambda command: git_refusal(command, policy))
+    from uuid import uuid4
+    session_id = getattr(ns, "resume", None) or session_id or uuid4().hex[:12]
+    jobs = Jobs(here, (sessions_dir or rlm_agent_home()) / "jobs" / session_id, _approve_job,
+                lambda command: git_refusal(command, policy),
+                shell_access=policy.shell_access, shell_network=policy.shell_network)
     tools_at = getattr(ns, "tools_at", None)
     if tools_at:
         if getattr(ns, "engine", "session") != "rlmness":
@@ -335,6 +341,7 @@ async def _build_session(ns: argparse.Namespace, *, session_id: str | None = Non
         await session.shutdown()
         raise
     attach_logger(session)
+    session._apply_model_preferences()
     return session
 
 
@@ -367,9 +374,12 @@ def make_agent_tree(ns, provider, provider_name, model, sessions_dir, *, cwd, ba
     from rlmagent.agents.tree import AgentTree
     from rlmagent.cli.main import _resolve_system
 
+    call_limit = getattr(ns, "max_calls", None)
+    if call_limit is None:
+        call_limit = 50 if str(model).startswith("acp:") else 200
     allowance = Allowance(
         max_depth=getattr(ns, "max_depth", 2),
-        max_calls=getattr(ns, "max_calls", None) or (50 if str(model).startswith("acp:") else 200),
+        max_calls=call_limit,
         max_cost=getattr(ns, "max_cost", 2.0),
         max_live=getattr(ns, "max_live", 8),
         max_seconds=getattr(ns, "max_seconds", None),
@@ -380,9 +390,8 @@ def make_agent_tree(ns, provider, provider_name, model, sessions_dir, *, cwd, ba
 
     kind = getattr(ns, "kernel", "local")
     if kind == "wasm" and not available():
-        print("rlm-agent: the WebAssembly sandbox is not set up (run `rlmness --setup`); "
-              "using the local kernel.", file=sys.stderr)
-        kind = "local"
+        raise ValueError("The WebAssembly sandbox is not installed. Run `rlmness --setup` "
+                         "or explicitly select --kernel local for host Python execution.")
     network = getattr(ns, "network", True)
     if getattr(ns, "auto_approve", False):
         policy = "auto"
@@ -418,6 +427,11 @@ def make_agent_tree(ns, provider, provider_name, model, sessions_dir, *, cwd, ba
         network=network,
     )
     tree.allow_private_fetch = getattr(ns, "allow_private_fetch", False)
+    import math
+    request_timeout = getattr(ns, "request_timeout", 300.0)
+    if not math.isfinite(request_timeout) or request_timeout <= 0:
+        raise ValueError("--request-timeout must be finite and positive")
+    tree.request_timeout = request_timeout
     return tree
 
 

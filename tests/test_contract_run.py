@@ -1,11 +1,32 @@
 import copy
 import json
 
+from _scripted import text_turn
 from test_contract import VALID
 
 from rlmagent.contract import parse_contract
 from rlmagent.contract_run import build_contract_session
 from rlmagent.model.scripted import ReplayProvider
+
+
+async def test_contract_new_token_budget_counts_uncached_usage_and_refuses_next_call(tmp_path):
+    from rlmagent.harness.contracts.transcript.diagnostics import UsageStats
+
+    first = text_turn("first")
+    first[0].message.usage = UsageStats(input=2, output=3, cache_read=100, total_tokens=105)
+    provider = ReplayProvider([first, text_turn("must not run")])
+    session = await build_contract_session(
+        _contract(tmp_path, tools=[], limits__max_new_tokens=5), provider=provider,
+    )
+    try:
+        for prompt in ("first", "second"):
+            async for _ in session.submit(prompt):
+                pass
+        assert len(provider.calls) == 1
+        assert session.agent_tree.allowance.new_token_budget.used == 5
+        assert "5 new tokens" in session.agent_tree.provider.refusal
+    finally:
+        await session.shutdown()
 
 
 def _contract(tmp_path, **changes):

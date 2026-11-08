@@ -395,6 +395,11 @@ def _cmd_image(ctx: CommandContext) -> CommandResult:
     return _ok()
 
 
+def _cmd_tier(ctx: CommandContext) -> CommandResult:
+    """Handled by the session."""
+    return _ok()
+
+
 def _cmd_btw(ctx: CommandContext) -> CommandResult:
     """Handled by the session."""
     return _ok()
@@ -617,6 +622,15 @@ def build_default_registry() -> CommandRegistry:
             search_terms=("reasoning", "depth"),
         ),
         SlashCommand(
+            name="tier", description="Set the provider service tier",
+            handler=_cmd_tier, usage="/tier auto|default|flex|priority|off",
+            search_terms=("priority", "flex"),
+        ),
+        SlashCommand(
+            name="fast", description="Use priority service for the current model",
+            handler=_cmd_tier, usage="/fast on|off",
+        ),
+        SlashCommand(
             name="plan",
             description="Toggle read-only plan mode",
             handler=_cmd_plan,
@@ -669,7 +683,7 @@ def build_default_registry() -> CommandRegistry:
             name="autonomous",
             description="Keep working toward the goal without waiting, within limits",
             handler=_cmd_autonomous,
-            usage="/autonomous [off | status | turns N | tokens N | seconds N | gate CMD]",
+            usage="/autonomous [off | status | turns N | tokens N | seconds N | gate CMD | gate list | gate add NAME CMD | gate remove NAME]",
             search_terms=("auto", "loop", "unattended"),
         ),
         SlashCommand(
