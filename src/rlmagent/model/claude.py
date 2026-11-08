@@ -388,8 +388,10 @@ class AnthropicProvider:
         # Opt-in: the providers' own clients do not send it on these
         # endpoints, so nothing shows the providers accept it.
         idempotency_key = (
-            uuid.uuid4().hex if os.environ.get("RLM_AGENT_IDEMPOTENCY") == "1" else None
+            uuid.uuid4().hex if (self._profile.idempotency if self._profile.idempotency is not None
+                                else os.environ.get("RLM_AGENT_IDEMPOTENCY") == "1") else None
         )
+        logical_request = idempotency_key or uuid.uuid4().hex
 
         for attempt in range(ceiling):
             if signal is not None and signal.is_cancelled():
@@ -404,6 +406,12 @@ class AnthropicProvider:
             headers = correlate_headers(_auth_headers(cred))
             if idempotency_key is not None:
                 headers["Idempotency-Key"] = idempotency_key
+            headers["X-Stainless-Retry-Count"] = str(attempt)
+            headers["X-Rlmagent-Attempt-Id"] = f"{logical_request}:{attempt}"
+            from rlmagent.agents.trace import model_attempt
+
+            model_attempt(attempt=attempt, id=headers["X-Rlmagent-Attempt-Id"],
+                          transport="http", phase="started")
             machine = ResponseMachine(model=model, provider=self._profile.name)
 
             # The stream-open event is held back until real content arrives.

@@ -157,6 +157,7 @@ class AnthropicProfile:
     # decides from the endpoint: first-party hosts get ``short``; gateways that
     # merely speak the protocol get ``none``, since they may reject the markers.
     cache_retention: Literal["none", "short", "long"] | None = None
+    idempotency: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +175,10 @@ class OpenAIProfile:
     # it only for the first-party endpoint; compatible gateways do not all
     # accept the extra field and header, so they must opt in explicitly.
     cache_affinity: bool | None = None
+    service_tier: str | None = None
+    endpoint: Literal["chat", "responses"] | None = None
+    transport: Literal["http", "websocket"] = "http"
+    idempotency: bool | None = None
 
 
 
@@ -242,7 +247,15 @@ def load_openai_profile() -> OpenAIProfile:
         organization=os.environ.get("OPENAI_ORG_ID") or None,
         retry=_load_retry_policy(),
         reasoning=_load_reasoning_policy(),
+        service_tier=load_service_tier(),
     )
+
+
+def load_service_tier() -> str | None:
+    value = os.environ.get("OPENAI_SERVICE_TIER") or None
+    if value not in (None, "auto", "default", "flex", "priority"):
+        raise ConfigError("OPENAI_SERVICE_TIER must be auto, default, flex or priority")
+    return value
 
 
 __all__ = [

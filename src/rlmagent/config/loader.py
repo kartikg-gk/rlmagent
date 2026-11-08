@@ -58,7 +58,7 @@ def apply_config(provider: str, config: RlmAgentConfig | None = None) -> None:
     except KeyError:
         return
 
-    if provider == "vertex":
+    if provider in ("vertex", "google", "mistral", "azure", "codex", "copilot", "claude-subscription", "xai", "xai-subscription"):
         return
     cfg = load_config() if config is None else config
     key = cfg.api_keys.get(provider)

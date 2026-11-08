@@ -26,6 +26,22 @@ class ProviderInfo:
 
 
 PROVIDERS: tuple[ProviderInfo, ...] = (
+    ProviderInfo(key="copilot", label="GitHub Copilot", key_env="COPILOT_GITHUB_TOKEN",
+                 base_url="", models=("auto",), needs_key=False),
+    ProviderInfo(key="claude-subscription", label="Claude Code subscription", key_env="",
+                 base_url="", models=("cli:claude-code",), needs_key=False),
+    ProviderInfo(key="xai", label="xAI", key_env="XAI_API_KEY",
+                 base_url="https://api.x.ai/v1", models=("grok-4",)),
+    ProviderInfo(key="xai-subscription", label="xAI registered OAuth", key_env="",
+                 base_url="https://api.x.ai/v1", models=("grok-4",), needs_key=False),
+    ProviderInfo(key="codex", label="Codex subscription", key_env="",
+                 base_url="https://api.openai.com/v1", models=("gpt-6.1-sol",), needs_key=False),
+    ProviderInfo(key="google", label="Google Gemini", key_env="GOOGLE_API_KEY",
+                 base_url="https://generativelanguage.googleapis.com/v1beta", models=("gemini-2.5-flash",)),
+    ProviderInfo(key="mistral", label="Mistral", key_env="MISTRAL_API_KEY",
+                 base_url="https://api.mistral.ai/v1", models=("mistral-small-latest",)),
+    ProviderInfo(key="azure", label="Azure OpenAI", key_env="AZURE_OPENAI_API_KEY",
+                 base_url="", models=("deployment-name",)),
     ProviderInfo(
         key="openai",
         label="OpenAI",
