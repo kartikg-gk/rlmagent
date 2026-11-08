@@ -304,12 +304,12 @@ class SessionBridge:
         else:
             key_var, url_var = "OPENAI_API_KEY", "OPENAI_BASE_URL"
 
-        key = None if provider == "vertex" else api_key or config.api_keys.get(provider) or os.environ.get(info.key_env)
-        if key:
-            os.environ[key_var] = key
-        elif not info.needs_key and provider != "vertex":
-            os.environ[key_var] = provider  # e.g. Ollama needs a placeholder
-        if provider != "vertex":
+        if provider not in ("vertex", "codex", "google", "mistral", "azure", "copilot", "claude-subscription", "xai", "xai-subscription"):
+            key = api_key or config.api_keys.get(provider) or os.environ.get(info.key_env)
+            if key:
+                os.environ[key_var] = key
+            elif not info.needs_key:
+                os.environ[key_var] = provider  # e.g. Ollama needs a placeholder
             os.environ[url_var] = config.base_urls.get(provider) or info.base_url
         apply_config(provider, config)
 

@@ -22,15 +22,12 @@ class HelpScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with VerticalScroll(classes="inspect-body"):
             yield Static("Keyboard shortcuts", classes="step-head")
+            for binding in self.app.BINDINGS:
+                keys = self.app._keymap.get(binding.id, binding.key)
+                if keys:
+                    yield Static(f"{keys}  {binding.description}", markup=False)
             for line in (
-                "F1  Help",
-                "F2  Agent tree",
-                "F3  Timeline",
-                "F4  Workers",
-                "Ctrl+N  New session",
-                "Ctrl+Q  Quit",
-                "Shift+Tab  Toggle auto-accept",
-                "Esc  Stop a turn or close a panel",
+                "Esc  Close this panel",
                 "Enter on a step  Inspect its code and output",
                 "Space on a finished step  Show or hide its details",
                 "Type / at the prompt to browse commands.",

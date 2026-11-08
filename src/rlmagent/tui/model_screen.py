@@ -178,7 +178,7 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
         self.run_worker(self._remote(False), exclusive=True, group="provider-check")
 
     def action_endpoint(self):
-        if self._info is not None and self._info.key != "vertex":
+        if self._info is not None and self._info.key not in ("vertex", "codex", "copilot", "claude-subscription", "xai-subscription"):
             self._input("endpoint", "Compatible API base URL", "https://host/v1")
 
     def _show_key_prompt(self) -> None:
