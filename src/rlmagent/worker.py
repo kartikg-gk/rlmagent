@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
 import re
 import shutil
@@ -386,6 +387,21 @@ async def _handle(session, name: str, text: str) -> bool:
     return True
 
 
+def _can_passivate(session) -> bool:
+    jobs = getattr(session, "jobs", None)
+    if jobs is not None and any(not job.summary()["done"] for job in jobs.jobs.values()):
+        return False
+    tree = getattr(session, "agent_tree", None)
+    settled = ("done", "failed", "cancelled")
+    if any(child.status not in settled for child in getattr(tree, "records", {}).values()):
+        return False
+    background = getattr(getattr(session, "backend", None), "background", None)
+    if background is not None:
+        with background.lock:
+            return all(job.status in (*settled, "idle") for job in background.jobs.values())
+    return True
+
+
 async def serve(name: str, ns: argparse.Namespace) -> int:
     """The loop inside the detached process."""
     from rlmagent.runtime import build_session
@@ -407,6 +423,7 @@ async def serve(name: str, ns: argparse.Namespace) -> int:
     if launch_id:
         meta["launch_id"] = launch_id
     _write(base / "meta.json", meta)
+    idle_timeout = getattr(ns, "idle_passivate", 0)
     try:
         if getattr(ns, "supervised", False):
             session_id = name.removeprefix("session-")
@@ -421,6 +438,12 @@ async def serve(name: str, ns: argparse.Namespace) -> int:
                     raise
         else:
             session = await build_session(ns)
+            if idle_timeout and session._pending_header is not None:
+                try:
+                    await session._write_header()
+                except BaseException:
+                    await session.shutdown()
+                    raise
     except BaseException as failure:  # noqa: BLE001 - the starter is waiting to hear why
         message = getattr(failure, "code", None) if isinstance(failure, SystemExit) else failure
         _write(base / "meta.json", {**meta, "state": "failed", "pid": None, "error": str(message)})
@@ -468,10 +491,13 @@ async def serve(name: str, ns: argparse.Namespace) -> int:
 
     beating = asyncio.create_task(beat())
     log_line(name, "note", f"started in {os.getcwd()}, session {session.session_id}")
+    idle_since = time.monotonic()
+    passive = False
     try:
         while not (base / "stop").exists():
             if (root() / "admission-paused").exists():
                 meta["state"] = "paused"
+                idle_since = time.monotonic()
                 await asyncio.sleep(POLL_SECONDS)
                 continue
             meta["state"] = "idle"
@@ -489,6 +515,10 @@ async def serve(name: str, ns: argparse.Namespace) -> int:
                 log_line(name, "note", f"autonomous mode stopped: {pilot.stopped_because}")
                 pilot.stopped_because = ""
                 pilot.save()
+            if (idle_timeout and not work and time.monotonic() - idle_since >= idle_timeout
+                    and _can_passivate(session)):
+                passive = True
+                break
             for text, job, message_id in work:
                 if (base / "stop").exists():
                     if job is not None:
@@ -522,13 +552,16 @@ async def serve(name: str, ns: argparse.Namespace) -> int:
                     meta.pop(key, None)
                 _write(base / "meta.json", meta)
                 (base / "interrupts" / turn_id).unlink(missing_ok=True)
+                idle_since = time.monotonic()
             await asyncio.sleep(POLL_SECONDS)
     finally:
         beating.cancel()
         await session.shutdown()
-        _write(base / "meta.json", {**meta, "state": "stopped", "pid": None})
-        (base / "stop").unlink(missing_ok=True)
-        log_line(name, "note", "stopped")
+        state = "passive" if passive and not (base / "stop").exists() else "stopped"
+        _write(base / "meta.json", {**meta, "state": state, "pid": None})
+        if state == "stopped":
+            (base / "stop").unlink(missing_ok=True)
+        log_line(name, "note", state)
     return 0
 
 
@@ -647,6 +680,10 @@ def _start_locked(name: str, run_args: list[str], wait: float) -> int:
         print(f"Worker {name} is already running.", file=sys.stderr)
         return 1
     ns = _build_run_parser().parse_args(run_args)
+    if not math.isfinite(ns.idle_passivate) or ns.idle_passivate < 0:
+        raise ValueError("idle passivation must be finite and nonnegative")
+    if ns.idle_passivate and ns.no_session:
+        raise ValueError("idle passivation requires a saved session")
     # Asked here, with a person present. The worker has nobody to ask.
     outcome = asyncio.run(settle_project_trust(ns))
     if not (ns.approve or ns.no_approve):
@@ -670,6 +707,10 @@ def _start_locked(name: str, run_args: list[str], wait: float) -> int:
 
 def _stop(name: str, wait: float) -> int:
     meta = state_of(name)
+    if meta.get("state") == "passive":
+        (folder(name) / "stop").touch()
+        print(f"Worker {name} stopped.")
+        return 0
     if meta.get("state") == "recovering" and _supervised(meta):
         (folder(name) / "stop").touch()
         print(f"Worker {name} will stop instead of restarting.")
@@ -699,7 +740,8 @@ def _list() -> int:
     for name in names:
         meta = state_of(name)
         recovering = meta.get("state") == "recovering" and _supervised(meta)
-        state = meta.get("state", "?") if meta["alive"] or recovering else "not running"
+        passive = meta.get("state") == "passive" and not (folder(name) / "stop").exists()
+        state = meta.get("state", "?") if meta["alive"] or recovering or passive else "not running"
         waiting = sum(job["status"] == "waiting" for job in jobs_of(name))
         print(f"{name}  {state}  session {meta.get('session')}  {meta.get('cwd', '')}  "
               f"{waiting} job(s) waiting")
@@ -714,14 +756,12 @@ def _worker_names() -> list[str]:
 
 
 def _stop_all(wait: float) -> int:
-    import math
-
     if not math.isfinite(wait) or wait < 0:
         raise ValueError("wait must be finite and nonnegative")
     targets = []
     for name in _worker_names():
         meta = state_of(name)
-        if meta.get("state") not in ("starting", "idle", "busy", "paused", "recovering"):
+        if meta.get("state") not in ("starting", "idle", "busy", "paused", "recovering", "passive"):
             continue
         (folder(name) / "stop").touch()
         targets.append(name)
@@ -775,7 +815,7 @@ def _settle_incident(path: Path | None, status: str, **details) -> None:
         print(f"Could not finish worker incident {path.stem}: {problem}", file=sys.stderr)
 
 
-def _recover_worker(name: str, wait: float = 180.0) -> int:
+def _recover_worker(name: str, wait: float = 180.0, *, wake: bool = False) -> int:
     from rlmagent.harness.session.lease import SessionBusy, acquire
 
     base = folder(name)
@@ -785,7 +825,7 @@ def _recover_worker(name: str, wait: float = 180.0) -> int:
         return 0
     with lease:
         current = state_of(name)
-        if not _can_recover(base, current):
+        if (root() / "admission-paused").exists() or not _can_recover(base, current, wake=wake):
             return 0
         launch = _read(base / "launch.json")
         if not launch:
@@ -799,7 +839,8 @@ def _recover_worker(name: str, wait: float = 180.0) -> int:
             del run_args[index:index + 2]
         session_id = current["session"]
         launch_id = uuid.uuid4().hex
-        incident_path = _record_incident(name, current, "fleet_recovery", incident_id=launch_id)
+        reason = "idle_wake" if current["state"] == "passive" else "fleet_recovery"
+        incident_path = _record_incident(name, current, reason, incident_id=launch_id)
         try:
             supervisor = _spawn(name, [*run_args, "--resume", session_id],
                                 recovery_cwd=launch["cwd"], launch_id=launch_id)
@@ -822,12 +863,17 @@ def _recover_worker(name: str, wait: float = 180.0) -> int:
         return 1
 
 
-def _can_recover(base: Path, current: dict) -> bool:
-    return (
-        current.get("state") in ("starting", "idle", "busy", "paused", "recovering")
-        and bool(current.get("session"))
-        and not (base / "stop").exists()
-        and not any(_pid_alive(pid) for pid in (current.get("pid"), current.get("supervisor_pid")) if pid)
+def _can_recover(base: Path, current: dict, *, wake: bool = False) -> bool:
+    state = current.get("state")
+    if not current.get("session") or (base / "stop").exists():
+        return False
+    if any(_pid_alive(pid) for pid in (current.get("pid"), current.get("supervisor_pid")) if pid):
+        return False
+    if state != "passive":
+        return state in ("starting", "idle", "busy", "paused", "recovering")
+    now = time.time()
+    return wake or any((base / "inbox").glob("*.json")) or any(
+        job["status"] == "waiting" and job["due"] <= now for job in jobs_of(base.name)
     )
 
 
@@ -859,13 +905,16 @@ def _watch_fleet(stop: bool = False) -> int:
                     if not future.done():
                         continue
                     del pending[name]
-                    retry_after[name] = now + STALE_SECONDS
                     try:
-                        future.result()
+                        if future.result():
+                            retry_after[name] = now + STALE_SECONDS
+                        else:
+                            retry_after.pop(name, None)
                     except Exception as error:
+                        retry_after[name] = now + STALE_SECONDS
                         print(f"Worker {name} recovery failed: {error}", file=sys.stderr)
                 for name in _worker_names():
-                    if len(pending) == 4:
+                    if len(pending) == 4 or (root() / "admission-paused").exists():
                         break
                     if name in pending or now < retry_after.get(name, 0):
                         continue
@@ -936,6 +985,14 @@ def _follow(name: str, stop: threading.Event, tail: int | None) -> None:
 
 
 def _attach(name: str, *, tui: bool = False) -> int:
+    state = state_of(name)
+    if state.get("state") == "passive":
+        deadline = time.monotonic() + 5
+        while state.get("state") == "passive" and _supervised(state) and time.monotonic() < deadline:
+            time.sleep(0.1)
+            state = state_of(name)
+        if state.get("state") == "passive" and _recover_worker(name, wake=True):
+            return 1
     if tui:
         from rlmagent.tui.worker_attach import WorkerAttachApp
 
@@ -997,7 +1054,8 @@ def handle_session(argv: list[str]) -> int:
         parser.error("invalid session ID")
     if action == "attach":
         state = state_of(name)
-        if not state["alive"] and not (args.tui and state.get("session") == session_id):
+        saved = state.get("session") == session_id
+        if not state["alive"] and not (saved and (args.tui or state.get("state") == "passive")):
             parser.error("session is offline; start it with session detach first")
         return _attach(name, tui=args.tui)
 
@@ -1014,6 +1072,8 @@ def start_interactive(run_args: list[str], *, session_id: str | None, tui: bool)
     session_id = session_id or uuid.uuid4().hex[:12]
     name = f"session-{session_id}"
     state = state_of(name)
+    if state.get("state") == "passive" and not (folder(name) / "stop").exists():
+        return _attach(name, tui=tui)
     if state["alive"]:
         if state.get("session") != session_id:
             raise ValueError(f"Worker {name} owns a different session.")

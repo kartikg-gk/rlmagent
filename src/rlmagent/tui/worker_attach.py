@@ -2,6 +2,7 @@
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.css.query import NoMatches
 from textual.widgets import Footer, Static
 from pydantic import TypeAdapter, ValidationError
 
@@ -42,7 +43,11 @@ class WorkerAttachApp(App[None]):
         self.set_interval(0.3, self.poll_worker)
 
     def poll_worker(self) -> None:
-        transcript = self.query_one(TranscriptView)
+        try:
+            transcript = self.query_one(TranscriptView)
+            status = self.query_one("#worker-status", Static)
+        except NoMatches:
+            return  # A queued poll can run during teardown.
         try:
             modified = self.history_path.stat().st_mtime_ns
         except OSError:
@@ -89,7 +94,9 @@ class WorkerAttachApp(App[None]):
                 transcript.add_notice(text, error=kind == "error")
         state = worker.state_of(self.worker_name)
         label = state.get("state", "starting") if state["alive"] else "offline · prompts queue"
-        self.query_one("#worker-status", Static).update(f"{self.worker_name} · {label}")
+        if state.get("state") == "passive" and not (worker.folder(self.worker_name) / "stop").exists():
+            label = "passive · prompts queue"
+        status.update(f"{self.worker_name} · {label}")
 
     def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
         if event.text in ("/detach", "/quit", "/exit", "/q"):

@@ -127,6 +127,23 @@ async def test_agent_tool_schedules_cron_and_rejects_invalid_combinations(home):
         await agent.schedule("task", cron="0 0 30 2 *")
 
 
+def test_passivation_waits_for_jobs_and_recursive_work():
+    from threading import Lock
+    from types import SimpleNamespace
+
+    running = {"done": False}
+    job = SimpleNamespace(summary=lambda: running)
+    child = SimpleNamespace(status="running")
+    background = SimpleNamespace(lock=Lock(), jobs={"child": child})
+    session = SimpleNamespace(jobs=SimpleNamespace(jobs={"job": job}),
+                              backend=SimpleNamespace(background=background))
+    assert not worker._can_passivate(session)
+    running["done"] = True
+    assert not worker._can_passivate(session)
+    child.status = "idle"
+    assert worker._can_passivate(session)
+
+
 def test_stop_all_preserves_stop_intent_for_interrupted_workers(home, monkeypatch):
     monkeypatch.setattr(worker, "_pid_alive", lambda _: False)
     for name, state in (("interrupted", "busy"), ("finished", "stopped")):
@@ -505,6 +522,42 @@ def test_a_detached_worker_survives_its_starter_and_runs_a_scheduled_prompt(tmp_
         assert (work / "approved.txt").read_text() == "ok"
         assert "Answer sent" in client(f"/answer {pending_input(False)} 2").stdout
         assert _wait(lambda: '"text": "green"' in worker_log.read_text(encoding="utf-8"), seconds=20)
+
+        sleeping = _cli(env, work, "start", "sleepy", "--provider", "openai", "--model", "m",
+                        "--no-approve", "--kernel", "local", "--idle-passivate", "2")
+        assert sleeping.returncode == 0, sleeping.stderr
+        base = home / "workers" / "sleepy"
+        original = worker._read(base / "meta.json")
+
+        def passive():
+            row = worker._read(base / "meta.json") or {}
+            return (row.get("state") == "passive" and row.get("session") == original["session"]
+                    and not worker._pid_alive(row["supervisor_pid"]))
+
+        assert _wait(passive, seconds=20)
+        assert not worker._pid_alive(original["pid"])
+        assert "sleepy  passive" in _cli(env, work, "list").stdout
+        queued = _cli(env, work, "send", "sleepy", "wake by message")
+        assert queued.returncode == 0
+        message_id = queued.stdout.rsplit(" ", 1)[-1].strip().rstrip(".")
+        receipt = base / "receipts" / f"{message_id}.json"
+        assert _wait(lambda: (worker._read(receipt) or {}).get("status") == "done", seconds=20)
+        assert _wait(passive, seconds=20)
+        due = _cli(env, work, "schedule", "sleepy", "wake by schedule", "--in", "1")
+        assert due.returncode == 0
+        job_file = base / "jobs" / f"{due.stdout.split()[1]}.json"
+        assert _wait(lambda: (worker._read(job_file) or {}).get("status") == "done", seconds=20)
+        assert _wait(passive, seconds=20)
+        attached = subprocess.run(
+            [sys.executable, "-m", "rlmagent.cli.main", "worker", "attach", "sleepy"],
+            input="/detach\n", text=True, capture_output=True, cwd=work, env=env, timeout=25,
+        )
+        assert attached.returncode == 0 and "Recovered worker sleepy" in attached.stdout
+        assert _wait(passive, seconds=20)
+        assert _cli(env, work, "stop", "sleepy").returncode == 0
+        assert _cli(env, work, "send", "sleepy", "remain queued").returncode == 0
+        assert "Recovered worker sleepy" not in _cli(env, work, "recover", "sleepy").stdout
+        assert passive()
     finally:
         release_turn.set()
         if supervised_name is not None:
@@ -513,4 +566,5 @@ def test_a_detached_worker_survives_its_starter_and_runs_a_scheduled_prompt(tmp_
             _cli(env, work, "watch", "--stop")
             watcher.wait(timeout=20)
         _cli(env, work, "stop", "w", "--wait", "5")
+        _cli(env, work, "stop", "sleepy", "--wait", "5")
         server.shutdown()

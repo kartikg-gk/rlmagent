@@ -313,6 +313,11 @@ directory from installation time. On Windows, watcher output goes to
 `worker stop-all` lets the current turns finish and records the stop request
 for interrupted workers, so recovery skips them.
 
+Start a saved worker with `--idle-passivate 300` to close its process after
+five idle minutes. With `worker watch` or the watcher service running, a queued
+message or due job wakes the same saved session. `worker attach NAME` also wakes
+it. An explicit stop suppresses automatic wakeup until you start the worker again.
+
 Send `/goal <objective>` and then `/autonomous` to a saved worker session to
 keep working after you detach. The worker saves its continuation and budgets
 before starting the next turn. A queued turn survives a restart. If the worker

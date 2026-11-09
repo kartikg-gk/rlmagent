@@ -211,6 +211,8 @@ def _build_run_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--no-session", action="store_true", help="Disable session persistence.",
     )
+    p.add_argument("--idle-passivate", type=float, default=0, metavar="SECONDS",
+                   help="Let a saved worker exit after this much idle time (default disabled).")
     p.add_argument(
         "--repl", action="store_true",
         help="Use the line-based REPL instead of the Textual UI.",
