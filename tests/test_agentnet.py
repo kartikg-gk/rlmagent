@@ -1,4 +1,6 @@
+import asyncio
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -85,3 +87,56 @@ async def test_bridge_shows_and_injects_waiting_messages(tmp_path):
     updates = [u async for u in SessionBridge(Session()).submit("go")]
     assert isinstance(updates[0], AgentNote) and "hello" in updates[0].text
     assert injected == [updates[0].text]
+
+
+@pytest.fixture
+def agents(tmp_path):
+    sender = AgentNet("s-sender", str(tmp_path))
+    recipient = AgentNet("s-target", str(tmp_path))
+    recipient.register()
+    return sender, recipient
+
+
+async def test_session_receipt_survives_read_and_reopen(agents):
+    sender, recipient = agents
+    sent = await sender.send_message(recipient.me, "verify package", receipt=True)
+    identity = sent["id"]
+    assert sent == await sender.message_receipt(recipient.me, identity, "session")
+    assert sent["status"] == "queued"
+
+    received, = await recipient.read_messages()
+    assert (received["id"], received["text"], received["from"]) == (
+        identity, "verify package", sender.me)
+    assert "receipt_owner" not in received
+    recipient.leave()
+    reopened = AgentNet(sender.me, sender.cwd)
+    assert (await reopened.message_receipt(recipient.me, identity, "session"))["status"] == "read"
+    assert not await AgentNet(recipient.me, recipient.cwd).read_messages()
+    other = AgentNet("s-other", sender.cwd, worker=sender.me)
+    assert (await other.message_receipt(recipient.me, identity, "session"))["status"] == "unknown"
+
+
+async def test_concurrent_read_claims_a_session_message_once(agents):
+    sender, recipient = agents
+    assert await sender.send_message(recipient.me, "once") == "sent to session s-target"
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        received = await asyncio.gather(*(loop.run_in_executor(pool, recipient.take) for _ in range(2)))
+    assert [row["text"] for batch in received for row in batch] == ["once"]
+
+
+async def test_worker_receipt_tracks_queue_and_final_outcome(agents):
+    sender, _ = agents
+    worker.folder("review").mkdir(parents=True)
+    sent = await sender.send_message("review", "test again", receipt=True)
+    identity = sent["id"]
+    assert sent == await sender.message_receipt("review", identity, "worker")
+    assert worker._take_inbox("review")[0]["text"] == "[message from s-sender] test again"
+    assert (await sender.message_receipt("review", identity, "worker"))["status"] == "in-flight"
+    worker._finish_message("review", identity, "interrupted")
+    assert (await sender.message_receipt("review", identity, "worker"))["status"] == "interrupted"
+    assert "receipt_owner" not in worker.receipt_of("review", identity)
+    stranger = AgentNet("s-other", sender.cwd)
+    assert (await stranger.message_receipt("review", identity, "worker"))["status"] == "unknown"
+    with pytest.raises(ValueError, match="invalid message ID"):
+        await sender.message_receipt("review", "../meta", "worker")

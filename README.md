@@ -354,6 +354,10 @@ root cell failures, so rephrasing the final reply does not reset it.
 Open sessions and workers can reach each other. In a cell: `await list_agents()`,
 `await send_message(to, text)`, `await read_messages()`. A message to a worker runs as
 its next task; a message to a session is shown to it before its next turn.
+Pass `receipt=True` to `send_message` to get a message ID and recipient kind. The
+sender can check `await message_receipt(to, message_id, kind)` after reconnecting.
+For a session, `read` means the recipient retrieved the message through the inbox.
+For a worker, the receipt reports the queued, running, or final task outcome.
 `await schedule(task, in_seconds=..., every=None, worker=None)` or
 `await schedule(task, cron="0 9 * * 1-5", timezone="America/New_York")` queues work on a
 worker, and `await heartbeat(text)` reports progress, shown in the terminal and in

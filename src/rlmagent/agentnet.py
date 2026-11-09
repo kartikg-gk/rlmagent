@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -93,39 +94,95 @@ class AgentNet:
                               "cwd": meta.get("cwd"), "me": path.name == self.me})
         return found
 
-    async def send_message(self, to: str, text: str) -> str:
-        """Send text to another agent by name (see list_agents). A worker runs it as a task;
-        a session sees it before its next turn."""
+    async def send_message(self, to: str, text: str, *, receipt: bool = False) -> str | dict:
+        """Send text to an agent. Set receipt=True to get an ID for message_receipt()."""
         from rlmagent import worker
 
         text = str(text)[:MAX_MESSAGE]
         sender = self.worker or self.me
         if to in (self.me, self.worker):
             raise ValueError("that is you; pick another agent from list_agents()")
+        base = self._recipient(to)
         try:
             is_worker = worker.folder(to).is_dir()
         except ValueError:
             is_worker = False
         if is_worker:
-            worker.send(to, f"[message from {sender}] {text}", source=sender)
-            return f"sent to worker {to}"
-        if (self._folder(to) / "meta.json").exists():
-            _write(self._folder(to) / "inbox" / f"{time.time_ns()}-{uuid.uuid4().hex[:6]}.json",
-                   {"from": sender, "text": text, "time": time.time()})
-            return f"sent to session {to}"
-        raise ValueError(f"no agent named {to!r}; list_agents() shows who is there")
+            kind = "worker"
+            identity = worker.send(to, f"[message from {sender}] {text}", source=sender,
+                                   receipt_owner=self._receipt_owner())
+        elif (base / "meta.json").is_file():
+            kind = "session"
+            identity = f"{time.time_ns()}-{uuid.uuid4().hex}"
+            _write(base / "inbox" / f"{identity}.json",
+                   {"from": sender, "text": text, "time": time.time(),
+                    "receipt_owner": self._receipt_owner()})
+        else:
+            raise ValueError(f"no agent named {to!r}; list_agents() shows who is there")
+        if receipt:
+            return {"id": identity, "to": to, "kind": kind, "status": "queued"}
+        return f"sent to {kind} {to}"
+
+    def _receipt_owner(self) -> str:
+        return f"worker:{self.worker}" if self.worker is not None else f"session:{self.me}"
+
+    def _recipient(self, name: str) -> Path:
+        if not isinstance(name, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name) is None:
+            raise ValueError("invalid agent name")
+        return self._folder(name)
+
+    async def message_receipt(self, to: str, message_id: str, kind: str) -> dict:
+        """Look up a sent message with the ID and kind returned by send_message()."""
+        from rlmagent import worker
+
+        base = self._recipient(to)
+        if not isinstance(message_id, str) or re.fullmatch(r"[0-9]+-[0-9a-f]{6,32}", message_id) is None:
+            raise ValueError("invalid message ID")
+        owner = self._receipt_owner()
+        status = "unknown"
+        if kind == "worker":
+            status = worker.receipt_of(to, message_id, owner=owner)["status"]
+        elif kind == "session":
+            filename = f"{message_id}.json"
+            for directory, state in (("inbox", "queued"), ("read", "read")):
+                if (_read(base / directory / filename) or {}).get("receipt_owner") == owner:
+                    status = state
+                    break
+        else:
+            raise ValueError("invalid recipient kind")
+        return {"id": message_id, "to": to, "kind": kind, "status": status}
 
     async def read_messages(self) -> list[dict]:
-        """Messages other agents sent you since you last read them: [{"from", "text", "time"}]."""
+        """Messages other agents sent you since your last read, with their IDs."""
         return self.take()
 
     def take(self) -> list[dict]:
+        from rlmagent.harness.session.lease import SessionBusy, acquire
+
+        base = self._folder(self.me)
+        inbox = base / "inbox"
+        if not inbox.is_dir():
+            return []
+        try:
+            lease = acquire(base, "inbox")
+        except SessionBusy:
+            return []
         taken = []
-        for path in sorted((self._folder(self.me) / "inbox").glob("*.json"))[:MAX_MESSAGES]:
-            message = _read(path)
-            path.unlink(missing_ok=True)
-            if message:
-                taken.append(message)
+        with lease:
+            for path in sorted(inbox.glob("*.json"))[:MAX_MESSAGES]:
+                read = base / "read" / path.name
+                read.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    path.replace(read)
+                except FileNotFoundError:
+                    continue
+                except PermissionError as error:
+                    if getattr(error, "winerror", None) not in (32, 33):
+                        raise
+                    continue  # A receipt lookup has the file open on Windows.
+                if message := _read(read):
+                    message.pop("receipt_owner", None)
+                    taken.append({**message, "id": path.stem})
         return taken
 
     async def schedule(self, task: str, at: float | None = None, in_seconds: float | None = None,
@@ -166,7 +223,8 @@ class AgentNet:
 
     def functions(self) -> dict:
         return {"list_agents": self.list_agents, "send_message": self.send_message,
-                "read_messages": self.read_messages, "schedule": self.schedule,
+                "read_messages": self.read_messages, "message_receipt": self.message_receipt,
+                "schedule": self.schedule,
                 "heartbeat": self.heartbeat}
 
 
