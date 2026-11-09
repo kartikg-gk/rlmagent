@@ -72,7 +72,15 @@ async def test_contract_allowlist_applies_to_node_children(tmp_path):
     doc["trace"]["file"] = str(tmp_path / "trace.jsonl")
     (tmp_path / "input.txt").write_text("allowed")
     model = ReplayProvider([
-        text_turn(" ```python\nvalue = await rlm('input.txt', instruction='read it')\nFINAL(value)\n```"),
+        text_turn("```python\n"
+                  "try:\n"
+                  "    child = await spawn('change provider', model='cli:claude-code')\n"
+                  "    await child.result()\n"
+                  "except Exception as exc:\n"
+                  "    assert 'model specified by the runtime contract' in str(exc)\n"
+                  "else:\n"
+                  "    raise AssertionError('child changed the contract model')\n"
+                  "value = await rlm('input.txt', instruction='read it')\nFINAL(value)\n```"),
         text_turn("```python\nassert 'write_file' not in (await capabilities())['functions']\n"
                   "assert 'write_file' not in globals()\nFINAL(await read_file('input.txt'))\n```"),
     ])
@@ -82,6 +90,7 @@ async def test_contract_allowlist_applies_to_node_children(tmp_path):
         assert "write_file" not in session.backend.function_names()
         events = [event async for event in session.submit("read through a child")]
         assert events[-1].messages[-1].text == "allowed"
+        assert [requested_model for requested_model, *_ in model.calls] == [session.model, session.model]
     finally:
         await session.shutdown()
 

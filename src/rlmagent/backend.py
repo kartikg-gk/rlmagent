@@ -166,6 +166,9 @@ class Client:
 
     def complete(self, messages, *, model):
         agent = getattr(self.context, "agent", "root")
+        contract_model = getattr(self.tree, "contract_model", None)
+        if contract_model is not None and model != contract_model:
+            raise RuntimeError("model requests must use the model specified by the runtime contract")
 
         async def request():
             system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")

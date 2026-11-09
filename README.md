@@ -275,6 +275,7 @@ rlm-agent worker start nightly --auto-approve
 rlm-agent worker send nightly "check the build"
 rlm-agent worker schedule nightly "review open issues" --in 3600
 rlm-agent worker schedule nightly "run the tests" --at 2027-01-02T09:00 --every 86400
+rlm-agent worker schedule nightly "weekday build" --cron "0 9 * * 1-5" --timezone America/New_York
 rlm-agent worker list
 rlm-agent worker jobs nightly
 rlm-agent worker log nightly --follow
@@ -287,10 +288,19 @@ rlm-agent worker stop-all --wait 60
 rlm-agent worker stop nightly
 ```
 
+Cron schedules accept five numeric fields or `@hourly`, `@daily`, `@weekly`, and
+`@monthly`. Lists, ranges, and steps work within fields. If both day fields are
+set, both must match. The timezone defaults to UTC. Missing local times during a
+daylight-saving jump are skipped, and repeated local times can run at both
+occurrences. After downtime, one overdue run is taken and the next run follows
+the wall-clock schedule.
+
 `worker recover` restarts interrupted saved workers from their original launch
 settings and session IDs. Pass a worker name to recover only that worker.
-`worker incidents NAME` shows each fleet recovery attempt with the saved
-session, last heartbeat, interrupted message and job IDs, and outcome.
+`worker incidents NAME` shows worker exits and fleet recovery attempts with the
+saved session, last heartbeat, active turn, affected message and job IDs, and
+restart outcome. A one-shot job interrupted by a worker exit remains visible in
+`worker jobs` and is skipped on restart.
 `worker watch` runs a fleet monitor in the foreground. It checks for interrupted
 workers at startup and continues checking while it runs. Use `worker watch --stop`
 from another terminal to stop the monitor.
@@ -331,7 +341,8 @@ root cell failures, so rephrasing the final reply does not reset it.
 Open sessions and workers can reach each other. In a cell: `await list_agents()`,
 `await send_message(to, text)`, `await read_messages()`. A message to a worker runs as
 its next task; a message to a session is shown to it before its next turn.
-`await schedule(task, in_seconds=..., every=None, worker=None)` queues work on a
+`await schedule(task, in_seconds=..., every=None, worker=None)` or
+`await schedule(task, cron="0 9 * * 1-5", timezone="America/New_York")` queues work on a
 worker, and `await heartbeat(text)` reports progress, shown in the terminal and in
 `rlm-agent worker log`.
 

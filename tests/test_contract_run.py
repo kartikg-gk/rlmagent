@@ -1,6 +1,7 @@
 import copy
 import json
 
+import pytest
 from _scripted import text_turn
 from test_contract import VALID
 
@@ -58,6 +59,8 @@ async def test_contract_run_uses_only_what_the_contract_says(tmp_path, monkeypat
         assert "PROJECT-SECRET-INSTRUCTIONS" not in session.harness.settings.system
         assert "APPENDED" in session.harness.settings.system and "gather_rlm" in session.harness.settings.system
         assert session.agent_tree.allowance.max_calls == 7
+        with pytest.raises(RuntimeError, match="model specified by the runtime contract"):
+            session.agent_tree.spawn("root", "change provider", None, model="cli:claude-code")
     finally:
         await session.shutdown()
 

@@ -129,21 +129,28 @@ class AgentNet:
         return taken
 
     async def schedule(self, task: str, at: float | None = None, in_seconds: float | None = None,
-                       every: float | None = None, worker: str | None = None) -> str:
+                       every: float | None = None, worker: str | None = None, *,
+                       cron: str | None = None, timezone: str | None = None) -> str:
         """Run task later on a background worker: at a unix time, or in_seconds from now,
-        optionally again every N seconds. Defaults to this worker when you are one."""
+        optionally every N seconds. Alternatively use a five-field cron expression and
+        an IANA timezone (defaults to UTC). Defaults to this worker when you are one."""
         from rlmagent import worker as workers
 
         target = worker or self.worker
         if target is None:
             raise ValueError("this session is not a worker; pass worker=NAME (see list_agents())")
-        if (at is None) == (in_seconds is None):
-            raise ValueError("give exactly one of at or in_seconds")
-        due = float(at) if at is not None else time.time() + float(in_seconds)
+        if sum(value is not None for value in (at, in_seconds, cron)) != 1:
+            raise ValueError("give exactly one of at, in_seconds, or cron")
+        due = None
+        if at is not None:
+            due = float(at)
+        elif in_seconds is not None:
+            due = time.time() + float(in_seconds)
         if every is not None and float(every) < 60:
             raise ValueError("every must be at least 60 seconds")
-        job = workers.schedule(target, str(task), due, float(every) if every else None)
-        when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(due))
+        job = workers.schedule(target, str(task), due, float(every) if every else None,
+                               cron=cron, timezone=timezone)
+        when = workers.job_time(job)
         return f"job {job['id']} on {target} at {when}" + (f", every {every}s" if every else "")
 
     async def heartbeat(self, text: str) -> str:

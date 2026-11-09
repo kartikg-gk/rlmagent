@@ -21,8 +21,9 @@ import sys
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 BEAT_SECONDS = 2.0
 POLL_SECONDS = 0.5
@@ -110,11 +111,33 @@ def send(name: str, text: str, source: str = "user") -> str:
     return message_id
 
 
-def schedule(name: str, text: str, due: float, every: float | None = None) -> dict:
+def schedule(name: str, text: str, due: float | None = None, every: float | None = None,
+             *, cron: str | None = None, timezone: str | None = None) -> dict:
+    if cron is not None:
+        if due is not None or every is not None:
+            raise ValueError("cron cannot be combined with a start time or interval")
+        from rlmagent.cron import next_run
+
+        timezone = "UTC" if timezone is None else timezone
+        due = next_run(cron, timezone, time.time())
+    elif due is None or timezone is not None:
+        raise ValueError("give a due time or cron expression; timezone is only for cron")
     job = {"id": uuid.uuid4().hex[:8], "text": text, "due": due, "every": every,
            "status": "waiting", "runs": 0, "last_run": None}
+    if cron is not None:
+        job.update(cron=cron, timezone=timezone)
     _write(folder(name) / "jobs" / f"{job['id']}.json", job)
     return job
+
+
+def job_time(job: dict) -> str:
+    if timezone := job.get("timezone"):
+        try:
+            zone = ZoneInfo(timezone)
+        except ZoneInfoNotFoundError:
+            return datetime.fromtimestamp(job["due"], UTC).isoformat(timespec="minutes")
+        return datetime.fromtimestamp(job["due"], zone).isoformat(timespec="minutes")
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(job["due"]))
 
 
 def jobs_of(name: str) -> list[dict]:
@@ -270,17 +293,37 @@ def receipt_of(name: str, message_id: str) -> dict:
 
 def _take_due(name: str, now: float, *, limit: int | None = None) -> list[dict]:
     """Due jobs, marked as started first: a crash must not run one a second time."""
+    from rlmagent.harness.session.lease import SessionBusy, acquire
+
+    directory = folder(name) / "jobs"
     taken = []
     for job in jobs_of(name):
         if job["status"] != "waiting" or job["due"] > now:
             continue
-        job["runs"] += 1
-        job["last_run"] = now
-        if job["every"]:
-            job["due"] = now + job["every"]
-        else:
-            job["status"] = "started"
-        _write(folder(name) / "jobs" / f"{job['id']}.json", job)
+        path = directory / f"{job['id']}.json"
+        try:
+            with acquire(directory, job["id"]):
+                job = _read(path)
+                if job is None or job["status"] != "waiting" or job["due"] > now:
+                    continue
+                if expression := job.get("cron"):
+                    from rlmagent.cron import next_run
+
+                    try:
+                        job["due"] = next_run(expression, job["timezone"], now)
+                    except ValueError as problem:
+                        job.update(status="failed", error=str(problem))
+                        _write(path, job)
+                        continue
+                elif job["every"]:
+                    job["due"] = now + job["every"]
+                else:
+                    job["status"] = "started"
+                job["runs"] += 1
+                job["last_run"] = now
+                _write(path, job)
+        except SessionBusy:
+            continue
         taken.append(job)
         if len(taken) == limit:
             break
@@ -288,10 +331,18 @@ def _take_due(name: str, now: float, *, limit: int | None = None) -> list[dict]:
 
 
 def _finish_job(name: str, job: dict, status: str) -> None:
-    if job["every"]:
+    if job["every"] or job.get("cron"):
         return
-    job["status"] = status
-    _write(folder(name) / "jobs" / f"{job['id']}.json", job)
+    from rlmagent.harness.session.lease import SessionBusy, acquire
+
+    directory = folder(name) / "jobs"
+    path = directory / f"{job['id']}.json"
+    try:
+        with acquire(directory, job["id"]):
+            if path.is_file():
+                _write(path, {**job, "status": status})
+    except SessionBusy:
+        pass  # The job is being removed by another process.
 
 
 async def _handle(session, name: str, text: str) -> bool:
@@ -343,6 +394,12 @@ async def serve(name: str, ns: argparse.Namespace) -> int:
     base = folder(name)
     meta = {"pid": os.getpid(), "cwd": os.getcwd(), "started": time.time(), "beat": time.time(),
             "state": "starting", "session": None, "error": None}
+    incident_id = os.environ.get("RLM_AGENT_WORKER_INCIDENT", "")
+    if re.fullmatch(r"[a-f0-9]{32}", incident_id):
+        meta["session"] = ns.resume
+        restart_incident = base / "incidents" / f"{incident_id}.json"
+    else:
+        restart_incident = None
     supervisor = os.environ.get("RLM_AGENT_WORKER_SUPERVISOR_PID")
     if supervisor:
         meta["supervisor_pid"] = int(supervisor)
@@ -382,6 +439,9 @@ async def serve(name: str, ns: argparse.Namespace) -> int:
                          "entries": [entry.model_dump(mode="json") for entry in session.transcript]})
     for path in (base / "in-flight").glob("*.json"):
         _finish_message(name, path.stem, "interrupted")
+    for job in jobs_of(name):
+        if job["status"] == "started":
+            _finish_job(name, job, "interrupted")
     pilot = getattr(session, "autopilot", None)
     if pilot is not None:
         pilot.durable = True
@@ -390,6 +450,9 @@ async def serve(name: str, ns: argparse.Namespace) -> int:
     if net is not None:
         net.leave()  # a worker is reached through its worker folder, not as a session
         net.worker = name
+
+    _settle_incident(restart_incident, "recovered", pid=meta["pid"],
+                     supervisor_pid=meta.get("supervisor_pid"))
 
     async def beat():
         while True:
@@ -435,6 +498,8 @@ async def serve(name: str, ns: argparse.Namespace) -> int:
                     continue
                 meta["state"] = "busy"
                 turn_id = meta["turn_id"] = uuid.uuid4().hex
+                meta["job_id"] = job["id"] if job is not None else None
+                meta["message_id"] = message_id
                 _write(base / "meta.json", meta)
                 tracked = pilot is not None and pilot.autonomous and not text.startswith("/")
                 if tracked:
@@ -453,7 +518,8 @@ async def serve(name: str, ns: argparse.Namespace) -> int:
                         pilot.stop_autonomous("the worker turn failed")
                     pilot.finish_worker_turn()
                 meta["state"] = "idle"
-                meta.pop("turn_id", None)
+                for key in ("turn_id", "job_id", "message_id"):
+                    meta.pop(key, None)
                 _write(base / "meta.json", meta)
                 (base / "interrupts" / turn_id).unlink(missing_ok=True)
             await asyncio.sleep(POLL_SECONDS)
@@ -508,22 +574,42 @@ def _supervise_locked(name: str, run_args: list[str]) -> int:
     base = folder(name)
     failures = 0
     initial_args = run_args
+    incident = None
+    saved_session = None
     while not (base / "stop").exists():
         started = time.monotonic()
-        status = subprocess.run(
-            [sys.executable, "-m", "rlmagent.cli.main", "worker", "serve", name, *run_args],
-            check=False,
-            env={**os.environ, "RLM_AGENT_WORKER_SUPERVISOR_PID": str(os.getpid())},
-        ).returncode
+        env = {**os.environ, "RLM_AGENT_WORKER_SUPERVISOR_PID": str(os.getpid())}
+        env.pop("RLM_AGENT_WORKER_INCIDENT", None)
+        if incident is not None:
+            env["RLM_AGENT_WORKER_INCIDENT"] = incident.stem
+        try:
+            status = subprocess.run(
+                [sys.executable, "-m", "rlmagent.cli.main", "worker", "serve", name, *run_args],
+                check=False, env=env,
+            ).returncode
+        except OSError:
+            if incident is not None:
+                _settle_incident(incident, "spawn_failed")
+            raise
         meta = _read(base / "meta.json") or {}
-        session_id = meta.get("session")
-        if status == 0 or not session_id or "--no-session" in initial_args or (base / "stop").exists():
+        saved_session = meta.get("session") or saved_session
+        stopped = status == 0 or (base / "stop").exists()
+        if incident is not None:
+            _settle_incident(incident, "stopped" if stopped else "restart_failed",
+                             restart_exit_status=status)
+        if stopped:
+            return status
+        incident = _record_incident(name, meta, "worker_exit", exit_status=status,
+                                    session=saved_session)
+        if not saved_session or "--no-session" in initial_args:
+            _settle_incident(incident, "restart_unavailable")
             return status
         failures = 0 if time.monotonic() - started >= 60 else failures + 1
         if failures >= 5:
+            _settle_incident(incident, "restart_limit")
             return status
         delay = min(15, 2 ** failures)
-        _write(base / "meta.json", {**meta, "state": "recovering", "pid": None,
+        _write(base / "meta.json", {**meta, "state": "recovering", "pid": None, "session": saved_session,
                                     "supervisor_pid": os.getpid()})
         log_line(name, "note", f"worker exited with status {status}; recovering in {delay}s")
         deadline = time.monotonic() + delay
@@ -531,9 +617,12 @@ def _supervise_locked(name: str, run_args: list[str]) -> int:
             if (base / "stop").exists():
                 _write(base / "meta.json", {**meta, "state": "stopped", "pid": None,
                                             "supervisor_pid": None})
+                _settle_incident(incident, "stopped")
                 return 0
             time.sleep(0.2)
-        run_args = [*initial_args, "--resume", session_id]
+        run_args = [*initial_args, "--resume", saved_session]
+    if incident is not None:
+        _settle_incident(incident, "stopped")
     return 0
 
 
@@ -650,6 +739,42 @@ def _stop_all(wait: float) -> int:
     return 0
 
 
+def _record_incident(name: str, current: dict, reason: str, *,
+                     incident_id: str | None = None, **details) -> Path | None:
+    base = folder(name)
+    incident_id = incident_id or uuid.uuid4().hex
+    path = base / "incidents" / f"{incident_id}.json"
+    record = {
+        "id": incident_id, "reason": reason, "session": current.get("session"),
+        "recorded_at": time.time(), "status": "recovering", "last_heartbeat": current.get("beat"),
+        "previous_state": current.get("state"), "previous_pid": current.get("pid"),
+        "previous_supervisor_pid": current.get("supervisor_pid"),
+        "turn_id": current.get("turn_id"), "job_id": current.get("job_id"),
+        "message_id": current.get("message_id"),
+        "in_flight_messages": sorted(p.stem for p in (base / "in-flight").glob("*.json")),
+        "started_jobs": [job["id"] for job in jobs_of(name) if job["status"] == "started"],
+        **details,
+    }
+    try:
+        _write(path, record)
+    except OSError as problem:
+        print(f"Worker {name} could not save its incident: {problem}", file=sys.stderr)
+        return None
+    return path
+
+
+def _settle_incident(path: Path | None, status: str, **details) -> None:
+    if path is None:
+        return
+    record = _read(path)
+    if record is None or record.get("status") != "recovering":
+        return
+    try:
+        _write(path, {**record, **details, "status": status, "finished_at": time.time()})
+    except OSError as problem:
+        print(f"Could not finish worker incident {path.stem}: {problem}", file=sys.stderr)
+
+
 def _recover_worker(name: str, wait: float = 180.0) -> int:
     from rlmagent.harness.session.lease import SessionBusy, acquire
 
@@ -674,34 +799,25 @@ def _recover_worker(name: str, wait: float = 180.0) -> int:
             del run_args[index:index + 2]
         session_id = current["session"]
         launch_id = uuid.uuid4().hex
-        incident_path = base / "incidents" / f"{time.time_ns()}-{launch_id}.json"
-        incident = {
-            "session": session_id, "recorded_at": time.time(), "status": "recovering",
-            "last_heartbeat": current.get("beat"), "previous_state": current["state"],
-            "previous_pid": current.get("pid"), "previous_supervisor_pid": current.get("supervisor_pid"),
-            "in_flight_messages": sorted(path.stem for path in (base / "in-flight").glob("*.json")),
-            "started_jobs": [job["id"] for job in jobs_of(name) if job["status"] == "started"],
-        }
-        _write(incident_path, incident)
+        incident_path = _record_incident(name, current, "fleet_recovery", incident_id=launch_id)
         try:
             supervisor = _spawn(name, [*run_args, "--resume", session_id],
                                 recovery_cwd=launch["cwd"], launch_id=launch_id)
         except OSError:
-            _write(incident_path, {**incident, "status": "spawn_failed"})
+            _settle_incident(incident_path, "spawn_failed")
             raise
         deadline = time.monotonic() + wait
         while time.monotonic() < deadline:
             meta = state_of(name)
             if meta["alive"] and meta.get("session") == session_id and meta.get("launch_id") == launch_id:
-                _write(incident_path, {**incident, "status": "recovered",
-                                       "pid": meta["pid"], "supervisor_pid": meta.get("supervisor_pid")})
+                _settle_incident(incident_path, "recovered", pid=meta["pid"],
+                                 supervisor_pid=meta.get("supervisor_pid"))
                 print(f"Recovered worker {name}, session {session_id}.")
                 return 0
             if supervisor.poll() is not None:
                 break
             time.sleep(0.2)
-        _write(incident_path, {**incident, "status": "exited" if supervisor.poll() is not None
-                               else "readiness_timeout"})
+        _settle_incident(incident_path, "exited" if supervisor.poll() is not None else "readiness_timeout")
         print(f"Worker {name} did not recover. See {base / 'output.log'}.", file=sys.stderr)
         return 1
 
@@ -937,7 +1053,7 @@ def handle(argv: list[str]) -> int:
     start = sub.add_parser("start", help="Start a named worker in this folder. Run flags follow.")
     start.add_argument("name")
     sub.add_parser("list", help="List workers.")
-    sub.add_parser("incidents", help="Show recorded recovery attempts.").add_argument("name")
+    sub.add_parser("incidents", help="Show worker exits and recovery outcomes.").add_argument("name")
     recover = sub.add_parser("recover", help="Recover interrupted saved workers.")
     recover.add_argument("name", nargs="?")
     watch = sub.add_parser("watch", help="Monitor the fleet and recover interrupted saved workers.")
@@ -970,7 +1086,10 @@ def handle(argv: list[str]) -> int:
     moment = plan.add_mutually_exclusive_group(required=True)
     moment.add_argument("--in", dest="delay", type=float, metavar="SECONDS")
     moment.add_argument("--at", metavar="ISO-TIME", help="For example 2027-01-02T09:00.")
+    moment.add_argument("--cron", metavar="EXPRESSION",
+                        help="Wall-clock recurrence, such as @hourly or five numeric fields.")
     plan.add_argument("--every", type=float, metavar="SECONDS")
+    plan.add_argument("--timezone", metavar="IANA-ZONE", help="Timezone for --cron (default UTC).")
     cancel = sub.add_parser("unschedule", help="Remove a scheduled job.")
     cancel.add_argument("name")
     cancel.add_argument("job")
@@ -990,8 +1109,9 @@ def handle(argv: list[str]) -> int:
         if ns.action == "list":
             return _list()
         if ns.action == "incidents":
-            records = sorted((folder(ns.name) / "incidents").glob("*.json"))
-            print(json.dumps([value for path in records if (value := _read(path)) is not None]))
+            paths = (folder(ns.name) / "incidents").glob("*.json")
+            records = [value for path in paths if (value := _read(path)) is not None]
+            print(json.dumps(sorted(records, key=lambda record: record.get("recorded_at", 0))))
             return 0
         if ns.action == "recover":
             names = [ns.name] if ns.name else _worker_names()
@@ -1024,20 +1144,34 @@ def handle(argv: list[str]) -> int:
                 _follow(ns.name, done, ns.tail)
             return 0
         if ns.action == "schedule":
-            due = time.time() + ns.delay if ns.delay is not None else _when(ns.at)
-            job = schedule(ns.name, ns.text, due, ns.every)
-            at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(due))
-            print(f"Job {job['id']} will run at {at}.")
+            due = None
+            if ns.delay is not None:
+                due = time.time() + ns.delay
+            elif ns.at is not None:
+                due = _when(ns.at)
+            job = schedule(ns.name, ns.text, due, ns.every, cron=ns.cron, timezone=ns.timezone)
+            print(f"Job {job['id']} will run at {job_time(job)}.")
             if not state_of(ns.name)["alive"]:
                 print(f"Worker {ns.name} is not running; the job waits until it starts.")
             return 0
         if ns.action == "jobs":
             for job in jobs_of(ns.name):
-                at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(job["due"]))
-                print(f"{job['id']}  {job['status']}  {at}  runs {job['runs']}  {job['text'][:60]}")
+                cadence = f"  cron {job['cron']} ({job['timezone']})" if job.get("cron") else ""
+                error = f"  {job['error']}" if job.get("error") else ""
+                print(f"{job['id']}  {job['status']}  {job_time(job)}  runs {job['runs']}  "
+                      f"{job['text'][:60]}{cadence}{error}")
             return 0
         if ns.action == "unschedule":
-            (folder(ns.name) / "jobs" / f"{ns.job}.json").unlink(missing_ok=True)
+            from rlmagent.harness.session.lease import SessionBusy, acquire
+
+            if re.fullmatch(r"[a-f0-9]{8}", ns.job) is None:
+                raise ValueError("invalid worker job ID")
+            directory = folder(ns.name) / "jobs"
+            try:
+                with acquire(directory, ns.job):
+                    (directory / f"{ns.job}.json").unlink(missing_ok=True)
+            except SessionBusy:
+                raise ValueError("worker is taking this job; retry unschedule") from None
             return 0
         if ns.action == "remove":
             meta = state_of(ns.name)

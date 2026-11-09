@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -75,6 +76,57 @@ def test_cli_schedule_and_jobs(home, capsys):
     assert worker.handle(["schedule", "../bad", "x", "--in", "1"]) == 2
 
 
+@pytest.mark.parametrize(("expression", "zone", "after", "expected"), [
+    ("30 2 * * *", "America/New_York", "2027-03-13T07:30+00:00", "2027-03-15T06:30+00:00"),
+    ("30 1 * * *", "America/New_York", "2027-11-07T05:30+00:00", "2027-11-07T06:30+00:00"),
+    ("0 9 1 * 7", "UTC", "2027-01-01T09:00+00:00", "2027-08-01T09:00+00:00"),
+    ("@hourly", "UTC", "2027-01-01T09:00+00:00", "2027-01-01T10:00+00:00"),
+    ("5,10-20/5 9 * * 1-5", "Asia/Kolkata", "2027-01-04T03:40+00:00", "2027-01-04T03:45+00:00"),
+])
+def test_cron_finds_next_real_local_time(expression, zone, after, expected):
+    from rlmagent.cron import next_run
+
+    assert next_run(expression, zone, datetime.fromisoformat(after).timestamp()) == (
+        datetime.fromisoformat(expected).timestamp()
+    )
+
+
+def test_worker_cron_advances_once_after_downtime_and_can_be_unscheduled(home, capsys, monkeypatch):
+    from rlmagent.harness.session.lease import acquire
+
+    monkeypatch.setattr(worker.time, "time", lambda: 1_800_000_000)
+    assert worker.handle(["schedule", "w", "nightly", "--cron", "*/10 * * * *"]) == 0
+    job = worker.jobs_of("w")[0]
+    assert job["timezone"] == "UTC"
+    assert worker.handle(["jobs", "w"]) == 0
+    assert "cron */10 * * * * (UTC)" in capsys.readouterr().out
+    with acquire(worker.folder("w") / "jobs", job["id"]):
+        assert worker._take_due("w", job["due"]) == []
+        assert worker.handle(["unschedule", "w", job["id"]]) == 2
+    delayed = job["due"] + 1_305
+    [taken] = worker._take_due("w", delayed)
+    assert taken["due"] == job["due"] + 1_800
+    assert taken["runs"] == 1
+    assert worker._take_due("w", delayed) == []
+    worker._finish_job("w", taken, "done")
+    assert worker.handle(["unschedule", "w", job["id"]]) == 0
+    assert worker._take_due("w", taken["due"]) == []
+
+
+async def test_agent_tool_schedules_cron_and_rejects_invalid_combinations(home):
+    from rlmagent.agentnet import AgentNet
+
+    agent = AgentNet("session", str(home), worker="w")
+    assert "job " in await agent.schedule("task", cron="0 9 * * 1-5", timezone="Asia/Kolkata")
+    assert worker.jobs_of("w")[0]["cron"] == "0 9 * * 1-5"
+    with pytest.raises(ValueError, match="exactly one"):
+        await agent.schedule("task", in_seconds=60, cron="* * * * *")
+    with pytest.raises(ValueError, match="unknown IANA timezone"):
+        await agent.schedule("task", cron="* * * * *", timezone="Invalid/Zone")
+    with pytest.raises(ValueError, match="no occurrence"):
+        await agent.schedule("task", cron="0 0 30 2 *")
+
+
 def test_stop_all_preserves_stop_intent_for_interrupted_workers(home, monkeypatch):
     monkeypatch.setattr(worker, "_pid_alive", lambda _: False)
     for name, state in (("interrupted", "busy"), ("finished", "stopped")):
@@ -84,6 +136,39 @@ def test_stop_all_preserves_stop_intent_for_interrupted_workers(home, monkeypatc
     assert (worker.folder("interrupted") / "stop").is_file()
     assert not (worker.folder("finished") / "stop").exists()
     assert worker.handle(["recover", "interrupted"]) == 0
+
+
+def test_supervisor_retains_session_after_a_restart_fails_before_readiness(home, monkeypatch, capsys):
+    from itertools import count
+    from types import SimpleNamespace
+
+    base = worker.folder("w")
+    ticks = count(step=20)
+    monkeypatch.setattr(worker.time, "monotonic", lambda: next(ticks))
+    attempts = []
+
+    def run(argv, *, check, env):
+        attempts.append(argv)
+        if len(attempts) == 1:
+            worker._write(base / "meta.json", {"state": "busy", "session": "saved", "pid": 42})
+            return SimpleNamespace(returncode=3)
+        assert argv[-2:] == ["--resume", "saved"]
+        if len(attempts) == 2:
+            worker._write(base / "meta.json", {"state": "failed", "session": None})
+            return SimpleNamespace(returncode=1)
+        assert worker._read(base / "meta.json")["session"] == "saved"
+        incident = base / "incidents" / f"{env['RLM_AGENT_WORKER_INCIDENT']}.json"
+        worker._settle_incident(incident, "recovered", pid=43)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(worker.subprocess, "run", run)
+    assert worker._supervise_locked("w", []) == 0
+    assert worker.handle(["incidents", "w"]) == 0
+    first, second = json.loads(capsys.readouterr().out)
+    assert first["status"] == "restart_failed" and first["exit_status"] == 3
+    assert first["restart_exit_status"] == 1
+    assert second["status"] == "recovered" and second["pid"] == 43
+    assert first["session"] == second["session"] == "saved"
 
 
 async def test_textual_worker_view_submits_and_reconnects_without_owning_session(home):
@@ -235,12 +320,21 @@ def test_a_detached_worker_survives_its_starter_and_runs_a_scheduled_prompt(tmp_
     import threading
 
     code = "```python\nFINAL('ran')\n```"
+    turn_entered = threading.Event()
+    release_turn = threading.Event()
+    interrupted_requests = []
 
     class Model(http.server.BaseHTTPRequestHandler):
         log_message = lambda *_: None  # noqa: E731
 
         def do_POST(self):
             request = self.rfile.read(int(self.headers.get("content-length", 0)))
+            if b"crash this scheduled turn" in request:
+                interrupted_requests.append(1)
+                if not turn_entered.is_set():
+                    turn_entered.set()
+                    release_turn.wait(timeout=20)
+                    return
             reply = code
             if b"verify supervised input" in request:
                 reply = ("```python\nawait write_file('approved.txt', 'ok')\n"
@@ -296,7 +390,12 @@ def test_a_detached_worker_survives_its_starter_and_runs_a_scheduled_prompt(tmp_
 
         import signal
 
+        scheduled = _cli(env, work, "schedule", "w", "crash this scheduled turn", "--in", "0")
+        assert scheduled.returncode == 0, scheduled.stderr
+        job_id = scheduled.stdout.split()[1]
+        assert turn_entered.wait(timeout=20)
         os.kill(meta["pid"], signal.SIGTERM)
+        release_turn.set()
         meta_file = home / "workers" / "w" / "meta.json"
 
         def recovered():
@@ -305,6 +404,8 @@ def test_a_detached_worker_survives_its_starter_and_runs_a_scheduled_prompt(tmp_
                     and current.get("session") == meta["session"])
 
         assert _wait(recovered, seconds=30), meta_file.read_text(encoding="utf-8")
+        job = worker._read(meta_file.parent / "jobs" / f"{job_id}.json")
+        assert job["status"] == "interrupted" and job["runs"] == 1
         assert _cli(env, work, "send", "w", "after recovery").returncode == 0
         assert _wait(lambda: log.read_text(encoding="utf-8").count('"reply"') >= 2, seconds=30)
 
@@ -347,7 +448,13 @@ def test_a_detached_worker_survives_its_starter_and_runs_a_scheduled_prompt(tmp_
         duplicate = _cli(env, work, "watch")
         assert duplicate.returncode == 1 and "already running" in duplicate.stderr
         incidents = json.loads(_cli(env, work, "incidents", "w").stdout)
-        assert [entry["status"] for entry in incidents] == ["recovered", "recovered"]
+        assert [entry["status"] for entry in incidents] == ["recovered"] * 3
+        assert [entry["reason"] for entry in incidents] == ["worker_exit", "fleet_recovery", "fleet_recovery"]
+        assert incidents[0]["job_id"] == job_id and incidents[0]["turn_id"]
+        assert incidents[0]["started_jobs"] == [job_id]
+        assert incidents[0]["previous_pid"] == meta["pid"]
+        assert incidents[0]["pid"] == running["pid"]
+        assert len(interrupted_requests) == 1
         assert incidents[-1]["previous_supervisor_pid"] == restored["supervisor_pid"]
         assert incidents[-1]["session"] == restored["session"]
 
@@ -399,6 +506,7 @@ def test_a_detached_worker_survives_its_starter_and_runs_a_scheduled_prompt(tmp_
         assert "Answer sent" in client(f"/answer {pending_input(False)} 2").stdout
         assert _wait(lambda: '"text": "green"' in worker_log.read_text(encoding="utf-8"), seconds=20)
     finally:
+        release_turn.set()
         if supervised_name is not None:
             _cli(env, work, "stop", supervised_name, "--wait", "5")
         if watcher is not None:

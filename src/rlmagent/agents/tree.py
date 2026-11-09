@@ -370,6 +370,9 @@ class AgentTree:
     def spawn(self, parent_id: str, task: str, context: object, keep: bool = False,
               role: str | None = None, model: str | None = None, confirm: bool = True) -> str:
         parent = self.nodes[parent_id]
+        contract_model = getattr(self, "contract_model", None)
+        if contract_model is not None and model is not None and model != contract_model:
+            raise RuntimeError("sub-agents must use the model specified by the runtime contract")
         role_text = self._role(role) if role else ""
         if is_external(model):
             parse_model(model)

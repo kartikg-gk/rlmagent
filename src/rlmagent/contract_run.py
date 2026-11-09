@@ -112,6 +112,7 @@ async def build_contract_session(c: Contract, *, provider=None, engine="session"
         max_agents=lim.max_agents, tracer=tracer,
         kernel=c.kernel.kind, restore_kernel=c.kernel.restore, approver=Approver(c.kernel.approve), network=c.kernel.network,
     )
+    tree.contract_model = c.model.name
     tree.request_timeout = lim.request_timeout
     from rlmagent.policy import DEFAULT_OUTPUT_BYTES, Policy
 
