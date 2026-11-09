@@ -414,7 +414,7 @@ kernel values across reopening. Find them with `children()` and send a new task
 when the child is idle. In-flight child work is not replayed after a restart.
 
 Use `await name_child(handle, "reviewer")` to name a child under its parent,
-then `await child("reviewer")` to recover its handle. `await child_info(handle)`
+then `await find_child("reviewer")` to recover its handle. `await child_info(handle)`
 shows status, pending deliveries, and recorded model usage without consuming the
 result or messages. In the backend engine, names and usage for kept children
 survive reopening the saved session.

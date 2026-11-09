@@ -335,7 +335,7 @@ class BackendProvider:
     def function_names(self) -> list[str]:
         """The names a cell can call, without starting a run."""
         fixed = {"FINAL", "capabilities", "rlm", "gather_rlm", "spawn", "children", "tell_parent",
-                 "name_child", "child", "child_info", "steer_child"}
+                 "name_child", "find_child", "child_info", "steer_child"}
         optional = {"fetch_url", "guidance", "improve", "playbook"}
         workspace = Workspace(self.tree.cwd, self.tree.approver).functions()
         extended = getattr(self.tree, "extension_functions", {})
@@ -535,7 +535,7 @@ class BackendProvider:
                 async def capabilities():
                     names = {name for name in joined if not name.startswith("_")}
                     if "_spawn" in joined:
-                        names |= {"spawn", "children", "name_child", "child", "child_info", "steer_child"}
+                        names |= {"spawn", "children", "name_child", "find_child", "child_info", "steer_child"}
                     return {
                         "functions": sorted(names | {tool.name for tool in tools} | {"FINAL"}),
                         **limits_of(tree),
@@ -716,7 +716,7 @@ class BackendProvider:
                     "the returned handle provides result(timeout=None), status(), send(text), "
                     "messages(), cancel(), and id. Persistent jobs use keep=True. "
                     "Children can await tell_parent(text). await children() lists handles. "
-                    "await name_child(handle, name) names a child, await child(name) finds it, "
+                    "await name_child(handle, name) names a child, await find_child(name) finds it, "
                     "and await child_info(handle) shows status and recorded usage. "
                     "Use await steer_child(handle, text) to guide an active child's next model request. "
                     "Playbooks use await playbook(id=None), await skill(id), and "

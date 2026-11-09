@@ -107,7 +107,7 @@ async def test_backend_reopens_a_kept_child(tmp_path, recursive_engine):
                   "await name_child(h, 'reviewer')\nvalue = await h.result()\n"
                   "assert (await child_info(h))['usage']['input'] == 11\nFINAL(value)\n```"),
         text_turn("```python\nnumber = PROMPT\nFINAL(number)\n```"),
-        text_turn("```python\nh = await child('reviewer')\nassert h.id == (await children())[0].id\n"
+        text_turn("```python\nh = await find_child('reviewer')\nassert h.id == (await children())[0].id\n"
                   "assert (await child_info(h))['usage']['input'] == 11\n"
                   "await h.send('double the saved value')\nvalue = await h.result()\n"
                   "info = await child_info(h)\nassert info['name'] == 'reviewer'\n"

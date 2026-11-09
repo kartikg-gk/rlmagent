@@ -51,7 +51,7 @@ async def test_named_child_lookup_and_usage_in_the_compatibility_kernel(tmp_path
         root = tree.root_kernel()
         result = await root.run(
             "h = await name_child(await spawn('calculate'), 'reviewer')\n"
-            "assert (await child('reviewer')).id == h.id\n"
+            "assert (await find_child('reviewer')).id == h.id\n"
             "assert await h.result() == 42\n"
             "info = await child_info(h)\n"
             "assert info['name'] == 'reviewer' and info['usage']['input'] == 12\n"

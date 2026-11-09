@@ -15,7 +15,7 @@ async def name_child(handle, name):
     await _child_operation("name", handle.id, name)
     return handle
 
-async def child(name):
+async def find_child(name):
     """Look up one of your children by name."""
     return _child_handle((await _child_operation("find", None, name))["id"])
 
