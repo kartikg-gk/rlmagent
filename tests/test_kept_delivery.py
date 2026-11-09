@@ -5,6 +5,29 @@ import pytest
 from rlmagent.kept_agents import KeptAgents
 
 
+def test_child_names_are_parent_scoped_and_cancel_releases_the_name(tmp_path):
+    agents = KeptAgents(4)
+    agents.open(tmp_path / "parent.json")
+    one, two, three = "a" * 32, "b" * 32, "c" * 32
+    record = {"keep": True, "status": "idle", "parent": "root"}
+    try:
+        agents.node_record(one, record)
+        agents.node_record(two, record)
+        agents.node_record(three, {**record, "parent": one})
+        agents.child_handle("root", "name", one, "reviewer")
+        with pytest.raises(ValueError, match="already in use"):
+            agents.child_handle("root", "name", two, "reviewer")
+        agents.child_handle(one, "name", three, "reviewer")
+        with pytest.raises(ValueError, match="not available"):
+            agents.child_handle("root", "info", three)
+        assert agents.child_handle(one, "find", name="reviewer")["id"] == three
+        agents.node_record(one, {**record, "status": "cancelled"})
+        agents.child_handle("root", "name", two, "reviewer")
+        assert agents.child_handle("root", "find", name="reviewer")["id"] == two
+    finally:
+        agents.close()
+
+
 def test_busy_kept_child_queues_in_order_and_recovers_durable_receipts(tmp_path):
     entered, release = Event(), Event()
     questions = []

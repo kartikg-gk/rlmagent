@@ -65,6 +65,7 @@ class Tracer:
         self._totals: dict[str, dict] = {}
         self._open: dict[str, tuple] = {}
         self._historical_calls: dict[str, dict] = {}
+        self._child_calls: dict[str, str] = {}
         if self.path is not None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.path.write_text("", encoding="utf-8")
@@ -134,8 +135,23 @@ class Tracer:
                          "unreportedUsageRecords": unreported, "unpricedRecords": unpriced},
         }
 
-    def begin(self, agent: str, model: str) -> str:
+    def child_usage(self, child: str, *, compatibility: bool = False) -> dict:
+        fields = ("input", "output", "cache_read", "cache_write", "reasoning", "cost")
+        calls = {} if compatibility else dict(self._historical_calls)
+        for record in self.records:
+            if record.get("kind") == "call":
+                self._remember_call(calls, record)
+        selected = [record for record in calls.values()
+                    if record.get("agent" if compatibility else "child") == child]
+        return {"calls": len(selected),
+                "unreported": sum(not record.get("usage_reported") for record in selected),
+                "unpriced": sum(record.get("cost", 0) == 0 for record in selected),
+                **{field: sum(record.get(field, 0) for record in selected) for field in fields}}
+
+    def begin(self, agent: str, model: str, *, child: str | None = None) -> str:
         call = uuid.uuid4().hex
+        if child is not None:
+            self._child_calls[call] = child
         previous = self._last.get(agent)
         compacted = agent in self._compacted
         pending = self._pending.pop(agent, [])
@@ -149,6 +165,7 @@ class Tracer:
 
     def drop(self, call: str) -> None:
         """Forget a call that was never sent (refused by the budget)."""
+        self._child_calls.pop(call, None)
         agent, _, _, previous, pending, compacted, _ = self._open.pop(call)
         if previous is None:
             self._last.pop(agent, None)
@@ -161,6 +178,7 @@ class Tracer:
 
     def end(self, call: str, usage, stop: str | None) -> None:
         agent, model, started, _, _, _, links = self._open.pop(call)
+        child = self._child_calls.pop(call, None)
         for source, how in links:
             self._write("link", **{"from": source, "to": call, "how": how})
         self._totals.setdefault(agent, {"calls": 0, "cost": 0.0, "input": 0, "output": 0})
@@ -179,7 +197,8 @@ class Tracer:
                     cache_read=(usage.cache_read or 0) if usage is not None else 0,
                     cache_write=(usage.cache_write or 0) if usage is not None else 0,
                     reasoning=(usage.reasoning or 0) if usage is not None else 0,
-                    seconds=round(time.time() - started, 3))
+                    seconds=round(time.time() - started, 3),
+                    **({"child": child} if child is not None else {}))
 
     def spawned(self, parent: str, child: str) -> None:
         if parent in self._last:

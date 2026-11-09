@@ -200,7 +200,8 @@ class Client:
                 if spent >= limit:
                     raise RuntimeError(f"agent {agent} reached its limit of {limit} "
                                        "completion tokens")
-            call = tracer.begin(agent, model) if tracer is not None else None
+            child = self.background.owners.get(agent) if self.background is not None else None
+            call = tracer.begin(agent, model, child=child) if tracer is not None else None
             if tracer is not None:
                 def close_unfinished(task):
                     if call in tracer._open:
@@ -328,7 +329,8 @@ class BackendProvider:
 
     def function_names(self) -> list[str]:
         """The names a cell can call, without starting a run."""
-        fixed = {"FINAL", "capabilities", "rlm", "gather_rlm", "spawn", "children", "tell_parent"}
+        fixed = {"FINAL", "capabilities", "rlm", "gather_rlm", "spawn", "children", "tell_parent",
+                 "name_child", "child", "child_info"}
         optional = {"fetch_url", "guidance", "improve", "playbook"}
         workspace = Workspace(self.tree.cwd, self.tree.approver).functions()
         extended = getattr(self.tree, "extension_functions", {})
@@ -523,7 +525,7 @@ class BackendProvider:
                 async def capabilities():
                     names = {name for name in joined if not name.startswith("_")}
                     if "_spawn" in joined:
-                        names |= {"spawn", "children"}
+                        names |= {"spawn", "children", "name_child", "child", "child_info"}
                     return {
                         "functions": sorted(names | {tool.name for tool in tools} | {"FINAL"}),
                         **limits_of(tree),
@@ -548,6 +550,39 @@ class BackendProvider:
                 if "_delivery" in joined:
                     startup += ("\nasync def child_delivery(handle, receipt):\n"
                                 "    return await _delivery(handle.id, receipt)\n")
+                if "_spawn" in bridges:
+                    from rlmagent.agents.child_handles import HELPERS
+
+                    async def child_registry(action, key=None, name=None):
+                        background = self.background
+                        parent = background.owners.get(agent, agent)
+                        if not node_prepare and parent not in background.saved:
+                            parent = agent
+                        # Node launches the job before returning the ID, but its first
+                        # metadata callback can arrive just after the spawn response.
+                        for attempt in range(40):
+                            try:
+                                info = background.child_handle(parent, action, key, name)
+                                break
+                            except KeyError:
+                                if not node_prepare or attempt == 39:
+                                    raise ValueError("unknown child handle") from None
+                                await asyncio.sleep(0.025)
+                        if action == "info":
+                            tracer = getattr(tree, "tracer", None)
+                            info["usage"] = tracer.child_usage(key) if tracer is not None else None
+                        return info
+
+                    joined["_child_registry"] = wrap(child_registry)
+                    startup += (
+                        "\nasync def _child_operation(action, key=None, name=None):\n"
+                        "    result = await _child_registry(action, key, name)\n"
+                        "    if isinstance(result, str):\n"
+                        "        raise ValueError(result)\n"
+                        "    return result\n"
+                        "def _child_handle(key):\n"
+                        "    return _AgentHandle(key)\n"
+                    ) + HELPERS
                 if node_prepare:
                     from rlmagent.hints import EMPTY_CELL, _RULES
                     from rlmagent.policy import DEFAULT_OUTPUT_BYTES
@@ -655,6 +690,8 @@ class BackendProvider:
                     "the returned handle provides result(timeout=None), status(), send(text), "
                     "messages(), cancel(), and id. Persistent jobs use keep=True. "
                     "Children can await tell_parent(text). await children() lists handles. "
+                    "await name_child(handle, name) names a child, await child(name) finds it, "
+                    "and await child_info(handle) shows status and recorded usage. "
                     "Playbooks use await playbook(id=None), await skill(id), and "
                     "await improve(instructions, shared=False). "
                     "For work with several parts keep a task list: await todo('add', text), "

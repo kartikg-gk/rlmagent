@@ -10,6 +10,8 @@ from pathlib import Path
 from rlmness.background import Background, Job
 from rlmness.session import Session
 
+from rlmagent.agents.child_handles import checked_name
+
 
 class KeptAgents(Background):
     def __init__(self, max_agents):
@@ -17,6 +19,7 @@ class KeptAgents(Background):
         self.directory: Path | None = None
         self.saved: dict[str, dict] = {}
         self.live_states: dict[str, Session] = {}
+        self.names: dict[str, str] = {}
 
     def close(self):
         super().close()
@@ -42,6 +45,8 @@ class KeptAgents(Background):
             job.ready.set()
             self.saved[path.stem] = record
             self.jobs[path.stem] = job
+            if name := record.get("name"):
+                self.names[path.stem] = name
             if interrupted:
                 self._write(path.stem)
 
@@ -68,6 +73,41 @@ class KeptAgents(Background):
                 self.live_states[key] = state
             return state
 
+    def child_handle(self, parent, action, key=None, name=None):
+        with self.lock:
+            if action in ("name", "find"):
+                name = checked_name(name)
+                match = next((other for other, alias in self.names.items()
+                              if alias == name and self.jobs[other].parent == parent
+                              and self.jobs[other].status != "cancelled"), None)
+                if action == "find":
+                    if match is None:
+                        raise ValueError(f"no child named {name!r}")
+                    return {"id": match}
+                if match is not None and match != key:
+                    raise ValueError(f"child name {name!r} is already in use")
+            job = self.jobs[key]
+            if job.parent != parent or job.status == "cancelled":
+                raise ValueError("child is not available to this agent")
+            if action == "name":
+                if key in self.saved:
+                    old = self.saved[key].get("name")
+                    self.saved[key]["name"] = name
+                    try:
+                        self._write(key)
+                    except OSError:
+                        if old is None:
+                            self.saved[key].pop("name", None)
+                        else:
+                            self.saved[key]["name"] = old
+                        raise
+                self.names[key] = name
+            elif action != "info":
+                raise ValueError("invalid child handle operation")
+            deliveries = self.saved.get(key, {}).get("deliveries", {})
+            return {"id": key, "name": self.names.get(key), "status": job.status, "keep": job.keep,
+                    "queued": sum(item["status"] == "queued" for item in deliveries.values())}
+
     def node_record(self, key, record):
         """Mirror an execution-side job and persist its settled mailbox."""
         if not re.fullmatch(r"[a-f0-9]{32}", key):
@@ -82,6 +122,7 @@ class KeptAgents(Background):
             else:
                 job.ready.clear()
             if job.status == "cancelled":
+                self.names.pop(key, None)
                 job.token.set()
                 self.saved.pop(key, None)
                 state = self.live_states.pop(key, None)
@@ -92,6 +133,8 @@ class KeptAgents(Background):
                     (self.directory / f"{key}.state.json").unlink(missing_ok=True)
             elif job.keep and self.directory is not None:
                 self.saved[key] = dict(record)
+                if name := self.names.get(key):
+                    self.saved[key]["name"] = name
                 self._write(key)
 
     def bindings(self, parent, child):
@@ -221,6 +264,7 @@ class KeptAgents(Background):
                 pending = [key]
                 while pending:
                     item = pending.pop()
+                    self.names.pop(item, None)
                     if item not in self.saved:
                         continue
                     del self.saved[item]

@@ -8,7 +8,7 @@ from _scripted import code_turn, text_turn
 
 
 
-def _tree(tmp_path, streams, **limits):
+def _tree(tmp_path, streams, *, kernel="local", **limits):
     return AgentTree(
         provider=ReplayProvider(streams),
         provider_name="replay",
@@ -16,6 +16,7 @@ def _tree(tmp_path, streams, **limits):
         cwd=str(tmp_path),
         allowance=Allowance(**{"max_depth": 2, "max_cost": 10.0, **limits}),
         sessions_dir=tmp_path / "sessions",
+        kernel=kernel,
         system_for=lambda node, tools: f"agent depth {node.depth}",
         first_message_for=lambda node: node.task,
     )
@@ -32,6 +33,31 @@ async def test_child_final_value_reaches_the_parent_kernel(tmp_path):
         root = tree.root_kernel()
         result = await root.run("answer = await rlm('add these', [1, 2, 3])\nprint(answer)")
         assert result.output.strip() == "6"
+    finally:
+        await tree.close()
+
+
+@pytest.mark.parametrize("kernel", ["local", "wasm"])
+async def test_named_child_lookup_and_usage_in_the_compatibility_kernel(tmp_path, kernel):
+    from rlmagent.kernel.wasm import available
+
+    if kernel == "wasm" and not available():
+        pytest.skip("sandbox is not installed")
+    turns = [code_turn("FINAL(42)"), text_turn("done")]
+    turns[0][-1].message.usage.input = 12
+    tree = _tree(tmp_path, turns, kernel=kernel)
+    await tree.start()
+    try:
+        root = tree.root_kernel()
+        result = await root.run(
+            "h = await name_child(await spawn('calculate'), 'reviewer')\n"
+            "assert (await child('reviewer')).id == h.id\n"
+            "assert await h.result() == 42\n"
+            "info = await child_info(h)\n"
+            "assert info['name'] == 'reviewer' and info['usage']['input'] == 12\n"
+            "print('named child passed')"
+        )
+        assert "named child passed" in result.output, result
     finally:
         await tree.close()
 

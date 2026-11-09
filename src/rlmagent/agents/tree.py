@@ -14,6 +14,7 @@ from pathlib import Path
 from rlmness import Allowance, AllowanceSpent
 
 from rlmagent.agents.budget import BudgetedProvider
+from rlmagent.agents.child_handles import checked_name
 from rlmagent.agents.trace import TracedProvider, Tracer
 from rlmagent.agents.bridge import BridgeServer, kernel_env
 from rlmagent.agents.kernel_api import KERNEL_API
@@ -63,6 +64,7 @@ class ChildRecord:
     outbox: list = field(default_factory=list)
     changed: asyncio.Event = field(default_factory=asyncio.Event)
     confirm: tuple[int, int] | None = None
+    name: str | None = None
 
     def set(self, status: str) -> None:
         self.status = status
@@ -276,6 +278,29 @@ class AgentTree:
             )
         if op == "children":
             return list(self._kids.get(agent_id, []))
+        if op == "child_handle":
+            action = args.get("action")
+            if action in ("name", "find"):
+                name = checked_name(args.get("name"))
+                match = next((key for key in self._kids.get(agent_id, ())
+                              if self.records[key].name == name
+                              and self.records[key].status != "cancelled"), None)
+                if action == "find":
+                    if match is None:
+                        raise ValueError(f"no child named {name!r}")
+                    return {"id": match}
+                if match is not None and match != args.get("id"):
+                    raise ValueError(f"child name {name!r} is already in use")
+            rec = self._own(agent_id, str(args.get("id")))
+            if rec.status == "cancelled":
+                raise ValueError("child is cancelled")
+            if action == "name":
+                rec.name = name
+            elif action != "info":
+                raise ValueError("invalid child handle operation")
+            return {"id": rec.node.id, "name": rec.name, "status": rec.status, "keep": rec.keep,
+                    "queued": rec.inbox.qsize(),
+                    "usage": self.tracer.child_usage(rec.node.id, compatibility=True)}
         if op == "rlm":
             child = self.records[self.spawn(agent_id, str(args.get("task", "")), args.get("context"),
                                             role=args.get("role"), model=args.get("model"))]
