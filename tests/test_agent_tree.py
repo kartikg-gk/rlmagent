@@ -62,6 +62,44 @@ async def test_named_child_lookup_and_usage_in_the_compatibility_kernel(tmp_path
         await tree.close()
 
 
+async def test_steer_child_injects_once_in_the_compatibility_session_engine(tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+
+    from rlmagent.steering import Steering
+
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class HeldReplay(ReplayProvider):
+        async def _emit(self, events, signal):
+            if len(self.calls) == 1:
+                entered.set()
+                await release.wait()
+            async for event in super()._emit(events, signal):
+                yield event
+
+    provider = HeldReplay([code_turn("print('working')"), code_turn("FINAL(42)"), text_turn("done")])
+    tree = _tree(tmp_path, [])
+    tree.use_provider(provider, "replay")
+    tree.session = SimpleNamespace(steering=Steering(None))
+    await tree.start()
+    try:
+        root = tree.root_kernel()
+        await root.run("h = await spawn('calculate')")
+        await asyncio.wait_for(entered.wait(), 10)
+        accepted = await root.run("print((await steer_child(h, 'focused instruction', 'focus'))['status'])")
+        assert "accepted" in accepted.output
+        release.set()
+        done = await root.run("print(await h.result(), (await child_info(h))['steering'][0]['status'])")
+        assert "42 consumed" in done.output, done
+        assert [any("focused instruction" in m.text for m in call[2]) for call in provider.calls] == [
+            False, True, False,
+        ]
+    finally:
+        release.set()
+        await tree.close()
+
+
 async def test_gather_keeps_order(tmp_path):
     tree = _tree(tmp_path, [
         code_turn("FINAL(CONTEXT * 10)"), text_turn("ok"),

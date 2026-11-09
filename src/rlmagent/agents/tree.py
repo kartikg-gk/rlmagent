@@ -294,12 +294,19 @@ class AgentTree:
             rec = self._own(agent_id, str(args.get("id")))
             if rec.status == "cancelled":
                 raise ValueError("child is cancelled")
+            ledger = getattr(getattr(self, "session", None), "steering", None)
+            if action == "steer":
+                if ledger is None:
+                    raise ValueError("child steering requires an attached session")
+                return ledger.accept(args.get("text"), args.get("message_id"), rec.node.id, once=True,
+                                     allow_new=rec.status in ("starting", "running"))
             if action == "name":
                 rec.name = name
             elif action != "info":
                 raise ValueError("invalid child handle operation")
             return {"id": rec.node.id, "name": rec.name, "status": rec.status, "keep": rec.keep,
                     "queued": rec.inbox.qsize(),
+                    "steering": ledger.receipts(target=rec.node.id) if ledger is not None else [],
                     "usage": self.tracer.child_usage(rec.node.id, compatibility=True)}
         if op == "rlm":
             child = self.records[self.spawn(agent_id, str(args.get("task", "")), args.get("context"),
@@ -468,6 +475,7 @@ class AgentTree:
         from rlmagent.conversation import CodingSession
 
         node = rec.node
+        ledger = getattr(getattr(self, "session", None), "steering", None)
         kernel = None
         try:
             await self._acquire(rec)
@@ -504,6 +512,8 @@ class AgentTree:
             message = self.first_message_for(node)
             while True:
                 rec.value = await self._round(session, node, message)
+                if ledger is not None:
+                    ledger.expire_child(node.id)
                 if not rec.keep:
                     rec.set("done")
                     return
@@ -526,6 +536,8 @@ class AgentTree:
                 if "RLM_AGENT_BRIDGE_TOKEN" in kernel.env:
                     self._bridge.revoke(kernel.env["RLM_AGENT_BRIDGE_TOKEN"])
                 await kernel.shutdown()
+            if ledger is not None and rec.status in ("failed", "cancelled"):
+                ledger.expire_child(node.id)
 
     # -- delegation guard: a sub-agent handed most of its parent's context confirms first --
 

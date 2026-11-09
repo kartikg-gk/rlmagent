@@ -22,6 +22,10 @@ async def child(name):
 async def child_info(handle):
     """Inspect a child's status, identity and recorded usage without consuming its output."""
     return await _child_operation("info", handle.id)
+
+async def steer_child(handle, text, message_id=None):
+    """Deliver an instruction at an active child's next model request."""
+    return await _child_operation("steer", handle.id, text=text, message_id=message_id)
 '''
 
 
@@ -29,6 +33,6 @@ def compatibility_helpers(call: str) -> str:
     return f'''
 _child_handle = _SubAgent
 
-async def _child_operation(action, key=None, name=None):
-    return await {call}("child_handle", {{"action": action, "id": key, "name": name}})
+async def _child_operation(action, key=None, name=None, **arguments):
+    return await {call}("child_handle", {{"action": action, "id": key, "name": name, **arguments}})
 ''' + HELPERS

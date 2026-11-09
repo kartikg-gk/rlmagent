@@ -39,7 +39,11 @@ class Steering:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def accept(self, text: str, identity: str | None = None, target: str = "root"):
+    def _guard(self):
+        return self._mutex if self.path is None else _lock(self.path.with_suffix(".lock"))
+
+    def accept(self, text: str, identity: str | None = None, target: str = "root", *,
+               once: bool = False, allow_new: bool = True):
         identity = identity or uuid4().hex
         if (
             not isinstance(identity, str)
@@ -56,9 +60,12 @@ class Steering:
             records = self._read()
             if identity in records:
                 previous = records[identity]
-                if previous["text"] != text or previous["target"] != target:
+                if (previous["text"] != text or previous["target"] != target
+                        or previous.get("once", False) != once):
                     raise ValueError("messageId was already used with different content or target")
                 return self.receipt(identity, previous)
+            if not allow_new:
+                raise ValueError("child is idle or finished; use send for a follow-up turn")
             if len(records) >= 10000:
                 raise ValueError("Steering identity limit reached")
             records[identity] = {
@@ -67,13 +74,12 @@ class Steering:
                 "accepted_at": time.time(),
                 "deliveries": {},
             }
+            if once:
+                records[identity]["once"] = True
             self._write(records)
             return self.receipt(identity, records[identity])
 
-        if self.path is None:
-            with self._mutex:
-                return update()
-        with _lock(self.path.with_suffix(".lock")):
+        with self._guard():
             return update()
 
     @staticmethod
@@ -81,33 +87,43 @@ class Steering:
         return {
             "messageId": identity,
             "target": record["target"],
-            "status": "consumed" if record["deliveries"] else "accepted",
+            "status": ("consumed" if record["deliveries"] else
+                       "expired" if "expired_at" in record else "accepted"),
             "deliveries": dict(record["deliveries"]),
         }
 
-    def receipts(self):
-        return [self.receipt(identity, record) for identity, record in self._read().items()]
+    def receipts(self, *, target: str | None = None):
+        return [self.receipt(identity, record) for identity, record in self._read().items()
+                if target is None or record["target"] == target]
 
-    def context(self, agent: str, *, root: bool = False):
-        selected = [
-            (identity, record)
-            for identity, record in self._read().items()
-            if record["target"] == agent or (root and record["target"] == "root")
-        ]
-        # Keep accepted guidance in subsequent requests and through transcript rollback.
-        text = "\n\n".join(record["text"] for _, record in selected)
-        pending = [identity for identity, record in selected if agent not in record["deliveries"]]
-        return text, pending
+    def context(self, agent: str, *, root: bool = False, child: str | None = None):
+        targets = {agent}
+        if root:
+            targets.add("root")
+        if child is not None:
+            targets.add(child)
+        instructions, pending = [], []
+        for identity, record in self._read().items():
+            target = record["target"]
+            if target not in targets or "expired_at" in record:
+                continue
+            delivered = (child if target == child else agent) in record["deliveries"]
+            if not delivered or not record.get("once", False):
+                instructions.append(record["text"])
+            if not delivered:
+                pending.append(identity)
+        return "\n\n".join(instructions), pending
 
-    def consumed(self, identities, agent: str, request: str | None):
+    def consumed(self, identities, agent: str, request: str | None, *, child: str | None = None):
         if not identities:
             return
 
         def update():
             records = self._read()
             for identity in identities:
-                records[identity]["deliveries"].setdefault(
-                    agent,
+                record = records[identity]
+                record["deliveries"].setdefault(
+                    child if record["target"] == child else agent,
                     {
                         "requestId": request,
                         "consumed_at": time.time(),
@@ -115,9 +131,18 @@ class Steering:
                 )
             self._write(records)
 
-        if self.path is None:
-            with self._mutex:
-                update()
-        else:
-            with _lock(self.path.with_suffix(".lock")):
-                update()
+        with self._guard():
+            update()
+
+    def expire_child(self, child: str) -> None:
+        """Close undelivered one-shot instructions at the end of a child turn."""
+        with self._guard():
+            records = self._read()
+            pending = [record for record in records.values()
+                       if record["target"] == child and record.get("once")
+                       and not record["deliveries"] and "expired_at" not in record]
+            if pending:
+                finished = time.time()
+                for record in pending:
+                    record["expired_at"] = finished
+                self._write(records)

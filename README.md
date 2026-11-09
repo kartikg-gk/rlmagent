@@ -417,6 +417,12 @@ shows status, pending deliveries, and recorded model usage without consuming the
 result or messages. In the backend engine, names and usage for kept children
 survive reopening the saved session.
 
+Use `await steer_child(handle, text, message_id=None)` to add an instruction
+at an active child's next model request. It returns a receipt, also available
+through `child_info`. Reusing the message ID with the same text and child
+returns the original receipt. If the active turn ends before another model
+request, the receipt expires. Use `send()` to queue a separate follow-up turn.
+
 For a protected HTTP MCP server, configure an `oauth` object beside its `url`
 with `issuer`, a registered public `client_id`, and `redirect_port`. Register
 `http://127.0.0.1:PORT/oauth/callback` with the issuer. Add `scope` if needed.

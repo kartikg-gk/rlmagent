@@ -265,7 +265,7 @@ class TracedProvider:
 
             text, pending = ledger.context(self._agent, root=self._agent == self._tree.root_id())
             if text:
-                kwargs["messages"] = [*kwargs["messages"], HumanEntry(content="User steering:\n" + text)]
+                kwargs["messages"] = [*kwargs["messages"], HumanEntry(content="Steering instructions:\n" + text)]
         usage, stop, refused = None, None, False
         from rlmagent.model.deadline import bounded_stream
         try:

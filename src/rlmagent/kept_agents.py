@@ -20,6 +20,11 @@ class KeptAgents(Background):
         self.saved: dict[str, dict] = {}
         self.live_states: dict[str, Session] = {}
         self.names: dict[str, str] = {}
+        self.steering = None
+
+    def _expire_steering(self, key: str) -> None:
+        if self.steering is not None:
+            self.steering.expire_child(key)
 
     def close(self):
         super().close()
@@ -48,6 +53,7 @@ class KeptAgents(Background):
             if name := record.get("name"):
                 self.names[path.stem] = name
             if interrupted:
+                self._expire_steering(path.stem)
                 self._write(path.stem)
 
     def _write(self, key: str) -> None:
@@ -114,6 +120,13 @@ class KeptAgents(Background):
             raise ValueError("invalid child identity")
         with self.lock:
             job = self.jobs.setdefault(key, Job(parent=record["parent"], keep=record["keep"]))
+            prior = self.saved.get(key, {}).get("deliveries", {})
+            current = record.get("deliveries", {})
+            if record["status"] in ("idle", "done", "failed", "cancelled") or any(
+                item["status"] == "running" and current.get(receipt, {}).get("status") != "running"
+                for receipt, item in prior.items()
+            ):
+                self._expire_steering(key)
             job.status = record["status"]
             job.value = record.get("value")
             job.outbox = list(record.get("messages", []))
@@ -194,6 +207,7 @@ class KeptAgents(Background):
                                 record["value"] = value
                             record["messages"] = list(job.outbox)
                             current["status"] = "done"
+                            self._expire_steering(key)
                             self._write(key)
                             job.value = value
                 except Exception as exc:
@@ -204,6 +218,7 @@ class KeptAgents(Background):
                             if current is not None and current["status"] == "running":
                                 current["status"] = "failed"
                             job.ready.set()
+                            self._expire_steering(key)
                             self._write(key)
 
             job.future = self.pool.submit(work)
@@ -265,6 +280,7 @@ class KeptAgents(Background):
                 while pending:
                     item = pending.pop()
                     self.names.pop(item, None)
+                    self._expire_steering(item)
                     if item not in self.saved:
                         continue
                     del self.saved[item]

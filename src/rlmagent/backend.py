@@ -212,9 +212,11 @@ class Client:
             pending_steering = []
             if ledger is not None:
                 metadata = getattr(self.tree, "backend_agents", {}).get(agent, {})
-                text, pending_steering = ledger.context(agent, root=metadata.get("depth", 0) == 0)
+                text, pending_steering = ledger.context(
+                    agent, root=child is None and metadata.get("depth", 0) == 0, child=child,
+                )
                 if text:
-                    entries.append(HumanEntry(content="User steering:\n" + text))
+                    entries.append(HumanEntry(content="Steering instructions:\n" + text))
             from rlmagent.agents.trace import correlated
             from rlmagent.model.deadline import bounded_stream
 
@@ -235,7 +237,7 @@ class Client:
                     raise RuntimeError(event.error.error_message or "model request failed")
                 if isinstance(event, StreamCloseEvent):
                     if ledger is not None:
-                        ledger.consumed(pending_steering, agent, call)
+                        ledger.consumed(pending_steering, agent, call, child=child)
                         if pending_steering and tracer is not None:
                             tracer._write("steering", agent=agent, request=call,
                                           messages=pending_steering)
@@ -330,7 +332,7 @@ class BackendProvider:
     def function_names(self) -> list[str]:
         """The names a cell can call, without starting a run."""
         fixed = {"FINAL", "capabilities", "rlm", "gather_rlm", "spawn", "children", "tell_parent",
-                 "name_child", "child", "child_info"}
+                 "name_child", "child", "child_info", "steer_child"}
         optional = {"fetch_url", "guidance", "improve", "playbook"}
         workspace = Workspace(self.tree.cwd, self.tree.approver).functions()
         extended = getattr(self.tree, "extension_functions", {})
@@ -379,6 +381,7 @@ class BackendProvider:
         )
         async with self._serial:
             self.last_stop_reason = None
+            self.background.steering = getattr(getattr(self.tree, "session", None), "steering", None)
             self.background.open(self.state.path)
             loop = asyncio.get_running_loop()
             host_context = contextvars.copy_context()
@@ -525,7 +528,7 @@ class BackendProvider:
                 async def capabilities():
                     names = {name for name in joined if not name.startswith("_")}
                     if "_spawn" in joined:
-                        names |= {"spawn", "children", "name_child", "child", "child_info"}
+                        names |= {"spawn", "children", "name_child", "child", "child_info", "steer_child"}
                     return {
                         "functions": sorted(names | {tool.name for tool in tools} | {"FINAL"}),
                         **limits_of(tree),
@@ -553,7 +556,7 @@ class BackendProvider:
                 if "_spawn" in bridges:
                     from rlmagent.agents.child_handles import HELPERS
 
-                    async def child_registry(action, key=None, name=None):
+                    async def child_registry(action, key=None, name=None, text=None, message_id=None):
                         background = self.background
                         parent = background.owners.get(agent, agent)
                         if not node_prepare and parent not in background.saved:
@@ -562,7 +565,22 @@ class BackendProvider:
                         # metadata callback can arrive just after the spawn response.
                         for attempt in range(40):
                             try:
-                                info = background.child_handle(parent, action, key, name)
+                                with background.lock:
+                                    operation = "info" if action == "steer" else action
+                                    info = background.child_handle(parent, operation, key, name)
+                                    ledger = background.steering
+                                    if action == "steer":
+                                        if ledger is None:
+                                            raise ValueError("child steering requires an attached session")
+                                        active = info["status"] in ("starting", "running")
+                                        if not active:
+                                            ledger.expire_child(key)
+                                        return ledger.accept(text, message_id, key, once=True,
+                                                             allow_new=active)
+                                    if action == "info" and ledger is not None:
+                                        if info["status"] not in ("starting", "running"):
+                                            ledger.expire_child(key)
+                                        info["steering"] = ledger.receipts(target=key)
                                 break
                             except KeyError:
                                 if not node_prepare or attempt == 39:
@@ -571,12 +589,13 @@ class BackendProvider:
                         if action == "info":
                             tracer = getattr(tree, "tracer", None)
                             info["usage"] = tracer.child_usage(key) if tracer is not None else None
+                            info.setdefault("steering", [])
                         return info
 
                     joined["_child_registry"] = wrap(child_registry)
                     startup += (
-                        "\nasync def _child_operation(action, key=None, name=None):\n"
-                        "    result = await _child_registry(action, key, name)\n"
+                        "\nasync def _child_operation(action, key=None, name=None, **arguments):\n"
+                        "    result = await _child_registry(action, key, name, **arguments)\n"
                         "    if isinstance(result, str):\n"
                         "        raise ValueError(result)\n"
                         "    return result\n"
@@ -692,6 +711,7 @@ class BackendProvider:
                     "Children can await tell_parent(text). await children() lists handles. "
                     "await name_child(handle, name) names a child, await child(name) finds it, "
                     "and await child_info(handle) shows status and recorded usage. "
+                    "Use await steer_child(handle, text) to guide an active child's next model request. "
                     "Playbooks use await playbook(id=None), await skill(id), and "
                     "await improve(instructions, shared=False). "
                     "For work with several parts keep a task list: await todo('add', text), "

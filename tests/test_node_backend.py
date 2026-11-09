@@ -132,6 +132,92 @@ async def test_node_child_cancellation_stops_the_actual_provider_request(tmp_pat
         await backend.close()
 
 
+@pytest.mark.parametrize("engine", ["node", "python"])
+@pytest.mark.parametrize("has_next_request", [True, False])
+async def test_active_child_steering_reaches_one_request_without_queuing_a_turn(tmp_path, engine, has_next_request):
+    from rlmness.session import Session
+
+    from rlmagent.agents.trace import Tracer
+    from rlmagent.steering import Steering
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    text = "targeted live instruction"
+    observed = []
+    status = "consumed" if has_next_request else "expired"
+    root = ReplayProvider([text_turn("```python\n"
+        "h = await spawn('begin work', keep=True, model='child-model')\n"
+        "await wait_for_request()\n"
+        "receipt = await steer_child(h, 'targeted live instruction', 'focus')\n"
+        "assert receipt['status'] == 'accepted' and receipt['target'] == h.id\n"
+        "await release_request()\n"
+        "assert await h.result() == 2\n"
+        f"assert await steering_status() == {status!r}\n"
+        "again = await steer_child(h, 'targeted live instruction', 'focus')\n"
+        f"assert again['status'] == {status!r}\n"
+        "assert (await child_info(h))['steering'] == [again]\n"
+        "try:\n"
+        "    await steer_child(h, 'idle message')\n"
+        "except ValueError as exc:\n"
+        "    assert 'use send' in str(exc)\n"
+        "else:\n"
+        "    raise AssertionError('steering started an idle turn')\n"
+        "await h.send('follow-up')\n"
+        "FINAL(await h.result())\n```")])
+    replies = iter(["n = 1", "n += 1", "FINAL(n)", "FINAL(n + 1)"] if has_next_request
+                   else ["n = 2\nFINAL(n)", "FINAL(n + 1)"])
+
+    class Provider:
+        async def stream_response(self, **kwargs):
+            if kwargs["model"] != "child-model":
+                assert all(text not in message.text for message in kwargs["messages"])
+                async for event in root.stream_response(**kwargs):
+                    yield event
+                return
+            observed.append(any(text in message.text for message in kwargs["messages"]))
+            if len(observed) == 1:
+                entered.set()
+                await release.wait()
+            for event in text_turn(f"```python\n{next(replies)}\n```"):
+                yield event
+
+    async def wait_for_request():
+        await asyncio.wait_for(entered.wait(), 10)
+
+    async def release_request():
+        release.set()
+
+    model = Provider()
+    ledger = Steering(tmp_path / "steering.json")
+
+    async def steering_status():
+        return ledger.receipts()[0]["status"]
+
+    tree = SimpleNamespace(cwd=str(tmp_path), approver=Approver("deny"), network=False,
+        kernel_kind="wasm", recursive_engine=engine, cell_timeout=20,
+        allowance=Allowance(max_calls=10, max_cost=2), tracer=Tracer(),
+        session=SimpleNamespace(steering=ledger),
+        host_functions={"wait_for_request": wait_for_request, "release_request": release_request,
+                        "steering_status": steering_status})
+    backend = BackendProvider(model, model, tree)
+    backend.state = Session.load(tmp_path / "parent.json")
+    try:
+        events = [event async for event in backend.stream_response(model="root-model", system="base",
+            messages=[HumanEntry(content="guide an active child")],
+            tools=[SimpleNamespace(name="python")])]
+        assert events[-1].type == "done", events[-1]
+        assert events[-1].message.text == "3"
+        assert observed == ([False, True, False, False] if has_next_request else [False, False])
+        [receipt] = Steering(ledger.path).receipts()
+        assert receipt["status"] == status
+        if has_next_request:
+            assert receipt["deliveries"][receipt["target"]]["requestId"]
+        else:
+            assert not receipt["deliveries"]
+    finally:
+        release.set()
+        await backend.close()
+
+
 async def test_coordinator_loss_cancels_inference_and_reopens_checkpoint_without_losing_job(tmp_path):
     import sys
 
