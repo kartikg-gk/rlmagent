@@ -40,7 +40,7 @@ def next_run(expression: str, timezone: str, after: float) -> float:
     expression = expression.strip()
     fields = _ALIASES.get(expression, expression).split()
     if len(fields) != 5:
-        raise ValueError("cron needs five fields: minute, hour, day, month, weekday")
+        raise ValueError("a cron schedule is 5 space-separated parts (minute hour day-of-month month day-of-week)")
     if not isinstance(timezone, str) or not timezone:
         raise ValueError("cron needs an IANA timezone such as UTC or America/New_York")
     try:
