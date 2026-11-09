@@ -13,10 +13,16 @@ DEFAULT_OUTPUT_BYTES = 20_000
 @dataclass
 class Policy:
     allow_git: bool = True
-    max_tool_output_bytes: int = DEFAULT_OUTPUT_BYTES
+    max_tool_output_bytes: int = DEFAULT_OUTPUT_BYTES  # zero disables this output cap
     max_compactions: int | None = None
     agent_max_tokens: int | None = None  # completion tokens one agent may spend
     search_block: list[str] = field(default_factory=list)
+    shell_access: str = "workspace"
+    shell_network: bool = False
+    allowed_tools: frozenset[str] | None = None
+
+    def allows_tool(self, name: str) -> bool:
+        return self.allowed_tools is None or name in self.allowed_tools
 
 
 # Git commands that only look at or change the current branch's working state.
@@ -57,7 +63,7 @@ def git_refusal(command: str, policy: Policy) -> str | None:
         return None
     for sub, args in _git_calls(command):
         if sub in _GIT_REACHING:
-            return (f"git {sub} reaches beyond the current branch and is turned off for this "
+            return (f"git {sub} touches other branches, remotes or history, which this run does not allow; "
                     "run; work with status, diff, add, commit and log")
         if sub == "log" and any(a in ("--all", "--branches", "--remotes", "--tags") for a in args):
             return "git log over other refs is turned off for this run"

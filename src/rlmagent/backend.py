@@ -7,6 +7,7 @@ import contextvars
 import copy
 import json
 import queue
+import re
 import threading
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import asdict, is_dataclass
@@ -65,6 +66,13 @@ def limits_of(tree) -> dict:
 
 
 SHOWN_OUTPUT_LINES = 8
+
+
+def summed_usage(accounting):
+    return UsageStats(**{name: sum(getattr(item, name) or 0 for item in accounting) for name in
+        ("input", "output", "total_tokens", "cache_read", "cache_write", "cache_write_1h", "reasoning")},
+        cost={name: sum(getattr(item.cost, name) for item in accounting) for name in
+              ("total", "input", "output", "cache_read", "cache_write")})
 
 
 def shown_output(output: str) -> str:
@@ -158,10 +166,16 @@ class Client:
 
     def complete(self, messages, *, model):
         agent = getattr(self.context, "agent", "root")
+        contract_model = getattr(self.tree, "contract_model", None)
+        if contract_model is not None and model != contract_model:
+            raise RuntimeError("model requests must use the model specified by the runtime contract")
 
         async def request():
             system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
             system += "\n\n" + self.instructions
+            refinement = getattr(self.tree, "refinement", None)
+            if refinement is not None:
+                system = refinement.filter_system(system)
             entries = [
                 (
                     ModelEntry(content=[TextSegment(text=m["content"])])
@@ -181,23 +195,54 @@ class Client:
             tracer = getattr(self.tree, "tracer", None)
             policy = getattr(self.tree, "policy", None)
             limit = getattr(policy, "agent_max_tokens", None)
-            if limit and tracer is not None:
+            if limit is not None and tracer is not None:
                 spent = tracer._totals.get(agent, {}).get("output", 0)
                 if spent >= limit:
                     raise RuntimeError(f"agent {agent} reached its limit of {limit} "
                                        "completion tokens")
-            call = tracer.begin(agent, model) if tracer is not None else None
+            child = self.background.owners.get(agent) if self.background is not None else None
+            call = tracer.begin(agent, model, child=child) if tracer is not None else None
+            if tracer is not None:
+                def close_unfinished(task):
+                    if call in tracer._open:
+                        tracer.end(call, None, "aborted" if task.cancelled() else "error")
+                asyncio.current_task().add_done_callback(close_unfinished)
+            session = getattr(self.tree, "session", None)
+            ledger = getattr(session, "steering", None)
+            pending_steering = []
+            if ledger is not None:
+                metadata = getattr(self.tree, "backend_agents", {}).get(agent, {})
+                text, pending_steering = ledger.context(
+                    agent, root=child is None and metadata.get("depth", 0) == 0, child=child,
+                )
+                if text:
+                    entries.append(HumanEntry(content="Steering instructions:\n" + text))
             from rlmagent.agents.trace import correlated
+            from rlmagent.model.deadline import bounded_stream
 
-            stream = self.provider.stream_response(
-                model=model, system=system, messages=entries, tools=[], signal=self.signal
-            )
-            async for event in correlated(stream, call):
+            def start():
+                return self.provider.stream_response(
+                    model=model, system=system, messages=entries, tools=[], signal=self.signal,
+                    cache_key=(str(getattr(session, "session_id", "run")) + ":" + (
+                        "root" if getattr(self.tree, "backend_agents", {}).get(agent, {}).get("depth", 0) == 0 else agent)),
+                )
+
+            budget = getattr(getattr(self.tree, "allowance", None), "new_token_budget", None)
+            stream = (self.tree.provider.measured_stream(
+                          model, start, self.tree.provider.request_size(system, entries))
+                      if budget is not None else start())
+            async for event in correlated(bounded_stream(stream, model,
+                    getattr(self.tree, "request_timeout", 300.0)), call, tracer):
                 if isinstance(event, StreamFaultEvent):
                     if tracer is not None:
                         tracer.end(call, event.error.usage, event.reason)
                     raise RuntimeError(event.error.error_message or "model request failed")
                 if isinstance(event, StreamCloseEvent):
+                    if ledger is not None:
+                        ledger.consumed(pending_steering, agent, call, child=child)
+                        if pending_steering and tracer is not None:
+                            tracer._write("steering", agent=agent, request=call,
+                                          messages=pending_steering)
                     usage = event.message.usage
                     if self.accounting is not None:
                         self.accounting.append(usage)
@@ -219,7 +264,7 @@ class Client:
                         prompt_tokens=usage.input + usage.cache_read + usage.cache_write,
                         completion_tokens=usage.output,
                         total_tokens=usage.total_tokens,
-                        cost=usage.cost.total,
+                        cost=usage.cost.total if usage.cost.total > 0 else None,
                         cached_tokens=usage.cache_read,
                         reasoning_tokens=usage.reasoning,
                     )
@@ -260,6 +305,7 @@ class BackendProvider:
         # draws steps itself sets cards, and the reply then carries only text.
         self.listeners = []
         self.cards = False
+        self.background.record_event = self.record_event
 
     def record_event(self, event):
         with self._event_lock:
@@ -288,12 +334,19 @@ class BackendProvider:
 
     def function_names(self) -> list[str]:
         """The names a cell can call, without starting a run."""
-        fixed = {"FINAL", "capabilities", "fetch_url", "guidance", "improve", "playbook", "skill",
-                 "rlm", "gather_rlm", "spawn", "children", "tell_parent"}
+        fixed = {"FINAL", "capabilities", "rlm", "gather_rlm", "spawn", "children", "tell_parent",
+                 "name_child", "find_child", "child_info", "steer_child"}
+        optional = {"fetch_url", "guidance", "improve", "playbook"}
         workspace = Workspace(self.tree.cwd, self.tree.approver).functions()
         extended = getattr(self.tree, "extension_functions", {})
         builtin = getattr(self.tree, "host_functions", {})
-        return sorted(fixed | set(workspace) | set(extended) | set(builtin))
+        optional |= set(workspace) | set(extended) | set(builtin)
+        policy = getattr(self.tree, "policy", None)
+        if policy is not None:
+            optional = {name for name in optional if policy.allows_tool(name)}
+        if "playbook" in optional:
+            optional.add("skill")
+        return sorted(fixed | optional)
 
     def checkpoint_state(self):
         """A copy of the saved variables for /undo, or None when they are too large to keep."""
@@ -303,6 +356,7 @@ class BackendProvider:
         return copy.deepcopy(fields)
 
     def restore_state(self, checkpoint) -> None:
+        self.state.close_runtime()
         for name, value in copy.deepcopy(checkpoint).items():
             setattr(self.state, name, value)
         if self.state.path is not None:
@@ -329,6 +383,8 @@ class BackendProvider:
             if latest is not None and isinstance(latest.content, list) else []
         )
         async with self._serial:
+            self.last_stop_reason = None
+            self.background.steering = getattr(getattr(self.tree, "session", None), "steering", None)
             self.background.open(self.state.path)
             loop = asyncio.get_running_loop()
             host_context = contextvars.copy_context()
@@ -389,6 +445,13 @@ class BackendProvider:
 
             def factory(prompt, bridges, timeout, tools=(), **kwargs):
                 agent = getattr(context, "agent", "root")
+                reuse = kwargs.pop("reuse", None)
+                owner_session = kwargs.pop("owner_session", None)
+                node_prepare = kwargs.pop("_node_prepare", False)
+                if child_id := self.background.owners.get(agent):
+                    self.record_event({"kind": "child_bound", "run_id": agent,
+                                       "child_id": child_id,
+                                       "name": self.background.names.get(child_id)})
 
                 def wrap(fn):
                     def call(*args, **kw):
@@ -472,7 +535,7 @@ class BackendProvider:
                 async def capabilities():
                     names = {name for name in joined if not name.startswith("_")}
                     if "_spawn" in joined:
-                        names |= {"spawn", "children"}
+                        names |= {"spawn", "children", "name_child", "find_child", "child_info", "steer_child"}
                     return {
                         "functions": sorted(names | {tool.name for tool in tools} | {"FINAL"}),
                         **limits_of(tree),
@@ -483,6 +546,87 @@ class BackendProvider:
                 joined.update(
                     playbook=wrap(playbook), improve=wrap(improve), fetch_url=wrap(fetch_url)
                 )
+                policy = getattr(tree, "policy", None)
+                if policy is not None:
+                    joined = {name: fn for name, fn in joined.items()
+                              if name in bridges or name == "capabilities" or policy.allows_tool(name)}
+                startup = (
+                    "async def skill(id):\n"
+                    "    entry = await playbook(id)\n"
+                    "    namespace = {}\n"
+                    "    exec(entry['content'], namespace)\n"
+                    "    return namespace[entry['callable']]"
+                ) if "playbook" in joined else ""
+                if "_delivery" in joined:
+                    startup += ("\nasync def child_delivery(handle, receipt):\n"
+                                "    return await _delivery(handle.id, receipt)\n")
+                if "_spawn" in bridges:
+                    from rlmagent.agents.child_handles import HELPERS
+
+                    async def child_registry(action, key=None, name=None, text=None, message_id=None):
+                        background = self.background
+                        parent = background.owners.get(agent, agent)
+                        if not node_prepare and parent not in background.saved:
+                            parent = agent
+                        # Node launches the job before returning the ID, but its first
+                        # metadata callback can arrive just after the spawn response.
+                        for attempt in range(40):
+                            try:
+                                with background.lock:
+                                    operation = "info" if action == "steer" else action
+                                    info = background.child_handle(parent, operation, key, name)
+                                    ledger = background.steering
+                                    if action == "steer":
+                                        if ledger is None:
+                                            raise ValueError("child steering requires an attached session")
+                                        active = info["status"] in ("starting", "running")
+                                        if not active:
+                                            ledger.expire_child(key)
+                                        return ledger.accept(text, message_id, key, once=True,
+                                                             allow_new=active)
+                                    if action == "info" and ledger is not None:
+                                        if info["status"] not in ("starting", "running"):
+                                            ledger.expire_child(key)
+                                        info["steering"] = ledger.receipts(target=key)
+                                break
+                            except KeyError:
+                                if not node_prepare or attempt == 39:
+                                    raise ValueError("unknown child handle") from None
+                                await asyncio.sleep(0.025)
+                        if action == "info":
+                            tracer = getattr(tree, "tracer", None)
+                            info["usage"] = tracer.child_usage(key) if tracer is not None else None
+                            info.setdefault("steering", [])
+                        return info
+
+                    joined["_child_registry"] = wrap(child_registry)
+                    startup += (
+                        "\nasync def _child_operation(action, key=None, name=None, **arguments):\n"
+                        "    result = await _child_registry(action, key, name, **arguments)\n"
+                        "    if isinstance(result, str):\n"
+                        "        raise ValueError(result)\n"
+                        "    return result\n"
+                        "def _child_handle(key):\n"
+                        "    return _AgentHandle(key)\n"
+                    ) + HELPERS
+                if node_prepare:
+                    from rlmagent.hints import EMPTY_CELL, _RULES
+                    from rlmagent.policy import DEFAULT_OUTPUT_BYTES
+
+                    if tree.network:
+                        from rlmagent.agents.wasm_api import NETWORK
+                        startup += "\n" + NETWORK
+                    return {
+                        "host_functions": {key: value for key, value in joined.items() if value is not None},
+                        "startup": startup,
+                        "cell_policy": {
+                            "maxOutputBytes": getattr(workspace.policy, "max_tool_output_bytes",
+                                                      DEFAULT_OUTPUT_BYTES),
+                            "emptyHint": EMPTY_CELL,
+                            "hints": [[pattern.pattern, bool(pattern.flags & re.IGNORECASE), hint]
+                                      for pattern, hint in _RULES],
+                        },
+                    }
                 from rlmness.runtime import SubprocessRuntime
 
                 runtime_type = (
@@ -493,14 +637,10 @@ class BackendProvider:
                 # Host startup and helper installation have their own bounded window.
                 # The requested cell deadline still applies to every model-written cell.
                 def build():
+                    if owner_session is not None:
+                        kwargs["session"] = owner_session.state_for_guest()
                     built = runtime_type(prompt, joined, max(30.0, timeout), tools, **kwargs)
-                    built.execute(
-                        "async def skill(id):\n"
-                        "    entry = await playbook(id)\n"
-                        "    namespace = {}\n"
-                        "    exec(entry['content'], namespace)\n"
-                        "    return namespace[entry['callable']]"
-                    )
+                    built.execute(startup)
                     if tree.network and isinstance(built, WasmRuntime):
                         from rlmagent.agents.wasm_api import NETWORK
 
@@ -511,12 +651,20 @@ class BackendProvider:
                     built.timeout = timeout
                     return built
 
-                runtime = build()
+                if reuse is not None and isinstance(reuse, runtime_type) and not reuse._closed:
+                    reuse.rebind(prompt, joined, max(30.0, timeout), tools)
+                    reuse.timeout = timeout
+                    runtime = reuse
+                else:
+                    if reuse is not None:
+                        reuse.close()
+                    runtime = build()
                 runtimes.append(runtime)
                 shape_cells(runtime, getattr(tree, "policy", None), rebuild=build)
                 return runtime
 
             factory.SEALED = True
+            factory.PERSISTENT = True
             factory.NEEDS_SOURCE = True
             factory.MAX_LIVE = WasmRuntime.MAX_LIVE
             cancel = threading.Event()
@@ -524,7 +672,15 @@ class BackendProvider:
             from rlmness.background import PRELUDE
 
             self.state.functions["_AgentHandle"] = PRELUDE.split("async def spawn(")[0]
+            def prepare_node(prompt, bridge_names, timeout, *, session, agent):
+                context.agent = agent
+                return factory(prompt, dict.fromkeys(bridge_names), timeout,
+                               owner_session=session, _node_prepare=True)
+
+            factory.NODE_PREPARE = prepare_node
             config = Config(
+                engine=getattr(tree, "recursive_engine",
+                               "node" if getattr(tree, "kernel_kind", "wasm") == "wasm" else "python"),
                 primary_agent=model,
                 max_steps=tree.allowance.max_calls,
                 max_calls=tree.allowance.max_calls,
@@ -560,6 +716,9 @@ class BackendProvider:
                     "the returned handle provides result(timeout=None), status(), send(text), "
                     "messages(), cancel(), and id. Persistent jobs use keep=True. "
                     "Children can await tell_parent(text). await children() lists handles. "
+                    "await name_child(handle, name) names a child, await find_child(name) finds it, "
+                    "and await child_info(handle) shows status and recorded usage. "
+                    "Use await steer_child(handle, text) to guide an active child's next model request. "
                     "Playbooks use await playbook(id=None), await skill(id), and "
                     "await improve(instructions, shared=False). "
                     "For work with several parts keep a task list: await todo('add', text), "
@@ -585,6 +744,13 @@ class BackendProvider:
                     "Return the answer with FINAL. The conversation is in PROMPT."
                 )
             )
+            policy = getattr(tree, "policy", None)
+            if policy is not None and policy.allowed_tools is not None:
+                instruction = (
+                    self.instructions + "\n\nComplete the task in Python and return the answer with FINAL. "
+                    "The conversation is in PROMPT. Use await capabilities() to inspect the permitted "
+                    "host functions. Delegation follows the configured depth and inherits the same policy."
+                )
             task = asyncio.create_task(
                 asyncio.to_thread(
                     solve,
@@ -658,16 +824,28 @@ class BackendProvider:
                     raise
                 yield StreamFaultEvent(
                     reason="aborted",
-                    error=ModelEntry(model=model, stop_reason="aborted", error_message="cancelled"),
+                    error=ModelEntry(model=model, stop_reason="aborted", error_message="cancelled",
+                                     usage=summed_usage(accounting)),
                 )
                 return
             except Exception as error:
-                from rlmness.runtime import CellTimeout
+                from rlmness import AllowanceSpent
+                from rlmness.engine import StepsUsedUp
+                from rlmness.runtime import CellTimeout, RuntimeGone
 
+                if isinstance(error, AllowanceSpent):
+                    tree.provider.refusal = str(error)
+                if isinstance(error, StepsUsedUp):
+                    self.last_stop_reason = "max_calls"
+                if isinstance(error, RuntimeGone):
+                    for future in list(self.pending):
+                        future.cancel()
                 if isinstance(error, CellTimeout):
+                    self.last_stop_reason = "cell_timeout"
                     from rlmness.wasm_runtime import reset_host
 
-                    await asyncio.to_thread(reset_host)
+                    if not getattr(WasmRuntime, "ISOLATED", False):
+                        await asyncio.to_thread(reset_host)
                 self.active = None
                 aborted = cancel.is_set()
                 yield StreamFaultEvent(
@@ -676,28 +854,12 @@ class BackendProvider:
                         model=model,
                         stop_reason="aborted" if aborted else "error",
                         error_message=str(error),
+                        usage=summed_usage(accounting),
                     ),
                 )
                 return
             self.active = None
-            usage = UsageStats(
-                **{
-                    name: sum(getattr(item, name) or 0 for item in accounting)
-                    for name in (
-                        "input",
-                        "output",
-                        "total_tokens",
-                        "cache_read",
-                        "cache_write",
-                        "cache_write_1h",
-                        "reasoning",
-                    )
-                },
-                cost={
-                    name: sum(getattr(item.cost, name) for item in accounting)
-                    for name in ("total", "input", "output", "cache_read", "cache_write")
-                },
-            )
+            usage = summed_usage(accounting)
             message = ModelEntry(
                 model=model, content=[TextSegment(text=str(answer.output))], usage=usage
             )
@@ -713,7 +875,8 @@ class BackendProvider:
             for runtime in list(runtimes):
                 runtime.channel.inbox.put(None)
                 runtime.close()
-            if runtimes and any(isinstance(runtime, WasmRuntime) for runtime in runtimes):
+            if (runtimes and not getattr(WasmRuntime, "ISOLATED", False)
+                    and any(isinstance(runtime, WasmRuntime) for runtime in runtimes)):
                 import threading
 
                 from rlmness.wasm_runtime import reset_host
@@ -722,5 +885,6 @@ class BackendProvider:
 
     async def close(self):
         self.cancel()
+        await asyncio.to_thread(self.state.close_runtime)
         self.background.close()
         await asyncio.to_thread(self.background.pool.shutdown, wait=True, cancel_futures=True)

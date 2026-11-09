@@ -53,6 +53,9 @@ def of_session(session, refusal: str | None) -> dict:
     error = getattr(last, "error_message", None)
     stop = getattr(last, "stop_reason", None)
     reason = classify(refusal, text, error, cancelled=stop == "aborted")
+    typed = getattr(getattr(session, "backend", None), "last_stop_reason", None)
+    if typed and stop != "aborted":
+        reason = typed
     return {"stop_reason": reason, "stop_detail": refusal or error or ""}
 
 

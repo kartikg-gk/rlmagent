@@ -54,9 +54,12 @@ async def test_the_harness_approves_before_anything_is_sent(tmp_path, monkeypatc
         assert (tmp_path / "a.py").read_text() == "x = 3\n"
         with pytest.raises(Refused):
             await functions["run"]("echo no")
-        with pytest.raises(ValueError, match="git push reaches beyond"):
+        with pytest.raises(ValueError, match="git push touches other branches"):
             await functions["run"]("git push")
-        assert [kind for kind, *_ in seen] == ["write", "edit", "run"]
+        with pytest.raises(Refused):
+            await functions["job_start"](argv=["printf", "visible command"])
+        assert [kind for kind, *_ in seen] == ["write", "edit", "run", "run"]
+        assert seen[-1][1] == "printf 'visible command'"
     finally:
         await remote.close()
 

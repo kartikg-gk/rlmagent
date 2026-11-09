@@ -22,15 +22,12 @@ class HelpScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with VerticalScroll(classes="inspect-body"):
             yield Static("Keyboard shortcuts", classes="step-head")
+            for binding in self.app.BINDINGS:
+                keys = self.app._keymap.get(binding.id, binding.key)
+                if keys:
+                    yield Static(f"{keys}  {binding.description}", markup=False)
             for line in (
-                "F1  Help",
-                "F2  Agent tree",
-                "F3  Timeline",
-                "F4  Workers",
-                "Ctrl+N  New session",
-                "Ctrl+Q  Quit",
-                "Shift+Tab  Toggle auto-accept",
-                "Esc  Stop a turn or close a panel",
+                "Esc  Close this panel",
                 "Enter on a step  Inspect its code and output",
                 "Space on a finished step  Show or hide its details",
                 "Type / at the prompt to browse commands.",
@@ -67,8 +64,11 @@ def agent_label(book: StepBook, run_id: str) -> str:
     tokens = sum(s.tokens for s in steps)
     costs = [s.cost for s in steps if s.cost is not None]
     spent = f" · ${sum(costs):.4f}" if costs else ""
-    return (f"{short_id(run_id)} · d{agent.depth} · {agent.status} · "
-            f"{len(steps)} steps · {tokens} tokens{spent}")
+    name = book.child_names.get(agent.child_id) or short_id(agent.child_id or run_id)
+    note = book.child_notes.get(agent.child_id)
+    progress = f" · {note}" if note else ""
+    return (f"{name} · d{agent.depth} · {agent.status} · "
+            f"{len(steps)} steps · {tokens} tokens{spent}{progress}")
 
 
 class AgentTreeScreen(ModalScreen[None]):
@@ -79,23 +79,39 @@ class AgentTreeScreen(ModalScreen[None]):
     def __init__(self, book: StepBook) -> None:
         super().__init__(classes="inspect-screen")
         self.book = book
+        self._agent_tree: Tree[str] = Tree("agents", classes="inspect-body")
+        self._agent_tree.show_root = False
+        self._agent_nodes = {}
+        self._empty_leaf = None
 
     def compose(self) -> ComposeResult:
-        tree: Tree[str] = Tree("agents", classes="inspect-body")
-        tree.show_root = False
-        nodes = {}
-        pending = list(self.book.agents.values())
-        # Parents first, so every child has a node to hang from.
-        pending.sort(key=lambda agent: agent.depth)
-        for agent in pending:
-            parent = nodes.get(agent.parent, tree.root)
-            nodes[agent.run_id] = parent.add(agent_label(self.book, agent.run_id),
-                                             data=agent.run_id, expand=True)
-        if not self.book.agents:
-            tree.root.add_leaf("no agents have run yet")
-        tree.root.expand()
-        yield tree
+        yield self._agent_tree
         yield Static("Esc to close", classes="step-foot")
+
+    def on_mount(self) -> None:
+        self._agent_tree.root.expand()
+        self._refresh_tree()
+        self.set_interval(0.25, self._refresh_tree)
+
+    def _refresh_tree(self) -> None:
+        agents = self.book.agents
+        root = self._agent_tree.root
+        if self._agent_nodes.keys() - agents.keys():
+            root.remove_children()
+            self._agent_nodes.clear()
+        if not agents and self._empty_leaf is None:
+            self._empty_leaf = root.add_leaf("no agents have run yet")
+        elif agents and self._empty_leaf is not None:
+            self._empty_leaf.remove()
+            self._empty_leaf = None
+        for agent in sorted(agents.values(), key=lambda item: item.depth):
+            label = agent_label(self.book, agent.run_id)
+            node = self._agent_nodes.get(agent.run_id)
+            if node is None:
+                parent = self._agent_nodes.get(agent.parent, root)
+                self._agent_nodes[agent.run_id] = parent.add(Text(label), data=agent.run_id, expand=True)
+            elif node.label.plain != label:
+                node.set_label(Text(label))
 
 
 BAR_WIDTH = 30

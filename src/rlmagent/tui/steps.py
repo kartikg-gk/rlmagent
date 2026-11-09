@@ -64,6 +64,7 @@ class Agent:
     model: str = ""
     status: str = RUNNING
     steps: list[int] = field(default_factory=list)
+    child_id: str | None = None
 
 
 def _moment(value) -> float | None:
@@ -97,15 +98,40 @@ class StepBook:
         self.steps: dict[tuple[str, int], Step] = {}
         self.agents: dict[str, Agent] = {}
         self.order: list[tuple[str, int]] = []
+        self.child_names: dict[str, str] = {}
+        self.child_notes: dict[str, str] = {}
+
+    def clear(self) -> None:
+        self.steps.clear()
+        self.agents.clear()
+        self.order.clear()
+        self.child_names.clear()
+        self.child_notes.clear()
 
     def feed(self, event: dict) -> Step | None:
         """Apply one event; return the step it changed, if it changed one worth showing."""
         kind = event.get("kind")
         run_id = event.get("run_id") or "root"
+        child_id = event.get("child_id")
         if kind == "run_started":
-            self.agents[run_id] = Agent(
-                run_id, event.get("parent_run_id"), int(event.get("depth") or 0),
-                str(event.get("model") or ""))
+            agent = self.agents.setdefault(run_id, Agent(run_id))
+            agent.parent = event.get("parent_run_id")
+            agent.depth = int(event.get("depth") or 0)
+            agent.model = str(event.get("model") or "")
+            agent.status = RUNNING
+            if child_id:
+                agent.child_id = child_id
+            return None
+        if kind == "child_bound" and child_id:
+            self.agents.setdefault(run_id, Agent(run_id)).child_id = child_id
+        if kind in ("child_bound", "child_named") and child_id and event.get("name"):
+            self.child_names[child_id] = event["name"]
+        if kind == "child_progress" and child_id:
+            self.child_notes[child_id] = " ".join(str(event.get("text", ""))[:500].splitlines())
+            return None
+        if kind == "child_status":
+            if run_id in self.agents:
+                self.agents[run_id].status = event["status"]
             return None
         if kind in ("run_completed", "run_failed"):
             agent = self.agents.get(run_id)

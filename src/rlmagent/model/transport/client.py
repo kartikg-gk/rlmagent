@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import ssl
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
 import httpx
+import certifi
 
 _PROXY_ENV_VARS = (
     "HTTP_PROXY",
@@ -59,14 +61,25 @@ def build_async_client(**kwargs: Any) -> httpx.AsyncClient:
     """Construct an ``httpx.AsyncClient`` with sanitized proxy settings."""
 
     with patched_proxy_environment():
+        if "verify" not in kwargs:
+            kwargs["verify"] = certificate_context()
         return httpx.AsyncClient(**kwargs)
+
+
+def certificate_context() -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    context.load_verify_locations(cafile=certifi.where())
+    if extra := os.environ.get("NODE_EXTRA_CA_CERTS"):
+        context.load_verify_locations(cafile=extra)
+    return context
 
 
 def fetch_json(url: str, *, timeout: float, follow_redirects: bool = False) -> dict[str, object]:
     """GET a URL and return the parsed JSON dict, using sanitized proxy settings."""
 
     with patched_proxy_environment():
-        response = httpx.get(url, timeout=timeout, follow_redirects=follow_redirects)
+        response = httpx.get(url, timeout=timeout, follow_redirects=follow_redirects,
+                             verify=certificate_context())
     response.raise_for_status()
     data = response.json()
     if not isinstance(data, dict):

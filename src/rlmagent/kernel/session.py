@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from jupyter_client.manager import AsyncKernelManager
+from rlmness.environment import execution_environment
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _POLL = 0.5
@@ -80,7 +81,7 @@ class KernelSession:
         try:
             await manager.start_kernel(
                 cwd=self.cwd,
-                env={**os.environ, **self.env},
+                env=execution_environment(self.env),
                 extra_arguments=["--IPKernelApp.log_level=ERROR"],
             )
             client = manager.client()

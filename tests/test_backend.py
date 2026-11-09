@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -95,27 +96,43 @@ async def test_backend_restores_saved_state_in_new_adapter(tmp_path):
         await second.close()
 
 
-async def test_backend_reopens_a_kept_child(tmp_path):
+@pytest.mark.parametrize("recursive_engine", ["python", "node"])
+async def test_backend_reopens_a_kept_child(tmp_path, recursive_engine):
     from rlmness.session import Session
 
-    model = ReplayProvider([
+    from rlmagent.agents.trace import Tracer
+
+    turns = [
         text_turn("```python\nh = await spawn('set value', 21, keep=True)\n"
-                  "value = await h.result()\nFINAL(value)\n```"),
+                  "await name_child(h, 'reviewer')\nvalue = await h.result()\n"
+                  "assert (await child_info(h))['usage']['input'] == 11\nFINAL(value)\n```"),
         text_turn("```python\nnumber = PROMPT\nFINAL(number)\n```"),
-        text_turn("```python\nh = (await children())[0]\nawait h.send('double the saved value')\n"
-                  "value = await h.result()\nFINAL(value)\n```"),
+        text_turn("```python\nh = await find_child('reviewer')\nassert h.id == (await children())[0].id\n"
+                  "assert (await child_info(h))['usage']['input'] == 11\n"
+                  "await h.send('double the saved value')\nvalue = await h.result()\n"
+                  "info = await child_info(h)\nassert info['name'] == 'reviewer'\n"
+                  "assert info['usage']['calls'] == 2 and info['usage']['input'] == 24\nFINAL(value)\n```"),
         text_turn("```python\nFINAL(number * 2)\n```"),
-    ])
+    ]
+    turns[1][0].message.usage.input = 11
+    turns[3][0].message.usage.input = 13
+    model = ReplayProvider(turns)
     tree = SimpleNamespace(cwd=str(tmp_path), approver=Approver("deny"), network=False,
+                           recursive_engine=recursive_engine,
                            cell_timeout=30, allowance=Allowance(max_calls=10, max_cost=2))
     state = tmp_path / "parent.json"
     for expected in ("21", "42"):
+        tree.tracer = Tracer()
+        tree.tracer.persist(tmp_path / "requests.jsonl")
         backend = BackendProvider(model, model, tree)
         backend.state = Session.load(state)
         try:
             assert (await _run_backend(backend))[0] == expected
         finally:
             await backend.close()
+        if recursive_engine == "node":
+            from rlmness.node_engine import reset_engine
+            await asyncio.to_thread(reset_engine)
 
 
 async def test_backend_playbook_helpers_and_denied_write(tmp_path):

@@ -101,7 +101,7 @@ _RUNNABLE_COMMANDS: frozenset[str] = frozenset({
     "goal", "autonomous", "btw", "image",
     "export", "help", "model", "name", "plan", "provider", "quit", "reload",
     "refine", "rewind", "session", "shell", "skills", "stats", "system", "think", "tools", "undo",
-    "version",
+    "version", "tier", "fast",
 })
 
 _RUNNABLE_COMMAND_TABLE: tuple[tuple[str, str], ...] = tuple(
@@ -113,8 +113,8 @@ _RUNNABLE_COMMAND_TABLE: tuple[tuple[str, str], ...] = tuple(
 _EXTENSION_GROUP = "rlm-agent.extensions"
 
 
-_EXPORT_FORMATS = ("text", "json", "jsonl")
-_EXPORT_SUFFIX = {"text": "txt", "json": "json", "jsonl": "jsonl"}
+_EXPORT_FORMATS = ("text", "json", "jsonl", "html")
+_EXPORT_SUFFIX = {"text": "txt", "json": "json", "jsonl": "jsonl", "html": "html"}
 
 
 def parse_export_arg(arg: str) -> tuple[str, str | None]:
@@ -435,6 +435,9 @@ class CodingSession:
     ) -> None:
         self._session_id = session_id
         self._vault = vault
+        from rlmagent.steering import Steering
+
+        self.steering = Steering(vault.path.with_suffix(".steering.json") if vault else None)
         self._catalog = catalog
         self._pending_header: SessionMetaRecord | None = None
         self._provider = provider
@@ -810,7 +813,7 @@ class CodingSession:
                 "it goes with your next message.")
 
     async def _cmd_btw(self, arg: str) -> str:
-        """Answer a side question from the conversation so far, without adding to it."""
+        """Answer from the conversation so far; the exchange is not kept in it."""
         question = arg.strip()
         if not question:
             return "Usage: /btw QUESTION"
@@ -993,6 +996,15 @@ class CodingSession:
             self._sync_route_to_catalog()
         self._apply_route()
         await self._append_record(ModelSwapRecord(model=model))
+        self._apply_model_preferences()
+
+    def _apply_model_preferences(self):
+        from rlmagent.model.preferences import read
+
+        overrides = read(self._provider_name)["overrides"].get(self.model, {})
+        setter = getattr(self._provider, "set_service_tier", None)
+        if setter is not None and getattr(self._provider, "supports_service_tier", True):
+            setter(overrides.get("tier", getattr(self._provider, "default_service_tier", None)))
 
     async def switch_provider(
         self,
@@ -1091,7 +1103,6 @@ class CodingSession:
         done = getattr(self, "compactions", 0)
         if limit is not None and done >= limit:
             raise RuntimeError(f"this run allows {limit} compaction(s) and has used them")
-        self.compactions = done + 1
         """Compact the transcript by summarising older entries."""
         transcript = list(self._harness.transcript)
         plan = plan_compaction(transcript, self._record_ids, limits=_CONTEXT_LIMITS)
@@ -1108,7 +1119,18 @@ class CodingSession:
             system=_CONTEXT_LIMITS.summary_system,
             max_chars=_CONTEXT_LIMITS.max_summary_chars,
         )
-        summary_text = await self._utility_completion(user_prompt, system_prompt)
+        summary_text = ""
+        for attempt in range(3):
+            try:
+                candidate = await self._utility_completion(user_prompt, system_prompt)
+                if not candidate.strip():
+                    raise ValueError("the summary response was empty")
+            except ValueError as error:
+                if attempt == 2:
+                    raise ValueError("Compaction failed after 3 invalid summaries; history was retained") from error
+            else:
+                summary_text = candidate[:_CONTEXT_LIMITS.max_summary_chars]
+                break
         # The transcript shrinks but the kernel does not: say so, or the
         # model rebuilds variables it still has.
         if not summary_text.rstrip().endswith(COMPACTION_NOTE):
@@ -1124,10 +1146,14 @@ class CodingSession:
             plan, summary_text, summary_record_id=prune_record.id
         )
         self._harness.set_messages(list(result.transcript))
+        self.compactions = done + 1
         hook = getattr(self, "on_compacted", None)
         if hook is not None:
             hook()
         self._record_ids = list(result.record_ids)
+        refinement = getattr(self, "refinement", None)
+        if refinement is not None:
+            refinement.compacted(transcript)
 
         return result.summary_entry
 
@@ -1259,6 +1285,8 @@ class CodingSession:
             "model": self._cmd_model,
             "provider": self._cmd_provider,
             "think": self._cmd_think,
+            "tier": self._cmd_tier,
+            "fast": self._cmd_fast,
             "plan": self._cmd_plan,
             "compact": self._cmd_compact,
             "improve": self._cmd_improve,
@@ -1369,6 +1397,9 @@ class CodingSession:
 
     async def branch(self, summary: str | None = None) -> str:
         """Create a conversation branch from the current point."""
+        refinement = getattr(self, "refinement", None)
+        if refinement is not None:
+            refinement.cancel()
         if summary is None:
             context = "\n".join(
                 f"[{e.role}] {surface_text(e)}"
@@ -1412,6 +1443,9 @@ class CodingSession:
             TipRecord(entry_id=entry_id), advance_tip=False
         )
         await self._mend_stored_history()
+
+        if refinement is not None:
+            refinement.at_boundary()
 
     async def _mend_stored_history(self) -> HistoryMend | None:
         """Repair malformed tool-call pairing in the active branch, durably."""
@@ -1643,6 +1677,14 @@ class CodingSession:
 
     async def export(self, fmt: str = "text") -> str:
         """Export the session transcript in the given format (text/json/jsonl)."""
+        if fmt == "html":
+            from rlmagent.session_html import render
+
+            messages = list(self.transcript)
+            records = None
+            if self._vault is not None:
+                records = await self._vault.read_all()
+            return render(messages, self.title or self.session_id, records=records)
         if self._vault is not None:
             return await self._export_from_vault(fmt)
         return self._export_from_transcript(fmt)
@@ -1795,6 +1837,8 @@ class CodingSession:
         """Wrap a harness event stream with post-run processing."""
         completed = False
         used: set[str] = set()
+        backend_events = getattr(getattr(self, "backend", None), "events", ())
+        first_event = len(backend_events)
         try:
             while True:
                 recovery: str | None = None
@@ -1830,6 +1874,9 @@ class CodingSession:
                     withheld = []
                     if isinstance(event, RunEndEvent):
                         completed = True
+                        pilot = getattr(self, "autopilot", None)
+                        if pilot is not None and pilot.autonomous:
+                            pilot.observe_turn(event.messages, backend_events[first_event:])
                     yield event
                 if recovery is None:
                     for early in withheld:
@@ -1894,6 +1941,8 @@ class CodingSession:
                 await self.compact()
             except Exception:  # noqa: BLE001
                 pass
+        if refinement is not None:
+            refinement.settled()
 
     # ── internal: persistence ──────────────────────────────────────────
 
@@ -1913,8 +1962,8 @@ class CodingSession:
             record.parent_id = self._tip_id
         try:
             await self._vault.append(record)
-        except Exception:  # noqa: BLE001
-            return None
+        except Exception as error:
+            raise OSError(f"Could not save session {self._session_id} to {self._vault.path}: {error}") from error
         if advance_tip:
             self._tip_id = record.id
         return record.id
@@ -1925,8 +1974,8 @@ class CodingSession:
         assert header is not None and self._vault is not None
         try:
             await self._vault.append(header)
-        except Exception:  # noqa: BLE001
-            return False
+        except Exception as error:
+            raise OSError(f"Could not create session {self._session_id} at {self._vault.path}: {error}") from error
         self._pending_header = None
         if self._catalog is not None:
             self._catalog.upsert(replace(
@@ -1969,6 +2018,9 @@ class CodingSession:
             tools=[],
         ):
             if isinstance(event, StreamCloseEvent):
+                from rlmagent.harness.contracts.transcript import CallBlock
+                if any(isinstance(part, CallBlock) for part in event.message.content):
+                    raise ValueError("Expected a text response; received a tool call")
                 return event.message.text
         return ""
 
@@ -1977,6 +2029,25 @@ class CodingSession:
     async def _cmd_model(self, arg: str) -> str:
         if not arg:
             return f"Current model: {self._model}"
+        if arg.split()[0] == "cycle":
+            from rlmagent.model.preferences import cycle, read
+
+            words = arg.split(maxsplit=2)
+            operation = words[1] if len(words) > 1 else "next"
+            if operation in ("add", "remove"):
+                try:
+                    models = cycle(self._provider_name, operation, words[2] if len(words) > 2 else None)
+                except ValueError as error:
+                    return str(error)
+                return "Model cycle: " + (", ".join(models) or "empty")
+            models = read(self._provider_name)["cycle"]
+            if operation == "list":
+                return "Model cycle: " + (", ".join(models) or "empty")
+            if operation != "next":
+                return "Use /model cycle add|remove NAME, list, or next."
+            if not models:
+                return "The provider's model cycle is empty. Use /model cycle add NAME."
+            arg = models[(models.index(self.model) + 1) % len(models)] if self.model in models else models[0]
         await self.switch_model(arg)
         return f"Switched to model: {arg}"
 
@@ -1995,6 +2066,27 @@ class CodingSession:
             return "Thinking disabled."
         await self.set_thinking(arg.split()[0])
         return f"Thinking set to: {arg.split()[0]}"
+
+    async def _cmd_tier(self, arg: str) -> str:
+        setter = getattr(self._provider, "set_service_tier", None)
+        if setter is None:
+            return "The current provider does not expose service tiers."
+        value = arg.strip().lower()
+        if value not in ("off", "auto", "default", "flex", "priority"):
+            return "Use /tier auto|default|flex|priority|off. Provider pricing applies."
+        try:
+            setter(None if value == "off" else value)
+        except ValueError as error:
+            return str(error)
+        from rlmagent.model.preferences import tier
+
+        tier(self._provider_name, self.model, None if value == "off" else value)
+        return f"Service tier set to {value} for subsequent requests."
+
+    async def _cmd_fast(self, arg: str) -> str:
+        if arg.strip().lower() not in ("on", "off"):
+            return "Use /fast on|off. Priority service pricing applies when enabled."
+        return await self._cmd_tier("priority" if arg.strip().lower() == "on" else "default")
 
     def _cmd_plan(self, arg: str) -> str:
         """Toggle plan mode, or set it explicitly with ``on``/``off``."""

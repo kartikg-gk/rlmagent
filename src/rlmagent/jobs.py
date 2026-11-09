@@ -10,16 +10,22 @@ it is ready.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from rlmness.environment import execution_environment
+
 MAX_READ = 64 * 1024
 MAX_JOBS = 32
+MAX_LOG = 8 * 1024 * 1024
 POLL = 0.2
 
 
@@ -35,19 +41,53 @@ class Job:
     exit: int | None = None
     timed_out: bool = False
     stopped: bool = False
-    proc: asyncio.subprocess.Process | None = None
-    task: asyncio.Task | None = None
+    proc: subprocess.Popen | None = None
+    persistent: bool = False
+    total_bytes: int = 0
+    truncated: bool = False
+    interrupted: bool = False
+
+    @property
+    def metadata(self):
+        return self.log.with_suffix(".json")
+
+    def refresh(self):
+        if not self.metadata.exists():
+            return
+        try:
+            state = json.loads(self.metadata.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return  # caught mid-update; the next refresh reads the new state
+        if state.get("ended") is None and time.time() - state.get("heartbeat", 0) > 3:
+            import psutil
+            try:
+                controller = psutil.Process(state["controller"])
+                alive = abs(controller.create_time() - state["controller_started"]) < 0.01
+            except (psutil.NoSuchProcess, psutil.AccessDenied, KeyError):
+                alive = False
+            if not alive:
+                state.update(ended=time.time(), exit=-1, interrupted=True)
+        for key in ("ended", "exit", "timed_out", "stopped", "total_bytes", "truncated",
+                    "interrupted"):
+            if key in state:
+                setattr(self, key, state[key])
+        if self.proc is not None:
+            self.proc.poll()
 
     @property
     def done(self) -> bool:
         return self.ended is not None
 
     def summary(self) -> dict:
+        self.refresh()
         return {"id": self.id, "name": self.name, "command": self.command,
                 "service": self.service, "done": self.done, "exit": self.exit,
                 "timed_out": self.timed_out, "stopped": self.stopped,
                 "seconds": round((self.ended or time.time()) - self.started, 1),
-                "bytes": self.log.stat().st_size if self.log.exists() else 0}
+                "bytes": self.log.stat().st_size if self.log.exists() else 0,
+                "total_bytes": self.total_bytes, "truncated": self.truncated,
+                "interrupted": self.interrupted,
+                "persistent": self.persistent}
 
 
 def _bash() -> str:
@@ -64,66 +104,101 @@ def _bash() -> str:
 class Jobs:
     """The session's background jobs. `approve(command)` raises when a command is refused."""
 
-    def __init__(self, cwd: str, folder: Path, approve=None, check=None) -> None:
+    def __init__(self, cwd: str, folder: Path, approve=None, check=None, *, env=None,
+                 max_log_bytes: int = MAX_LOG, shell_access="host", shell_network=False) -> None:
         self.cwd = cwd
         self.folder = folder
         self.approve = approve  # async (command) -> None, raises when refused
         self.check = check  # (command) -> reason or None, for policy refusals
         self.jobs: dict[str, Job] = {}
+        self.env = dict(env or {})
+        self.shell_access, self.shell_network = shell_access, shell_network
+        self.max_log_bytes = max(4, int(max_log_bytes))
+        for path in self.folder.glob("*.json"):
+            try:
+                state = json.loads(path.read_text(encoding="utf-8"))
+                key = state["id"]
+                if not re.fullmatch(r"[a-f0-9]{8}", key):
+                    continue
+                job = Job(key, state["command"], self.folder / f"{key}.log",
+                          state["service"], state["name"], started=state["started"],
+                          persistent=state.get("persistent", False))
+                job.refresh()
+                self.jobs[key] = job
+            except (OSError, ValueError, KeyError):
+                continue
 
     def _get(self, job_id: str) -> Job:
         job = self.jobs.get(job_id) or next(
             (j for j in self.jobs.values() if j.name and j.name == job_id), None)
         if job is None:
             raise ValueError(f"no job {job_id!r}; jobs() lists them")
+        job.refresh()
         return job
 
-    async def _launch(self, command: str, timeout: float | None, service: bool, name: str) -> Job:
-        from rlmagent.model.external.cli import own_group
-
+    async def _launch(self, command: str, timeout: float | None, service: bool, name: str,
+                      persistent: bool = False, argv=None, env=None) -> Job:
         if self.check is not None and (reason := self.check(command)):
             raise ValueError(reason)
         if self.approve is not None:
             await self.approve(command)
-        if sum(not j.done for j in self.jobs.values()) >= MAX_JOBS:
+        if sum(not j.summary()["done"] for j in self.jobs.values()) >= MAX_JOBS:
             raise ValueError(f"{MAX_JOBS} jobs are already running; stop some first")
         job_id = uuid.uuid4().hex[:8]
         self.folder.mkdir(parents=True, exist_ok=True)
-        job = Job(job_id, command, self.folder / f"{job_id}.log", service, name)
-        out = open(job.log, "wb")
-        job.proc = await asyncio.create_subprocess_exec(
-            _bash(), "--noprofile", "--norc", "-c", command, cwd=self.cwd,
-            stdin=asyncio.subprocess.DEVNULL, stdout=out, stderr=asyncio.subprocess.STDOUT,
-            **own_group())
-        out.close()
-        job.task = asyncio.create_task(self._reap(job, timeout))
+        job = Job(job_id, command, self.folder / f"{job_id}.log", service, name,
+                  persistent=persistent)
+        job.log.touch()
+        isolated = self.shell_access == "workspace"
+        target_argv = argv
+        if isolated:
+            from rlmagent.shell_sandbox import plan
+            target_argv = await asyncio.to_thread(plan, self.cwd, command, argv=argv,
+                env={**self.env, **(env or {})}, network=self.shell_network)
+        else:
+            target_argv = argv or [_bash(), "--noprofile", "--norc", "-c", command]
+        import psutil
+        spec = {"metadata": str(job.metadata.resolve()), "log": str(job.log.resolve()),
+                "owner": {"pid": os.getpid(), "started": psutil.Process().create_time()},
+                "cwd": self.cwd, "argv": target_argv, "keep_stdin_open": isolated,
+                "env": execution_environment({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1",
+                                              **self.env, **(env or {})}),
+                "timeout": timeout, "max_bytes": self.max_log_bytes,
+                "state": {"id": job.id, "command": command, "service": service,
+                          "name": name, "started": job.started, "persistent": persistent}}
+        options = ({"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS}
+                   if os.name == "nt" else {"start_new_session": True})
+        runner = str(Path(__file__).with_name("job_runner.py"))
+        job.proc = subprocess.Popen([sys.executable, "-I", runner],
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=execution_environment(), **options)
+        job.proc.stdin.write((json.dumps(spec) + "\n").encode("utf-8"))
+        job.proc.stdin.close()
         self.jobs[job_id] = job
+        while not job.metadata.exists():
+            if job.proc.poll() is not None:
+                raise RuntimeError("job controller failed before accepting the command")
+            await asyncio.sleep(0.02)
         return job
-
-    async def _reap(self, job: Job, timeout: float | None) -> None:
-        try:
-            await asyncio.wait_for(job.proc.wait(), timeout)
-        except asyncio.TimeoutError:
-            job.timed_out = True
-            self._kill(job)
-            await job.proc.wait()
-        finally:
-            job.exit = job.proc.returncode
-            job.ended = time.time()
 
     @staticmethod
     def _kill(job: Job) -> None:
-        from rlmagent.model.external.cli import kill_tree
-
-        if job.proc is not None and job.proc.returncode is None:
-            kill_tree(job.proc)
+        job.refresh()
+        if not job.done:
+            job.metadata.with_suffix(".stop").touch()
 
     # -- functions agents call ---------------------------------------------
 
-    async def job_start(self, command: str, timeout: float | None = None, name: str = "") -> dict:
+    async def job_start(self, command: str = "", timeout: float | None = None, name: str = "",
+                        *, argv=None, env=None) -> dict:
         """Run a shell command in the background; returns {"id", ...}. Read its output with
         job_read(id, cursor) and wait for it with job_wait(id)."""
-        job = await self._launch(str(command), float(timeout) if timeout else None, False, name)
+        if argv is not None:
+            if not isinstance(argv, list) or not argv or not all(isinstance(x, str) for x in argv):
+                raise ValueError("argv must be a nonempty list of strings")
+            command = subprocess.list2cmdline(argv)
+        job = await self._launch(str(command), float(timeout) if timeout else None, False, name,
+                                 argv=argv, env=env)
         return job.summary()
 
     async def job_read(self, job_id: str, cursor: int = 0) -> dict:
@@ -131,19 +206,27 @@ class Jobs:
         Pass the returned cursor next time to get only what is new."""
         job = self._get(job_id)
         with open(job.log, "rb") as f:
-            f.seek(max(0, int(cursor)))
+            offset = max(0, min(int(cursor), job.log.stat().st_size))
+            f.seek(offset)
             data = f.read(MAX_READ)
-        return {"text": data.decode("utf-8", errors="replace"), "cursor": int(cursor) + len(data),
-                "more": len(data) == MAX_READ, "done": job.done, "exit": job.exit,
+        # Keep an incomplete trailing UTF-8 sequence for the next read. Invalid bytes
+        # within output remain visible as replacement characters.
+        import codecs
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        text = decoder.decode(data, final=job.done and offset + len(data) == job.log.stat().st_size)
+        pending = decoder.getstate()[0]
+        used = len(data) - len(pending)
+        return {"text": text, "cursor": offset + used,
+                "more": offset + used < job.log.stat().st_size, "done": job.done, "exit": job.exit,
                 "timed_out": job.timed_out}
 
     async def job_wait(self, job_id: str, timeout: float = 300.0) -> dict:
         """Wait until a job ends, at most timeout seconds; returns its summary."""
         job = self._get(job_id)
-        try:
-            await asyncio.wait_for(asyncio.shield(job.task), float(timeout))
-        except asyncio.TimeoutError:
-            pass
+        deadline = time.monotonic() + max(0, float(timeout))
+        while not job.done and time.monotonic() < deadline:
+            await asyncio.sleep(POLL)
+            job.refresh()
         return job.summary()
 
     async def job_stop(self, job_id: str) -> dict:
@@ -151,26 +234,27 @@ class Jobs:
         job = self._get(job_id)
         job.stopped = True
         self._kill(job)
-        await asyncio.shield(job.task)
-        return job.summary()
+        return await self.job_wait(job.id, 30)
 
     async def jobs_list(self) -> list[dict]:
         """Every job and service of this session, running or finished."""
         return [job.summary() for job in self.jobs.values()]
 
     async def service_start(self, name: str, command: str, ready: str | None = None,
-                            wait: float = 60.0) -> dict:
+                            wait: float = 60.0, *, persist: bool = False, env=None) -> dict:
         """Start a long-running process such as a dev server, under a name. With ready, a
         regular expression, wait up to wait seconds for a line that matches it."""
         for job in self.jobs.values():
+            job.refresh()
             if job.name == name and not job.done:
-                raise ValueError(f"service {name!r} is already running; job_stop it first")
-        job = await self._launch(str(command), None, True, str(name))
+                raise ValueError(f"a service named {name!r} is up; stop it with job_stop first")
+        job = await self._launch(str(command), None, True, str(name), persist, env=env)
         summary = job.summary()
         if ready:
             pattern = re.compile(ready)
             deadline = time.monotonic() + float(wait)
             while time.monotonic() < deadline and not job.done:
+                job.refresh()
                 if pattern.search(job.log.read_text(encoding="utf-8", errors="replace")):
                     summary = job.summary()
                     summary["ready"] = True
@@ -194,6 +278,7 @@ class Jobs:
         tracked = self._get(job) if job is not None else None
         while time.monotonic() < deadline:
             if tracked is not None:
+                tracked.refresh()
                 size = tracked.log.stat().st_size if tracked.log.exists() else 0
                 if size > int(cursor):
                     return {"event": "output", "job": tracked.id, "start": int(cursor), "end": size}
@@ -204,7 +289,8 @@ class Jobs:
                 if now != before:
                     changed = sorted(k for k in set(now) | set(before or {})
                                      if (now or {}).get(k) != (before or {}).get(k))
-                    return {"event": "path", "paths": changed[:200], "truncated": len(changed) > 200}
+                    return {"event": "path", "paths": changed[:200],
+                            "truncated": len(changed) > 200}
             if inbox is not None and (messages := inbox()):
                 return {"event": "message", "messages": messages}
             await asyncio.sleep(POLL)
@@ -212,10 +298,11 @@ class Jobs:
 
     async def close(self) -> None:
         for job in self.jobs.values():
-            self._kill(job)
+            if not job.persistent:
+                self._kill(job)
         for job in self.jobs.values():
-            if job.task is not None:
-                await asyncio.gather(job.task, return_exceptions=True)
+            if not job.persistent:
+                await self.job_wait(job.id, 30)
 
     def functions(self, inbox=None) -> dict:
         async def watch(job=None, cursor=0, path=None, messages=False, timeout=300.0):

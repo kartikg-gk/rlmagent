@@ -1,5 +1,9 @@
 """Code run in every kernel before the model's first cell."""
 
+from textwrap import indent
+
+from rlmagent.agents.child_handles import compatibility_helpers
+
 KERNEL_API = r'''
 import asyncio as _rlmagent_asyncio
 import json as _rlmagent_json
@@ -146,3 +150,7 @@ if _rlmagent_os.environ.get("RLM_AGENT_IS_CHILD") == "1":
 
     CONTEXT = _rlmagent_call_sync("context", {})
 '''
+
+KERNEL_API += '\nif _rlmagent_os.environ.get("RLM_AGENT_CAN_DELEGATE") == "1":\n' + indent(
+    compatibility_helpers("_rlmagent_call"), "    ",
+)

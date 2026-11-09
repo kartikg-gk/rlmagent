@@ -29,9 +29,9 @@ irm https://raw.githubusercontent.com/kartikg-gk/rlmagent/main/scripts/install.p
 `RLM_AGENT_PROVIDER`, `RLM_AGENT_MODEL`, `RLM_AGENT_API_KEY` or `RLM_AGENT_HOME`
 set in the environment, which take precedence for a run. `rlm-agent config path`
 prints where the file is. Providers include OpenAI, Anthropic, OpenRouter, Ollama,
-Hugging Face and Vertex.
+Hugging Face, Google Gemini, Mistral, Azure OpenAI, Vertex and Codex subscription sign-in.
 
-This revision requires `rlmness>=0.2.2`. When installing unreleased local builds,
+This revision requires `rlmness>=0.2.3`. When installing unreleased local builds,
 install the matching backend wheel before the application wheel.
 
 ## Run
@@ -46,6 +46,70 @@ rlm-agent --provider cli --model 'cli:claude-code?model=haiku' -p "Summarize the
 
 Run `rlm-agent --help` for provider, model, session, and budget settings. Keys are
 read from provider configuration or environment variables. Keep keys out of prompts.
+
+For native subscription sign-in, install the optional credential-store and identity
+verification dependencies, then complete browser consent:
+
+```sh
+pip install 'rlmagent[subscription]'
+rlm-agent provider login codex
+rlm-agent provider models codex
+rlm-agent --provider codex --model MODEL_FROM_CATALOG "Inspect this project"
+rlm-agent provider logout codex
+```
+
+Subscription access, refresh and identity tokens are kept in the platform credential
+store, separately for each `RLM_AGENT_HOME`. Requests use the public Responses API
+with server-side response storage disabled. Model availability and usage limits come
+from the signed-in account. `provider test` checks the model endpoint; a completed
+model response is required to verify inference access. `login --new-account` replaces
+the selected account after validating its identity. Sign-out clears local tokens and
+reports whether remote revocation succeeded.
+
+The native Gemini provider reads `GOOGLE_API_KEY`; Mistral reads `MISTRAL_API_KEY`.
+Azure reads `AZURE_OPENAI_API_KEY` and requires `AZURE_OPENAI_BASE_URL` ending in
+`/openai/v1`. `/tier auto|default|flex|priority|off` changes subsequent requests when
+the active provider supports a service tier.
+
+`/fast on|off` selects the priority or default tier for the current model. Tier
+preferences are saved per provider and model. Use `/model cycle add MODEL`,
+`/model cycle remove MODEL`, and `/model cycle next` to maintain a provider-specific
+rotation. `--offline` suppresses startup model discovery and update checks; an
+explicitly requested model run still uses its provider.
+
+Set `RLM_AGENT_CODEX_TRANSPORT=websocket` to reuse a Responses WebSocket per agent.
+The default is HTTP. Socket cancellation closes that agent's connection. A lost
+server context can be resent once before output begins; visible output is never
+automatically replayed. `NODE_EXTRA_CA_CERTS` adds a PEM certificate bundle to
+the platform and bundled TLS roots for HTTP and WebSocket connections.
+
+This release focuses on Codex and Claude subscription accounts. For Claude, use
+the installed official CLI:
+
+```sh
+rlm-agent provider login claude-subscription
+rlm-agent --provider claude-subscription --model cli:claude-code "Inspect this project"
+```
+
+Claude authentication remains within that CLI. Additional provider integrations
+are retained for compatibility; their release qualification is deferred:
+
+- `pip install 'rlmagent[copilot]'` enables `--provider copilot`. Run
+  `rlm-agent provider login copilot` through the official CLI first. This adapter
+  uses the official SDK with its own tools and hooks disabled. Sign out with
+  `/logout` in that CLI.
+- `--provider claude-subscription --model cli:claude-code` uses the installed,
+  unmodified CLI. `provider login claude-subscription` invokes its sign-in.
+  This route does not extract subscription OAuth credentials.
+- `--provider xai` reads `XAI_API_KEY`. The experimental `xai-subscription`
+  route requires your own registered public OAuth client and compatible API
+  entitlement. `provider login xai-subscription --client-registration FILE`
+  accepts exactly `client_id`, `authorization_endpoint`, `token_endpoint`,
+  `scope`, `resource`, and `redirect_port`. Endpoints must be provider-owned
+  HTTPS URLs; `resource` is `null` or `https://api.x.ai/v1`, and `redirect_port`
+  selects the registered loopback callback port (zero requests a dynamic port).
+  There is no built-in registration or verified subscription entitlement for
+  this experimental route. Keep client secrets and tokens out of this file.
 
 ## Execution
 
@@ -211,12 +275,56 @@ rlm-agent worker start nightly --auto-approve
 rlm-agent worker send nightly "check the build"
 rlm-agent worker schedule nightly "review open issues" --in 3600
 rlm-agent worker schedule nightly "run the tests" --at 2027-01-02T09:00 --every 86400
+rlm-agent worker schedule nightly "weekday build" --cron "0 9 * * 1-5" --timezone America/New_York
 rlm-agent worker list
 rlm-agent worker jobs nightly
 rlm-agent worker log nightly --follow
 rlm-agent worker attach nightly
+rlm-agent worker recover
+rlm-agent worker incidents nightly
+rlm-agent worker watch
+rlm-agent worker watch --stop
+rlm-agent worker stop-all --wait 60
 rlm-agent worker stop nightly
 ```
+
+Cron schedules accept five numeric fields or `@hourly`, `@daily`, `@weekly`, and
+`@monthly`. Lists, ranges, and steps work within fields. If both day fields are
+set, both must match. The timezone defaults to UTC. Missing local times during a
+daylight-saving jump are skipped, and repeated local times can run at both
+occurrences. After downtime, one overdue run is taken and the next run follows
+the wall-clock schedule.
+
+`worker recover` restarts interrupted saved workers from their original launch
+settings and session IDs. Pass a worker name to recover only that worker.
+`worker incidents NAME` shows worker exits and fleet recovery attempts with the
+saved session, last heartbeat, active turn, affected message and job IDs, and
+restart outcome. A one-shot job interrupted by a worker exit remains visible in
+`worker jobs` and is skipped on restart.
+`worker watch` runs a fleet monitor in the foreground. It checks for interrupted
+workers at startup and continues checking while it runs. Use `worker watch --stop`
+from another terminal to stop the monitor.
+`worker service install` registers and starts a watcher for the current app home
+using Windows Task Scheduler, the Linux systemd user manager or a macOS launchd
+agent. It starts again
+when the user logs in. Use `worker service status`, `start`, `stop`, and
+`uninstall` to manage it. The service uses the Python installation and session
+directory from installation time. On Windows and macOS, watcher output goes to
+`fleet-service.log` in the app home. On Linux, use the user journal. The macOS
+agent is covered by tests of its definition and commands, not yet on a Mac.
+`worker stop-all` lets the current turns finish and records the stop request
+for interrupted workers, so recovery skips them.
+
+Start a saved worker with `--idle-passivate 300` to close its process after
+five idle minutes. With `worker watch` or the watcher service running, a queued
+message or due job wakes the same saved session. `worker attach NAME` also wakes
+it. An explicit stop suppresses automatic wakeup until you start the worker again.
+
+Send `/goal <objective>` and then `/autonomous` to a saved worker session to
+keep working after you detach. The worker saves its continuation and budgets
+before starting the next turn. A queued turn survives a restart. If the worker
+was killed during a turn, inspect the saved conversation and re-enable
+`/autonomous` to continue.
 
 Start flags are the normal run flags. The folder's trust is decided when you start
 it, because a worker has nobody to ask. For the same reason anything needing
@@ -231,23 +339,30 @@ their own after a reboot.
 turn until it calls `await goal_done(summary)`; `/goal pause`, `resume` and `clear`
 manage it. `/autonomous` then starts the next turn by itself while the goal is open,
 and stops at its limits (`/autonomous turns N`, `tokens N`, `seconds N`), when the
-goal is done, or when you press Esc. `/autonomous gate CMD` sets a command that must
-exit 0 before `goal_done` is accepted. A passed gate shows only what that command
-checks.
+goal is done, or when you press Esc. `/autonomous gate CMD` sets the default
+verification command. Use `/autonomous gate add NAME CMD` for additional gates,
+`/autonomous gate list` to see their latest status, and
+`/autonomous gate remove NAME` to remove a named gate. Every configured command
+must exit zero on the same `goal_done` attempt. A retry reruns all gates and
+records each result separately.
+Autonomous continuation also stops if the same failed operation, or the same
+pair of failed turns, repeats three times. This check uses tool arguments and
+root cell failures, so rephrasing the final reply does not reset it.
 
 ## Agents working together
 
 Open sessions and workers can reach each other. In a cell: `await list_agents()`,
 `await send_message(to, text)`, `await read_messages()`. A message to a worker runs as
 its next task; a message to a session is shown to it before its next turn.
-`await schedule(task, in_seconds=..., every=None, worker=None)` queues work on a
+`await schedule(task, in_seconds=..., every=None, worker=None)` or
+`await schedule(task, cron="0 9 * * 1-5", timezone="America/New_York")` queues work on a
 worker, and `await heartbeat(text)` reports progress, shown in the terminal and in
 `rlm-agent worker log`.
 
 Other functions: `await web_search(query)` when `BRAVE_API_KEY`, `TAVILY_API_KEY` or
 `SERPER_API_KEY` is set; `await context_usage()`; `await compact()` to summarize older
-conversation when the turn ends. `/btw QUESTION` answers a side question without
-adding it to the conversation.
+conversation when the turn ends. `/btw QUESTION` answers from the conversation so far; neither the
+question nor the answer is kept in it.
 
 `/image PATH` attaches a PNG, JPEG, GIF or WebP file (up to 5 MB) to your next
 message. Use a model and provider that accept image input.
@@ -261,13 +376,34 @@ session and start its detached process from the project folder:
 ```sh
 rlm-agent session detach SESSION_ID
 rlm-agent session attach SESSION_ID
+rlm-agent session attach SESSION_ID --tui
 rlm-agent worker stop session-SESSION_ID
 ```
+
+Saved interactive sessions use the supervisor from the first turn.
+Reconnect with `rlm-agent --resume SESSION_ID`. Use `--repl` for the line client,
+`rlm-agent tui` to select Textual, or `--foreground` to run the interactive session
+in the current process. `--supervised` explicitly selects the worker path.
+A supervised worker shows approval requests and agent questions in
+both clients. Follow the displayed `/answer REQUEST_ID VALUE` prompt to respond.
+An unanswered request expires after 60 seconds. Approval responses are `once`,
+`always`, `auto`, or `deny`. Questions accept text or a displayed option number.
 
 Type `/detach` in the attached terminal to leave the process running. A detached
 session uses the same unattended approval rules as a worker. Start detachment
 between turns. A running turn cannot move between processes.
 Saved sessions have a single active writer across terminal and worker processes.
+The Textual attachment replays the saved conversation from the start of
+detached execution and follows new prompts, streamed replies, and tool activity.
+Multiple terminals can attach to the same worker and send prompts. Press Ctrl+D
+to close the Textual client and leave the worker running. Ctrl+C interrupts the
+current worker turn, or closes the client if the worker is idle.
+
+A kept child in a saved session accepts `receipt = await handle.send(text)`
+while it is busy. Use `await handle.delivery(receipt)` to inspect its status.
+Kept children process these messages in order as follow-up turns. Queued
+messages resume on the next parent run after reopening the session. A message
+already running at the time of a crash is marked interrupted.
 A detached supervisor restarts a crashed worker from its saved session, with
 backoff. An interrupted turn is reported on resume.
 
@@ -276,6 +412,18 @@ On a saved session with the default engine, agents created with
 last completed result, and supported
 kernel values across reopening. Find them with `children()` and send a new task
 when the child is idle. In-flight child work is not replayed after a restart.
+
+Use `await name_child(handle, "reviewer")` to name a child under its parent,
+then `await find_child("reviewer")` to recover its handle. `await child_info(handle)`
+shows status, pending deliveries, and recorded model usage without consuming the
+result or messages. In the backend engine, names and usage for kept children
+survive reopening the saved session.
+
+Use `await steer_child(handle, text, message_id=None)` to add an instruction
+at an active child's next model request. It returns a receipt, also available
+through `child_info`. Reusing the message ID with the same text and child
+returns the original receipt. If the active turn ends before another model
+request, the receipt expires. Use `send()` to queue a separate follow-up turn.
 
 For a protected HTTP MCP server, configure an `oauth` object beside its `url`
 with `issuer`, a registered public `client_id`, and `redirect_port`. Register
@@ -311,6 +459,33 @@ before explicitly adding `--retry-stage`.
 For a stage that needs to keep one agent and its kernel through several turns,
 use `"resident": ["first prompt", "next prompt"]` in place of `prompt`. The
 whole group shares one contract and counts as one checkpoint.
+
+For a dependency graph, use `"format": "rlmagent.factory/2"` with a
+`stages` object keyed by stage name. Each stage has a `contract`, a
+`prompt`, and an optional `after` list. A stage normally requires all its
+dependencies to succeed. Set `when` to `any_failed` for a recovery stage or
+`always` to run after dependencies settle. `parallel` controls concurrency,
+and stages with overlapping workspace paths are serialized.
+
+Set a stage's `foreach` field to the name of a direct dependency that returns
+a JSON array. The stage runs once for each item, and its dependents receive an
+array of results in input order. A run can expand up to 128 items. On an explicit
+retry, completed items are reused unless an upstream dependency is also rerun.
+
+An optional `policy` object can set `max_transitions`, `max_live_agents`,
+and `on_failure`. Each admitted stage or item consumes one transition,
+including retries. The live-agent limit reserves capacity from the stage
+contracts before starting them. Set `on_failure` to `stop` to finish active
+stages and leave unstarted work waiting after a failure. The default
+`continue` preserves the graph's dependency guards.
+
+```sh
+rlm-agent factory launch graph.json
+rlm-agent factory status RUN_ID
+rlm-agent factory view RUN_ID
+rlm-agent factory cancel RUN_ID
+rlm-agent factory resume RUN_ID --retry-stages
+```
 
 Editors can launch `rlm-agent --acp`, supply stdio or streamable HTTP MCP
 servers for each session, and steer an active turn with text. Steering enters
@@ -359,8 +534,8 @@ was lost, up to three times per kernel.
 
 | Flag | Effect |
 | --- | --- |
-| `--deny-git` | Refuse git commands that reach beyond the current branch (push, fetch, checkout, branch, tag, reset, ...) |
-| `--max-tool-output BYTES` | Most output one cell shows the model (default 20000; the start and end are kept) |
+| `--deny-git` | Refuse git commands that touch other branches, remotes or history (push, fetch, checkout, branch, tag, reset, ...) |
+| `--max-tool-output BYTES` | Most output one cell shows the model (default 20000; zero disables this cap; the start and end are kept) |
 | `--max-compactions N` | Most compactions in the session |
 | `--agent-max-tokens N` | Most completion tokens any one agent may spend |
 | `--search-block DOMAIN` | Drop web search results from a domain, `*.domain` or origin (repeatable) |
@@ -371,8 +546,47 @@ A contract can set the same through an optional `policy` object with `allow_git`
 with `stop_reason`: `done`, `max_calls`, `max_cost`, `max_tokens`, `max_seconds`,
 `agent_tokens`, `compaction_failed`, `no_answer`, `cancelled` or `error`.
 
+Optional `policy.allowed_tools` limits both the model tool list and the host
+functions available to Python, including in descendants. For example,
+`["python", "read_file", "list_files"]` allows a Wasm Python cell to read and
+list workspace files. Model tools still have to appear in the contract's
+`tools` list. Omit the allowlist to use the original tool policy. Restricted
+Python requires Wasm. Delegation and guest networking use the separate
+`limits.max_depth` and `kernel.network` settings.
+
+Optional `limits.max_new_tokens` meters reported uncached input and output
+across the whole run, including compaction. The run admits one provider
+request at a time with this limit enabled. Before each request it estimates
+the request's size high (the whole prompt counted as uncached, plus the
+provider's longest reply) and refuses a request that could pass the limit,
+so a run stops short of it rather than over it. The run reports `max_tokens`
+and refuses further requests after reaching the limit or losing usage coverage.
+
 Cells that fail in a familiar way (a missing `await`, quotes nested in an f-string, a
 missing module, a timeout, an empty reply) get a one-line hint with the error.
+
+`--max-calls 0` admits no model requests. This differs from an omitted call budget,
+which selects the default. In a policy, `max_tool_output_bytes: 0` explicitly
+disables that output cap; `null` selects the default cap.
+
+Contracts can use the two saved-account routes without exporting tokens. For Codex,
+set the model to `{"provider":"codex","name":"MODEL","api_key_env":null,"base_url":null}`.
+For Claude use provider `claude-subscription` and model name `cli:claude-code` or
+`cli:claude-code?model=MODEL`, also with null key and endpoint fields. These routes
+use the same signed-in accounts as the normal CLI and reject credential/endpoint
+overrides. Codex contracts use the fixed Responses HTTP route. Claude runs through
+the official CLI. Sign in before starting a contract; a contract never initiates login.
+
+For inline ACP runtime contracts, use `"credential":{"account":"codex"}` or
+`"credential":{"account":"claude-subscription"}` matching the contract provider.
+Native API-key providers retain their explicit `api_key` and `headers` credential object.
+
+ACP snapshots retain current-runtime `treeTotals` and additionally expose
+`lifetimeTotals`, `lifetimeUsage`, and `lifetimeCoverage` for the persisted request
+ledger plus current calls, deduplicated by request ID. Reopening a session reloads
+these lifetime totals without consuming the new runtime's admission budget. Older
+records with omitted usage fields or unknown pricing are counted in coverage;
+missing usage is never presented as a complete measurement.
 
 ## Split execution
 
@@ -473,6 +687,9 @@ is saved or activated; if the session is idle it commits immediately.
 completion, cancellation, and failure. Beginning the next submission or finishing
 the current turn services that boundary. Updated guidance then applies to the
 root and newly created child agents. Running children keep their existing prompt.
+Use `/refine auto review` to stage a whole-harness proposal after compaction,
+`/refine auto apply` to opt in to automatic activation, or
+`/refine auto off` to cancel that mode for the current session.
 Notes over 400 characters appear shortened in the prompt, with the rest available
 through `await guidance("entry-id")`.
 Workflow names and descriptions appear in the prompt; the full procedure is
@@ -485,6 +702,15 @@ processes and reject proposals based on superseded state. Invalid state is
 reported rather than replaced with an empty harness. The saved history includes
 the evidence, expected benefit, and edits for each committed proposal.
 
+`/refine scope session` selects guidance inherited along the saved conversation
+branch. Rewinding restores the guidance attached to that ancestry; edits in a
+sibling branch stay separate. `/refine scope project` returns to shared project
+guidance. `/refine rollback N` restores an archived revision while idle and records
+the restoration as a new revision. `/refine off`
+sets a global preference that stops further review requests and removes supplemental
+guidance from subsequent model requests, including requests in other processes.
+An already submitted request cannot be recalled by changing this preference.
+
 `--no-session` keeps this harness in memory. Plan mode prevents changes, and abort,
 rewind, inference-route changes, or shutdown discard pending work. Contract runs
 do not load this ambient harness or enable `/refine`.
@@ -495,3 +721,93 @@ check are held: `/improve pending` lists them, `/improve accept N` saves one and
 `/improve reject N` drops it. `--apply-auto-improve` saves them at once instead. A committed refinement means its
 structure and persistence checks passed; its expected benefit has not been
 established by a performance benchmark.
+
+## Portable sessions and delivery
+
+`rlm-agent session export ID --format html` produces a standalone escaped HTML
+transcript with tool arguments and branch and compaction summaries. JSONL keeps
+the original records; `rlm-agent session import FILE` validates their references
+and imports them under a fresh local identity.
+
+`rlm-agent session share ID` previews the complete outgoing unlisted gist and its
+SHA256 digest without uploading. To publish that exact payload, repeat with
+`--publish --sha256 DIGEST` and a locally configured `GH_TOKEN` or `GITHUB_TOKEN`.
+Unlisted links can be read by anyone who obtains them. A changed session requires
+a fresh preview and digest.
+
+The terminal copy action first tries the native clipboard locally. Over SSH or
+tmux it emits OSC52, reporting delivery as unconfirmed because the terminal may
+block it. Keymap overrides are validated for conflicts before they are applied.
+
+Capability packages install into isolated stores with a resource manifest and
+recorded distribution versions. Use `rlm-agent package install NAME SOURCE`,
+`package update NAME --source REPLACEMENT`, and `package remove NAME`. Add
+`--local` for a project store; project resources require project trust. Local
+wheel installations also record their SHA256 digest.
+
+Successful package changes automatically collect inactive cache directories older
+than 30 days. Active installations, directories loaded by this process, and linked
+directories are preserved. `package prune --older-than DAYS` previews eligible
+directories; add `--apply` to remove them, or `--local` for the project store.
+
+## Managed offline releases
+
+`rlm-agent update --manifest /path/release.json` validates and previews a local
+wheel bundle. Its manifest has `format: "rlmagent.release/1"`, an exact `version`,
+a `channel` (`stable`, `preview`, or `nightly`), and `artifacts`, each containing
+`filename` and `sha256`. Optional `extras` selects bundled optional dependencies.
+Include the matching backend wheel and every dependency; installation uses
+`--no-index` and rejects direct URL dependencies.
+
+Add `--apply` to install into a fresh virtual environment and activate it only
+after health checks. `--drain --wait 60 --restart-workers` lets current worker
+tasks finish, restarts them with saved settings, and holds new work until fleet
+activation completes. A drain timeout leaves processes alive. Failed activation
+restores the prior installation; interrupted activation is recovered on the next
+managed command. `update --managed --rollback --apply` selects the previous slot.
+Use `rlm-agent update --run ...` to launch the active managed installation.
+
+Managed channels describe a supplied, verified bundle; they do not publish it.
+The index updater selects final releases for `stable`, non-development prereleases
+for `preview`, and development releases for `nightly`. It skips yanked releases,
+empty releases and artifacts incompatible with the current Python version. Preview
+and nightly installs pin the selected version. If that channel has no eligible
+published release, the updater reports this and leaves the installation unchanged.
+
+### Execution continuity and failure handling
+
+Each active WebAssembly kernel runs in its own Node worker. A timed-out cell
+terminates that worker; sibling kernels retain their state. The default engine
+keeps its interpreter across turns and conversation compaction, including imported
+modules, object identities and asynchronous tasks. Resident retained children reuse
+their interpreter on follow-up. Closing a session releases its interpreters.
+After a process restart, recovery restores supported checkpoint values and
+definitions; it cannot restore arbitrary live objects or unfinished Python tasks.
+
+`--request-timeout SECONDS` bounds each complete model response, including nested
+agent and summary requests (default 300). Contracts may set
+`limits.request_timeout`; existing contracts use the same default. This is separate
+from `--cell-timeout` and the whole-run `--max-seconds` limit. Invalid compaction
+summaries get at most three attempts. A failed compaction keeps the original
+history and does not consume the successful-compaction allowance. Session write
+failures report the affected session and file instead of silently dropping records.
+
+Execution processes inherit a small set of operating-system environment variables.
+Host API-key and control variables are excluded from local kernels and shell jobs.
+Approved commands and background jobs use an isolated `/workspace` mount by
+default. Install Bubblewrap on Linux or in the default WSL distribution on Windows.
+Use Linux executables and paths relative to the workspace for these commands.
+`--shell-network` enables network access inside that workspace sandbox.
+`--shell-access host` grants commands your host filesystem permissions. Contracts
+can set `policy.shell_access` and `policy.shell_network`, and tool hosts accept the
+same shell options. Select `--kernel local` explicitly for host Python execution.
+A missing Wasm runtime stops with setup instructions.
+
+Background job output is capped at 8 MiB on disk while the process output continues
+to drain. `job_read` returns Unicode-safe byte cursors; job summaries include
+stored bytes, total bytes and truncation state. Job metadata is stored under its
+session, so reopening a session can recover its job records. `job_start` also
+accepts `argv=[...]` for direct execution and explicit `env={...}` overrides.
+Use `service_start(..., persist=True)` only for a service intentionally kept alive
+after session shutdown. Reopen its owning session to read it or stop it by name
+with `job_stop`. Ordinary services and jobs are stopped when their session closes.

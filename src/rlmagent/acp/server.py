@@ -130,7 +130,9 @@ class Server:
         self.sessions: dict[str, object] = {}
         self.pending: dict[str, str] = {}
         self.mcp_servers: dict[str, dict] = {}
+        self.runtimes: dict[str, object] = {}
         self.closing: set[str] = set()
+        self.steering_ids: dict[str, dict[str, str]] = {}
         self.modes: dict[str, str] = {}
         self._starting = asyncio.Lock()
         self.running: dict[str, asyncio.Task] = {}
@@ -204,7 +206,8 @@ class Server:
                 "agentCapabilities": {"loadSession": True,
                                       "mcpCapabilities": {"http": True, "sse": False},
                                       "promptCapabilities": {"embeddedContext": True}},
-                "authMethods": [], "_meta": {"steering": {"supported": True}}}
+                "authMethods": [], "_meta": {"steering": {"supported": True},
+                                              "rlmagent/runtime-v1": True}}
 
     async def _open(self, sid: str, cwd: str, resume: str | None):
         from rlmagent.cli.main import _build_run_parser
@@ -214,6 +217,15 @@ class Server:
         ns.acp_mcp = self.mcp_servers.get(sid, {})
         ns.trust_ask = lambda request: self._ask_trust(sid, request)
         build = self._build
+        runtime = self.runtimes.get(sid)
+        if runtime is not None:
+            from rlmagent.acp.runtime import build as build_runtime
+
+            if resume is not None:
+                raise RpcError(-32602, "explicit runtime sessions start with session/new")
+            if cwd and os.path.realpath(cwd) != os.path.realpath(runtime.contract.workdir):
+                raise RpcError(-32602, "session cwd must match runtime contract workdir")
+            build = lambda _ns: build_runtime(runtime)
         if build is None:
             from rlmagent.runtime import build_session as build
         # Start-up reads the process's working folder, so sessions start one at a time.
@@ -291,6 +303,20 @@ class Server:
         # The session starts with its first prompt, so the folder-trust question (if any)
         # reaches the editor while a prompt is running, where editors show permission requests.
         sid = uuid.uuid4().hex[:12]
+        from rlmagent.acp.runtime import KEY, parse
+        from rlmagent.contract import ContractError
+
+        meta = params.get("_meta", {})
+        if not isinstance(meta, dict):
+            raise RpcError(-32602, "session metadata must be an object")
+        if KEY in meta:
+            try:
+                runtime = parse(meta[KEY])
+            except (ContractError, ValueError, TypeError):
+                raise RpcError(-32602, "invalid explicit runtime configuration") from None
+            if params.get("mcpServers"):
+                raise RpcError(-32602, "explicit runtime contracts do not admit ambient MCP servers")
+            self.runtimes[sid] = runtime
         self.mcp_servers[sid] = _mcp_configs(params.get("mcpServers", []))
         self.pending[sid] = params.get("cwd", "")
         return {"sessionId": sid, "modes": self._modes(sid)}
@@ -342,7 +368,10 @@ class Server:
             set_workspace(session.cwd)  # this task's file tools stay in this session's folder
             return await self._prompt(sid, session, params)
         except asyncio.CancelledError:
-            return {"stopReason": "cancelled"}
+            result = {"stopReason": "cancelled"}
+            if sid in self.runtimes and sid in self.sessions:
+                result["_meta"] = {"rlmagent/session-v1": self._snapshot(self.sessions[sid], "cancelled")}
+            return result
         finally:
             self.running.pop(sid, None)
 
@@ -358,7 +387,92 @@ class Server:
                     messages = event.messages
         finally:
             watcher.cancel()
-        return {"stopReason": updates.stop_reason(messages)}
+        result = {"stopReason": updates.stop_reason(messages)}
+        if not hasattr(session, "agent_tree") and result["stopReason"] == "end_turn":
+            _, pending = session.steering.context("root", root=True)
+            session.steering.consumed(pending, "root", None)
+        if sid in self.runtimes:
+            result["_meta"] = {"rlmagent/session-v1": self._snapshot(session, result["stopReason"])}
+        return result
+
+    def _snapshot(self, session, reason=None) -> dict:
+        from dataclasses import asdict
+
+        tree = getattr(session, "agent_tree", None)
+        tracer = getattr(tree, "tracer", None)
+        metrics = {"modelRequests": sum(r["kind"] == "call" for r in tracer.records),
+                   "causalEdges": sum(r["kind"] == "link" for r in tracer.records)} if tracer else {}
+        allowance = getattr(tree, "allowance", None)
+        limits = {key: getattr(allowance, key, None) for key in
+                  ("max_calls", "max_cost", "max_depth", "max_live", "max_seconds")}
+        contract = getattr(session, "runtime_contract", None)
+        if contract is not None:
+            limits = asdict(contract.limits)
+        events = getattr(getattr(session, "backend", None), "events", [])
+        agents = list(getattr(tree, "backend_agents", {}).values())
+        metrics.update(
+            toolResults=sum(event.get("kind") == "host_result" for event in events),
+            cells=sum(event.get("kind") == "output_received" for event in events),
+            agentsStarted=sum(agent.get("depth", 0) > 0 for agent in agents) if agents else len(getattr(tree, "records", {})),
+            agentsRunning=sum(agent.get("status") == "running" for agent in agents),
+            openModelRequests=len(getattr(tracer, "_open", {})),
+            modelReservations=getattr(allowance, "calls", 0),
+            transportAttempts=sum(record.get("kind") == "model_attempt"
+                                   for record in getattr(tracer, "records", [])),
+            unreportedUsageRequests=sum(record.get("kind") == "call" and not record.get("usage_reported", True)
+                                        for record in getattr(tracer, "records", [])),
+        )
+        jobs = getattr(getattr(session, "jobs", None), "jobs", {})
+        metrics["jobsStarted"] = len(jobs)
+        metrics["jobsRunning"] = sum(not job.done for job in jobs.values())
+        metrics["unpricedModelRequests"] = sum(record.get("kind") == "call" and record.get("cost", 0) <= 0
+                                               for record in getattr(tracer, "records", []))
+        if not events:
+            from rlmagent.harness.session.records import TranscriptRecord
+            from rlmagent.harness.session.store import deserialize_records
+
+            children = list(getattr(tree, "_session_of", {}).values())
+            sessions = {item.session_id: item for item in [session, *children]}
+            messages = []
+            for item in sessions.values():
+                vault = getattr(item, "_vault", None)
+                if vault is not None and vault.path.exists():
+                    records = deserialize_records(vault.path.read_text(encoding="utf-8").split("\n"))
+                    messages.extend(record.message for record in records if isinstance(record, TranscriptRecord))
+                else:
+                    messages.extend(item.transcript)
+            results = [message for message in messages if message.role == "toolResult"]
+            metrics["toolResults"] = len(results)
+            metrics["cells"] = sum(message.tool_name == "python" for message in results)
+        from rlmagent.stops import of_session
+
+        stop = of_session(session, getattr(getattr(tree, "provider", None), "refusal", None))
+        snapshot = {"format": "rlmagent.session/1", "sessionId": session.session_id, "model": session.model,
+                "usage": asdict(session.usage), "metrics": metrics, "limits": limits,
+                "treeUsage": dict(getattr(tracer, "_totals", {})),
+                "treeTotals": {name: sum(agent.get(name, 0) for agent in getattr(tracer, "_totals", {}).values())
+                               for name in ("calls", "cost", "input", "output", "cache_read", "cache_write", "reasoning")},
+                "steering": session.steering.receipts(), "stopReason": reason, **stop}
+        if reason == "cancelled":
+            snapshot["stop_reason"] = "cancelled"
+        if tracer is not None:
+            totals = snapshot["treeTotals"]
+            lifetime = tracer.lifetime_usage()
+            snapshot["lifetimeAccountingScope"] = "persistedRequestLedger"
+            snapshot["lifetimeUsage"] = lifetime["agents"]
+            snapshot["lifetimeTotals"] = lifetime["totals"]
+            snapshot["lifetimeCoverage"] = lifetime["coverage"]
+            snapshot["accountingScope"] = "runtimeTree"
+            snapshot["frontendUsage"] = snapshot["usage"].copy()
+            snapshot["usage"].update(total_input_tokens=totals["input"] + totals["cache_read"] + totals["cache_write"],
+                total_output_tokens=totals["output"], total_cost_usd=totals["cost"],
+                cache_read_tokens=totals["cache_read"], cache_write_tokens=totals["cache_write"])
+        if contract is not None:
+            snapshot["runtime"] = {"engine": contract.engine, "kernel": asdict(contract.kernel),
+                                   "model": {"provider": contract.model.provider, "name": contract.model.name,
+                                             "base_url": contract.model.base_url},
+                                   "policy": asdict(tree.policy), "tools": list(contract.tools)}
+        return snapshot
 
     async def _watch_plan(self, sid: str, session) -> None:
         tree = getattr(session, "agent_tree", None)
@@ -385,7 +499,7 @@ class Server:
     async def on__session_steering(self, params: dict) -> dict:
         sid = params["sessionId"]
         session = self.sessions.get(sid)
-        if sid not in self.running or session is None or sid in self.closing:
+        if session is None or sid in self.closing:
             return {"status": "promptRequired", "reason": "noRunningTurn"}
         prompt = params.get("prompt", [])
         if not isinstance(prompt, list):
@@ -401,12 +515,33 @@ class Server:
         text = "\n\n".join(parts).strip()
         if not text:
             raise RpcError(-32602, "steering requires nonempty text")
+        identity = params.get("messageId")
+        ledger = getattr(session, "steering", None)
+        if ledger is not None:
+            known = {item["messageId"] for item in ledger.receipts()}
+            if sid not in self.running and identity not in known:
+                return {"status": "promptRequired", "reason": "noRunningTurn"}
+            try:
+                receipt = ledger.accept(text, identity, params.get("agentId", "root"))
+            except ValueError as error:
+                raise RpcError(-32602, str(error)) from None
+            if not hasattr(session, "agent_tree") and receipt["status"] == "accepted":
+                if identity not in self.steering_ids.setdefault(sid, {}):
+                    session.inject(text)
+                    self.steering_ids[sid][receipt["messageId"]] = text
+            return {"status": "injected", "_meta": {"rlmagent/steering-v1": receipt}}
+        if sid not in self.running:
+            return {"status": "promptRequired", "reason": "noRunningTurn"}
         session.inject(text)
         return {"status": "injected"}
 
-    async def on_session_close(self, params: dict) -> dict:
-        from dataclasses import asdict
+    async def on__session_steering_status(self, params: dict) -> dict:
+        session = self.sessions.get(params.get("sessionId"))
+        if session is None:
+            raise RpcError(-32602, "Unknown session")
+        return {"receipts": session.steering.receipts()}
 
+    async def on_session_close(self, params: dict) -> dict:
         sid = params["sessionId"]
         if sid in self.closing:
             raise RpcError(-32602, "session is already closing")
@@ -424,15 +559,14 @@ class Server:
             session = self.sessions.pop(sid, None)
             if session is None:
                 return {}
-            usage = asdict(session.usage)
-            tracer = getattr(getattr(session, "agent_tree", None), "tracer", None)
-            metrics = {"modelRequests": sum(r["kind"] == "call" for r in tracer.records),
-                       "causalEdges": sum(r["kind"] == "link" for r in tracer.records)} if tracer else {}
+            snapshot = self._snapshot(session)
             await session.shutdown()
-            return {"_meta": {"rlmagent/session-v1": {"usage": usage, "metrics": metrics}}}
+            return {"_meta": {"rlmagent/session-v1": snapshot}}
         finally:
             self.pending.pop(sid, None)
             self.mcp_servers.pop(sid, None)
+            self.runtimes.pop(sid, None)
+            self.steering_ids.pop(sid, None)
             self.modes.pop(sid, None)
             self.closing.discard(sid)
 

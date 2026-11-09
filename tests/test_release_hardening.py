@@ -1,106 +1,154 @@
-import argparse
 import asyncio
-import shutil
-import sys
-import time
+from types import SimpleNamespace
 
 import pytest
+from _scripted import code_turn, text_turn
 
-from rlmagent.agents.approval import Approver
-from rlmagent.agents.workspace import Workspace
-from rlmagent.harness.engine import argument_problem
-from rlmagent.harness.session.index import SessionCatalog
-from rlmagent.runtime import _resume_folder_problem
-from rlmagent.undo import Shadow
-
-needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
+from rlmagent.conversation import CodingSession
+from rlmagent.harness.contracts.transcript import HumanEntry
+from rlmagent.harness.provider.wire import StreamFaultEvent
+from rlmagent.model.deadline import bounded_stream
+from rlmagent.model.scripted import ReplayProvider
 
 
-async def test_a_session_does_not_resume_in_another_project(tmp_path, monkeypatch):
-    project, other, store = tmp_path / "project", tmp_path / "other", tmp_path / "store"
-    project.mkdir(), other.mkdir(), store.mkdir()
-    catalog = SessionCatalog(store)
-    catalog.upsert(catalog.prepare(session_id="abc", vault_path=store / "abc.jsonl",
-                                   cwd=str(project), model="m", provider="p"))
-    ns = argparse.Namespace(print_mode=True, prompt="x")
-
-    monkeypatch.chdir(project)
-    assert await _resume_folder_problem(ns, "abc", store) is None
-    monkeypatch.chdir(other)
-    assert "belongs to" in await _resume_folder_problem(ns, "abc", store)
-    ns.resume_anywhere = True
-    assert await _resume_folder_problem(ns, "abc", store) is None
+async def session_with_history(model):
+    session = await CodingSession.create(provider=model, provider_name="fixture", model="m", system="base")
+    for text in ("first", "second", "third"):
+        async for _ in session.submit(text):
+            pass
+    return session
 
 
-async def test_cancelling_a_command_stops_what_it_started(tmp_path):
-    beats = tmp_path / "beats"
-    child = (tmp_path / "child.py")
-    child.write_text(
-        "import time\n"
-        f"while True:\n    open({str(beats)!r}, 'a').write('x'); time.sleep(0.1)\n")
-    python = sys.executable.replace("\\", "/")
-    script = str(child).replace("\\", "/")
-    run = asyncio.create_task(Workspace(tmp_path, Approver("auto")).run(f'"{python}" "{script}"; echo end'))
-    for _ in range(100):
-        await asyncio.sleep(0.1)
-        if beats.exists() and beats.stat().st_size > 2:
-            break
-    run.cancel()
-    await asyncio.gather(run, return_exceptions=True)
-    time.sleep(0.5)
-    size = beats.stat().st_size
-    time.sleep(0.6)
-    assert beats.stat().st_size == size
+async def test_compaction_retries_invalid_summaries_without_executing_tools():
+    model = ReplayProvider([text_turn("one"), text_turn("two"), text_turn("three"),
+        text_turn(""), code_turn("raise AssertionError('must never execute')"), text_turn("valid summary")])
+    session = await session_with_history(model)
+    try:
+        result = await session.compact()
+        assert "valid summary" in result.summary
+        assert session.compactions == 1
+        assert len(model.calls) == 6
+    finally:
+        await session.shutdown()
 
 
-@needs_git
-def test_undo_notices_files_it_cannot_cover(tmp_path):
-    shadow = Shadow(tmp_path / "w", tmp_path / "home")
-    (tmp_path / "w").mkdir()
-    (tmp_path / "w" / "big.bin").write_bytes(b"x" * 5_000_001)
-    (tmp_path / "w" / "a.txt").write_text("one")
-    commit = shadow.snapshot("start")
-    (tmp_path / "w" / "a.txt").write_text("two")
-    assert shadow.restore(commit) == ["a.txt"]
-    assert (tmp_path / "w" / "a.txt").read_text() == "one"
-    assert shadow.skipped == {"big.bin"}
+async def test_failed_compaction_keeps_history_and_does_not_spend_compaction_limit():
+    model = ReplayProvider([text_turn("one"), text_turn("two"), text_turn("three"),
+        text_turn(""), text_turn(" "), text_turn("")])
+    session = await session_with_history(model)
+    session.policy = SimpleNamespace(max_compactions=1)
+    before = session.transcript
+    try:
+        with pytest.raises(ValueError, match="3 invalid summaries"):
+            await session.compact()
+        assert session.transcript == before
+        assert getattr(session, "compactions", 0) == 0
+        assert len(model.calls) == 6
+    finally:
+        await session.shutdown()
 
 
-async def test_a_failed_undo_keeps_the_turn_and_says_so(monkeypatch):
-    from types import SimpleNamespace
-
-    from rlmagent.conversation import CodingSession
-
-    def broken(_commit):
-        raise RuntimeError("these files did not come back: a.txt")
-
-    session = SimpleNamespace(_undo_stack=[("c", None, [], None)], _undo_problem=None,
-                              shadow=SimpleNamespace(restore=broken, available=True, skipped=set()))
-    answer = await CodingSession._cmd_undo(session, "")
-    assert "Undo failed" in answer and "a.txt" in answer and session._undo_stack
-    session._undo_problem = "disk full"
-    assert "no snapshot" in await CodingSession._cmd_undo(session, "")
-
-
-async def test_binary_files_get_a_clear_answer(tmp_path):
-    (tmp_path / "data.txt").write_bytes(b"\xff\xfe\x00\x01")
-    with pytest.raises(ValueError, match="binary"):
-        await Workspace(tmp_path, Approver("deny")).read_file("data.txt")
-
-    from rlmagent.tools.files import _looks_binary
-
-    assert _looks_binary(tmp_path / "data.txt")
-    (tmp_path / "ok.txt").write_text("fine")
-    assert not _looks_binary(tmp_path / "ok.txt")
+async def test_session_write_failure_is_explicit_and_header_is_retryable(tmp_path):
+    session = await CodingSession.create(provider=ReplayProvider([]), provider_name="fixture",
+        model="m", system="base", sessions_dir=tmp_path)
+    path = session._vault.path
+    path.mkdir()  # A real filesystem obstruction, independent of mocks.
+    try:
+        with pytest.raises(OSError, match="Could not create session"):
+            await session._persist_entry(HumanEntry(content="retain me"))
+        assert session._pending_header is not None
+        path.rmdir()
+        await session._persist_entry(HumanEntry(content="saved after repair"))
+        records = await session._vault.read_all()
+        assert records[-1].message.text == "saved after repair"
+    finally:
+        await session.shutdown()
 
 
-def test_tool_arguments_are_checked_against_the_schema():
-    schema = {"type": "object", "required": ["path"], "properties": {
-        "path": {"type": "string"}, "limit": {"type": "integer"},
-        "either": {"type": ["string", "null"]}}}
-    assert argument_problem(schema, {"path": "a", "limit": 3, "either": None}) is None
-    assert argument_problem(schema, {"path": "a", "limit": 3.0}) is None
-    assert "missing" in argument_problem(schema, {"limit": 1})
-    assert "'limit' must be integer" in argument_problem(schema, {"path": "a", "limit": "3"})
-    assert "'limit' must be integer" in argument_problem(schema, {"path": "a", "limit": True})
-    assert argument_problem(schema, {"path": "a", "unknown": 1}) is None
+async def test_deadline_ends_the_entire_stream_and_closes_provider():
+    closed = asyncio.Event()
+    async def slow():
+        try:
+            await asyncio.sleep(10)
+            yield None
+        finally:
+            closed.set()
+    events = [event async for event in bounded_stream(slow(), "fixture", 0.02)]
+    assert closed.is_set()
+    assert len(events) == 1 and isinstance(events[0], StreamFaultEvent)
+    assert "deadline" in events[0].error.error_message
+
+
+async def test_cancelling_a_stream_propagates_and_closes_provider():
+    started, closed = asyncio.Event(), asyncio.Event()
+    async def slow():
+        try:
+            started.set()
+            await asyncio.sleep(10)
+            yield None
+        finally:
+            closed.set()
+    async def consume():
+        return [event async for event in bounded_stream(slow(), "fixture", 60)]
+    task = asyncio.create_task(consume())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert closed.is_set()
+
+
+def test_missing_sandbox_never_silently_executes_on_host(tmp_path, monkeypatch):
+    from rlmagent.kernel import wasm
+    from rlmagent.runtime import make_agent_tree
+    monkeypatch.setattr(wasm, "available", lambda: False)
+    with pytest.raises(ValueError, match="explicitly select --kernel local"):
+        make_agent_tree(SimpleNamespace(kernel="wasm"), ReplayProvider([]), "fixture", "m",
+                        None, cwd=str(tmp_path), backend=True)
+
+
+@pytest.mark.parametrize("engine", ["session", "rlmness"])
+async def test_request_deadline_applies_through_the_real_session_builder(tmp_path, monkeypatch, engine):
+    import importlib
+
+    from rlmagent.runtime import build_session
+    cli = importlib.import_module("rlmagent.cli.main")
+    closed = asyncio.Event()
+    class SlowProvider:
+        async def stream_response(self, **kwargs):
+            try:
+                await asyncio.sleep(10)
+                yield None
+            finally:
+                closed.set()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RLM_AGENT_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(cli, "_resolve_provider", lambda _: SlowProvider())
+    ns = cli._build_run_parser().parse_args(["-p", "--no-session", "--no-approve",
+        "--provider", "openai", "--model", "fixture", "--engine", engine,
+        "--kernel", "local", "--max-calls", "1", "--request-timeout", "0.03"])
+    session = await build_session(ns)
+    try:
+        events = [event async for event in session.submit("work")]
+        assert closed.is_set()
+        assert session.agent_tree.request_timeout == 0.03
+        assert any("deadline" in str(event).lower() for event in events)
+    finally:
+        await session.shutdown()
+
+
+async def test_kernel_and_shell_do_not_inherit_host_credentials(tmp_path, monkeypatch):
+    from rlmagent.agents.approval import Approver
+    from rlmagent.agents.workspace import Workspace
+    from rlmagent.kernel.session import KernelSession
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-secret")
+    monkeypatch.setenv("RLM_AGENT_CONTROL_SOCKET", "synthetic-control")
+    kernel = KernelSession(cwd=str(tmp_path), timeout=20)
+    try:
+        result = await kernel.run("import os; print(os.getenv('OPENAI_API_KEY'), os.getenv('RLM_AGENT_CONTROL_SOCKET'))")
+        assert result.error is None and result.output.strip() == "None None"
+    finally:
+        await kernel.shutdown()
+    result = await Workspace(tmp_path, Approver("auto")).run(
+        'printf "%s|%s" "$OPENAI_API_KEY" "$RLM_AGENT_CONTROL_SOCKET"')
+    assert result["exit"] == 0 and result["output"] == "|"

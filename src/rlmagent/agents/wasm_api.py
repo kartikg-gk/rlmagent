@@ -1,6 +1,8 @@
 """Code run in every sandbox before the model's first cell: the same functions the
 local kernel has, reached through the `_rlmagent` bridge instead of a socket."""
 
+from rlmagent.agents.child_handles import compatibility_helpers
+
 CORE = r'''
 async def guidance(id=None):
     return await _rlmagent("guidance", {"id": id})
@@ -71,7 +73,7 @@ async def spawn(task, data=None, keep=False, role=None, model=None):
 async def children():
     """Every sub-agent you started, in order."""
     return [_SubAgent(i) for i in await _rlmagent("children", {})]
-'''
+''' + compatibility_helpers("_rlmagent")
 
 CHILD = r'''
 async def tell_parent(text):

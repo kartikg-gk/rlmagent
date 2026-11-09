@@ -121,7 +121,9 @@ def test_resolve_system_override():
 # ---------------------------------------------------------------------------
 
 
-def test_sessions_dir_default():
+def test_sessions_dir_default(monkeypatch):
+    monkeypatch.delenv("RLM_AGENT_HOME", raising=False)
+    monkeypatch.delenv("RLM_AGENT_SESSION_DIR", raising=False)
     p = _sessions_dir(None)
     assert p == Path.home() / ".rlm-agent" / "sessions"
 
@@ -225,7 +227,8 @@ def test_one_shot_with_session():
 
         assert code == 0
         # Should have created exactly one session .jsonl file (plus the catalog index)
-        files = [p for p in Path(td).glob("*.jsonl") if p.name != "index.jsonl"]
+        files = [p for p in Path(td).glob("*.jsonl")
+                 if p.name != "index.jsonl" and not p.name.endswith(".requests.jsonl")]
         assert len(files) == 1
         content = files[0].read_text(encoding="utf-8")
         assert "session_info" in content

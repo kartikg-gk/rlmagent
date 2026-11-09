@@ -304,12 +304,12 @@ class SessionBridge:
         else:
             key_var, url_var = "OPENAI_API_KEY", "OPENAI_BASE_URL"
 
-        key = None if provider == "vertex" else api_key or config.api_keys.get(provider) or os.environ.get(info.key_env)
-        if key:
-            os.environ[key_var] = key
-        elif not info.needs_key and provider != "vertex":
-            os.environ[key_var] = provider  # e.g. Ollama needs a placeholder
-        if provider != "vertex":
+        if provider not in ("vertex", "codex", "google", "mistral", "azure", "copilot", "claude-subscription", "xai", "xai-subscription"):
+            key = api_key or config.api_keys.get(provider) or os.environ.get(info.key_env)
+            if key:
+                os.environ[key_var] = key
+            elif not info.needs_key:
+                os.environ[key_var] = provider  # e.g. Ollama needs a placeholder
             os.environ[url_var] = config.base_urls.get(provider) or info.base_url
         apply_config(provider, config)
 
@@ -355,9 +355,13 @@ class SessionBridge:
         both are put on one queue and handed on in the order they came.
         """
         self._streamed = 0
-        self.steps = StepBook()
+        # Cleared rather than replaced: an open agent tree keeps this book.
+        self.steps.clear()
         backend = getattr(self._session, "backend", None)
         if backend is None or not hasattr(backend, "listeners"):
+            # The session engine's tree reports its children the same way.
+            backend = getattr(self._session, "agent_tree", None)
+        if backend is None or not isinstance(getattr(backend, "listeners", None), list):
             async for event in events:
                 update = self._translate(event)
                 if update is not None:
@@ -380,7 +384,9 @@ class SessionBridge:
                 await merged.put(("done", finished))
 
         backend.listeners.append(on_event)
-        backend.cards = True
+        cards = hasattr(backend, "cards")
+        if cards:
+            backend.cards = True
         task = asyncio.create_task(pump())
         try:
             while True:
@@ -403,7 +409,8 @@ class SessionBridge:
                     yield StepChanged(step)
         finally:
             backend.listeners.remove(on_event)
-            backend.cards = False
+            if cards:
+                backend.cards = False
             if not task.done():
                 task.cancel()
                 with suppress(asyncio.CancelledError, Exception):

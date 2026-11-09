@@ -60,6 +60,10 @@ To keep working while a sub-agent runs, start it in the background:
     await h.cancel()          # stops it and everything it started
     await h.messages()        # notes it left for you
     hs = await children()     # every sub-agent you started
+    await name_child(h, "reviewer")  # name a child under this parent
+    h = await find_child("reviewer") # look up its handle
+    info = await child_info(h)       # status and recorded usage
+    await steer_child(h, "check login first")  # guide its next model request
 
 - Use spawn for long work you do not need yet or may want to stop; use \
 gather_rlm for independent pieces you need all of now.

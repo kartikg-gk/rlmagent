@@ -8,7 +8,7 @@ from _scripted import code_turn, text_turn
 
 
 
-def _tree(tmp_path, streams, **limits):
+def _tree(tmp_path, streams, *, kernel="local", **limits):
     return AgentTree(
         provider=ReplayProvider(streams),
         provider_name="replay",
@@ -16,6 +16,7 @@ def _tree(tmp_path, streams, **limits):
         cwd=str(tmp_path),
         allowance=Allowance(**{"max_depth": 2, "max_cost": 10.0, **limits}),
         sessions_dir=tmp_path / "sessions",
+        kernel=kernel,
         system_for=lambda node, tools: f"agent depth {node.depth}",
         first_message_for=lambda node: node.task,
     )
@@ -33,6 +34,69 @@ async def test_child_final_value_reaches_the_parent_kernel(tmp_path):
         result = await root.run("answer = await rlm('add these', [1, 2, 3])\nprint(answer)")
         assert result.output.strip() == "6"
     finally:
+        await tree.close()
+
+
+@pytest.mark.parametrize("kernel", ["local", "wasm"])
+async def test_named_child_lookup_and_usage_in_the_compatibility_kernel(tmp_path, kernel):
+    from rlmagent.kernel.wasm import available
+
+    if kernel == "wasm" and not available():
+        pytest.skip("sandbox is not installed")
+    turns = [code_turn("FINAL(42)"), text_turn("done")]
+    turns[0][-1].message.usage.input = 12
+    tree = _tree(tmp_path, turns, kernel=kernel)
+    await tree.start()
+    try:
+        root = tree.root_kernel()
+        result = await root.run(
+            "h = await name_child(await spawn('calculate'), 'reviewer')\n"
+            "assert (await find_child('reviewer')).id == h.id\n"
+            "assert await h.result() == 42\n"
+            "info = await child_info(h)\n"
+            "assert info['name'] == 'reviewer' and info['usage']['input'] == 12\n"
+            "print('named child passed')"
+        )
+        assert "named child passed" in result.output, result
+    finally:
+        await tree.close()
+
+
+async def test_steer_child_injects_once_in_the_compatibility_session_engine(tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+
+    from rlmagent.steering import Steering
+
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class HeldReplay(ReplayProvider):
+        async def _emit(self, events, signal):
+            if len(self.calls) == 1:
+                entered.set()
+                await release.wait()
+            async for event in super()._emit(events, signal):
+                yield event
+
+    provider = HeldReplay([code_turn("print('working')"), code_turn("FINAL(42)"), text_turn("done")])
+    tree = _tree(tmp_path, [])
+    tree.use_provider(provider, "replay")
+    tree.session = SimpleNamespace(steering=Steering(None))
+    await tree.start()
+    try:
+        root = tree.root_kernel()
+        await root.run("h = await spawn('calculate')")
+        await asyncio.wait_for(entered.wait(), 10)
+        accepted = await root.run("print((await steer_child(h, 'focused instruction', 'focus'))['status'])")
+        assert "accepted" in accepted.output
+        release.set()
+        done = await root.run("print(await h.result(), (await child_info(h))['steering'][0]['status'])")
+        assert "42 consumed" in done.output, done
+        assert [any("focused instruction" in m.text for m in call[2]) for call in provider.calls] == [
+            False, True, False,
+        ]
+    finally:
+        release.set()
         await tree.close()
 
 

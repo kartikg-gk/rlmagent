@@ -40,6 +40,8 @@ class OpenAIProvider:
 
     def __init__(self, profile: OpenAIProfile) -> None:
         self._profile = profile
+        self.default_service_tier = profile.service_tier
+        self.supports_service_tier = profile.name in ("openai", "codex", "azure")
         self._client: httpx.AsyncClient = build_async_client(
             timeout=httpx.Timeout(profile.timeout_seconds),
         )
@@ -47,6 +49,7 @@ class OpenAIProvider:
         self.served_by: str | None = None
         #: HTTP status behind the latest request that ended in a fault.
         self.last_failure_status: int | None = None
+        self._sockets = None
 
     def set_reasoning(self, policy: ReasoningPolicy) -> None:
         """Swap the reasoning-effort policy for subsequent requests."""
@@ -55,6 +58,31 @@ class OpenAIProvider:
     async def close(self) -> None:
         """Release the underlying HTTP client resources."""
         await self._client.aclose()
+        if self._sockets is not None:
+            await self._sockets.close()
+
+    async def _open_events(self, url, payload, headers, *, signal=None, cache_key=None):
+        if self._profile.transport == "websocket":
+            from rlmagent.model.transport.responses_socket import ResponsesSockets
+
+            if not url.endswith("/responses"):
+                raise httpx.ConnectError("WebSocket transport requires Responses")
+            if self._sockets is None:
+                self._sockets = ResponsesSockets(timeout=self._profile.timeout_seconds)
+            async for event in self._sockets.stream(url, payload, headers, signal=signal,
+                                                   affinity=cache_key):
+                yield event
+        else:
+            async for event in open_event_stream(self._client, url, payload, headers,
+                                                 signal=signal, on_accept=self._note_server):
+                yield event
+
+    def set_service_tier(self, tier: str | None) -> None:
+        if tier is not None and not self.supports_service_tier:
+            raise ValueError("The current provider does not expose service tiers")
+        if tier not in (None, "auto", "default", "flex", "priority"):
+            raise ValueError("Use auto, default, flex, priority or off")
+        self._profile = replace(self._profile, service_tier=tier)
 
     # --- ModelProvider protocol ---------------------------------------------
 
@@ -112,7 +140,7 @@ class OpenAIProvider:
         self.last_failure_status = None
         cred = await self._resolve_credential()
         base_url = cred.base_url.rstrip("/")
-        endpoint = pick_endpoint(model, base_url)
+        endpoint = self._profile.endpoint or pick_endpoint(model, base_url)
         reasoning_extra = build_reasoning_extra(
             self._profile.reasoning, model=model, endpoint=endpoint,
         )
@@ -137,6 +165,10 @@ class OpenAIProvider:
             )
 
         routing_key = self._routing_key(cache_key, base_url)
+        if self._profile.name == "codex":
+            payload["store"] = False
+        if self._profile.service_tier is not None:
+            payload["service_tier"] = self._profile.service_tier
         if routing_key is not None:
             payload["prompt_cache_key"] = routing_key
 
@@ -147,8 +179,10 @@ class OpenAIProvider:
         # Opt-in: the providers' own clients do not send it on these
         # endpoints, so nothing shows the providers accept it.
         idempotency_key = (
-            uuid.uuid4().hex if os.environ.get("RLM_AGENT_IDEMPOTENCY") == "1" else None
+            uuid.uuid4().hex if (self._profile.idempotency if self._profile.idempotency is not None
+                                else os.environ.get("RLM_AGENT_IDEMPOTENCY") == "1") else None
         )
+        logical_request = idempotency_key or uuid.uuid4().hex
 
         for attempt in range(max_attempts):
             if signal is not None and signal.is_cancelled():
@@ -166,6 +200,12 @@ class OpenAIProvider:
                 headers["session_id"] = routing_key
             if idempotency_key is not None:
                 headers["Idempotency-Key"] = idempotency_key
+            headers["X-Stainless-Retry-Count"] = str(attempt)
+            headers["X-Rlmagent-Attempt-Id"] = f"{logical_request}:{attempt}"
+            from rlmagent.agents.trace import model_attempt
+
+            model_attempt(attempt=attempt, id=headers["X-Rlmagent-Attempt-Id"],
+                          transport=self._profile.transport, phase="started")
 
             try:
                 decoder: StreamDecoder
@@ -187,9 +227,9 @@ class OpenAIProvider:
                 passing_failure = False
                 failure_kind = ""
                 try:
-                    async with aclosing(open_event_stream(
-                        self._client, url, payload, headers, signal=signal,
-                        on_accept=self._note_server,
+                    async with aclosing(self._open_events(
+                        url, payload, headers, signal=signal,
+                        cache_key=cache_key,
                     )) as events:
                         async for sse in events:
                             data = try_parse_json(sse.data)
@@ -213,6 +253,9 @@ class OpenAIProvider:
                         yield wire_event
 
                 if not passing_failure:
+                    if signal is not None and signal.is_cancelled():
+                        yield self._abort_event(model, endpoint)
+                        return
                     for wire_event in assembler.finalize():
                         yield wire_event
                     return  # success
@@ -250,7 +293,7 @@ class OpenAIProvider:
                     return
 
             except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as exc:
-                if attempt >= retry.max_retries:
+                if committed or attempt >= retry.max_retries:
                     yield self._network_error_event(model, endpoint, exc)
                     return
 

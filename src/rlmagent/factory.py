@@ -132,6 +132,10 @@ def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="rlm-agent factory")
     try:
         action = argv[0] if argv else None
+        if action in ("launch", "status", "view", "cancel", "resume", "_execute"):
+            from rlmagent.factory_graph import command
+
+            return command(action, argv[1:])
         if action in ("list", "import", "export", "init"):
             admin = argparse.ArgumentParser(prog=f"rlm-agent factory {action}")
             if action != "list":

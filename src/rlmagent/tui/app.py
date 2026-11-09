@@ -65,15 +65,16 @@ class RlmAgentApp(App[None]):
     TITLE = "rlm-agent"
 
     BINDINGS = [
-        ("escape", "escape", "Stop / Quit"),
-        ("ctrl+c", "cancel", "Stop / Quit"),
-        ("ctrl+n", "new_session", "New session"),
-        ("ctrl+q", "quit", "Quit"),
-        Binding("shift+tab", "toggle_auto", "Auto-accept", priority=True),
-        Binding("f2", "agent_tree", "Agents"),
-        Binding("f3", "timeline", "Timeline"),
-        Binding("f4", "workers", "Workers"),
-        Binding("f1", "show_help", "Help"),
+        Binding("escape", "escape", "Stop / Quit", id="stop"),
+        Binding("ctrl+c", "cancel", "Stop / Quit", id="cancel"),
+        Binding("ctrl+n", "new_session", "New session", id="new_session"),
+        Binding("ctrl+q", "quit", "Quit", id="quit"),
+        Binding("shift+tab", "toggle_auto", "Auto-accept", priority=True, id="toggle_auto"),
+        Binding("f2", "agent_tree", "Agents", id="agents", priority=True),
+        Binding("f3", "timeline", "Timeline", id="timeline", priority=True),
+        Binding("f4", "workers", "Workers", id="workers", priority=True),
+        Binding("f1", "show_help", "Help", id="help", priority=True),
+        Binding("ctrl+shift+y", "copy_answer", "Copy answer", id="copy_answer", priority=True),
     ]
 
     def __init__(self, bridge: SessionBridge | None = None) -> None:
@@ -103,6 +104,29 @@ class RlmAgentApp(App[None]):
         yield Footer()
 
     async def on_mount(self) -> None:
+        import json
+
+        from rlmagent.plugins import rlm_agent_home
+
+        try:
+            keymap = json.loads((rlm_agent_home() / "keybindings.json").read_text(encoding="utf-8"))
+            known = {binding.id for binding in self.BINDINGS}
+            if not isinstance(keymap, dict) or any(
+                key not in known or not isinstance(value, str) for key, value in keymap.items()
+            ):
+                raise ValueError("Keybindings must map known action IDs to key strings")
+            assigned = {}
+            for binding in self.BINDINGS:
+                for key in keymap.get(binding.id, binding.key).split(","):
+                    key = key.strip().lower()
+                    if key and key in assigned and assigned[key] != binding.id:
+                        raise ValueError(f"Shortcut {key} is assigned to multiple actions")
+                    assigned[key] = binding.id
+            self.set_keymap(keymap)
+        except FileNotFoundError:
+            pass
+        except (ValueError, OSError) as exc:
+            self.notify(f"Could not load keybindings: {exc}", severity="error")
         await self._refresh_sidebar()
         self._refresh_status()
         if self._bridge is not None:
@@ -248,6 +272,25 @@ class RlmAgentApp(App[None]):
 
         self.push_screen(HelpScreen())
 
+    def action_copy_answer(self) -> None:
+        if self._bridge is None:
+            return
+        answer = next((entry for entry in reversed(list(self._bridge.session.transcript))
+                       if entry.role == "assistant"), None)
+        if answer is None or not answer.text:
+            self.notify("There is no answer to copy.")
+            return
+        from rlmagent.clipboard import copy
+
+        try:
+            def write(value):
+                if self._driver is None:
+                    raise ValueError("No terminal driver is attached")
+                self._driver.write(value)
+            self.notify(copy(answer.text, write))
+        except ValueError as error:
+            self.notify(str(error), severity="error")
+
     def action_escape(self) -> None:
         """Esc stops a running turn; when idle with an empty prompt it leaves the app."""
         if not self.action_stop() and not self.query_one(PromptInput).text.strip():
@@ -339,6 +382,11 @@ class RlmAgentApp(App[None]):
             return
         if response is not None:
             transcript.add_notice(response)
+        if not self._busy and text.split() in (["/autonomous"], ["/autonomous", "on"]):
+            pilot = getattr(self._bridge.session, "autopilot", None)
+            if pilot is not None and (following := pilot.next_prompt()):
+                transcript.add_notice(f"autonomous turn {pilot.turns}")
+                self.run_worker(self._stream(following), exclusive=True)
         await self._refresh_sidebar()
         self._refresh_status()
 
@@ -371,7 +419,7 @@ class RlmAgentApp(App[None]):
     async def _stream(self, text: str, *, resume: bool = False) -> None:
         """Consume the runtime's event stream and render it."""
         assert self._bridge is not None
-        transcript = self.query_one(TranscriptView)
+        transcript = self.screen_stack[0].query_one(TranscriptView)
         transcript.new_run()
         self._busy = True
         self._cancelled = False
@@ -438,20 +486,21 @@ class RlmAgentApp(App[None]):
         from rlmagent.reasoning import DEFAULT_THINKING_LEVEL
 
         session = self._bridge.session
-        self.query_one(StatusBar).show(self._bridge.status(), busy=self._busy)
+        main = self.screen_stack[0]
+        main.query_one(StatusBar).show(self._bridge.status(), busy=self._busy)
         tasks = getattr(session, "tasks", None)
         if tasks is not None:
-            self.query_one(Sidebar).show_tasks(tasks.items)
+            main.query_one(Sidebar).show_tasks(tasks.items)
         effort = session.thinking_level or DEFAULT_THINKING_LEVEL
         tree = getattr(session, "agent_tree", None)
         auto = tree is not None and tree.approver.policy == "auto"
-        self.query_one(ModelBadge).show(session.model, effort, auto)
+        main.query_one(ModelBadge).show(session.model, effort, auto)
 
     async def _refresh_sidebar(self) -> None:
         """Repaint the session list from the catalog."""
         if self._bridge is None:
             return
-        await self.query_one(Sidebar).show(self._bridge.sessions())
+        await self.screen_stack[0].query_one(Sidebar).show(self._bridge.sessions())
 
 
 def needs_setup(ns: argparse.Namespace) -> bool:
@@ -500,6 +549,16 @@ def save_setup(choice) -> None:
     remember_model(choice.provider, choice.model)
 
 
+async def setup_if_needed(ns: argparse.Namespace) -> bool:
+    if needs_setup(ns):
+        setup = SetupApp()
+        await setup.run_async()
+        if setup.choice is None:
+            return False
+        save_setup(setup.choice)
+    return True
+
+
 async def run_app(ns: argparse.Namespace) -> int:
     """Build the shared runtime session and run the TUI over it."""
     from rlmagent.runtime import build_session, settle_project_trust
@@ -507,12 +566,8 @@ async def run_app(ns: argparse.Namespace) -> int:
 
     # Settled before the session exists: its answer decides what gets loaded.
     await settle_project_trust(ns, ask=ask_in_dialog)
-    if needs_setup(ns):
-        setup = SetupApp()
-        await setup.run_async()
-        if setup.choice is None:
-            return 1
-        save_setup(setup.choice)
+    if not await setup_if_needed(ns):
+        return 1
     bridge = SessionBridge(await build_session(ns))
     app = RlmAgentApp(bridge)
     try:

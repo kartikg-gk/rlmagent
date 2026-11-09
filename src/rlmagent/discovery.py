@@ -174,27 +174,36 @@ def _project_only(paths: RlmAgentPaths, *locations: Path) -> tuple[Path, ...]:
 
 def skill_search_paths(paths: RlmAgentPaths) -> list[Path]:
     """Return skill directories in highest-precedence-first order."""
+    from rlmagent.packages import resource_dirs
+
     return _dedupe_paths([
         *_project_only(paths, paths.project_agents_skills, paths.project_skills),
         paths.agents_skills,
         paths.user_skills,
+        *resource_dirs("skills", paths=paths),
     ])
 
 
 def prompt_search_paths(paths: RlmAgentPaths) -> list[Path]:
     """Return prompt directories in highest-precedence-first order."""
+    from rlmagent.packages import resource_dirs
+
     return _dedupe_paths([
         *_project_only(paths, paths.project_agents_prompts, paths.project_prompts),
         paths.agents_prompts,
         paths.user_prompts,
+        *resource_dirs("prompts", paths=paths),
     ])
 
 
 def theme_search_paths(paths: RlmAgentPaths) -> list[Path]:
     """Return theme directories in highest-precedence-first order."""
+    from rlmagent.packages import resource_dirs
+
     return _dedupe_paths([
         *_project_only(paths, paths.project_themes),
         paths.user_themes,
+        *resource_dirs("themes", paths=paths),
     ])
 
 

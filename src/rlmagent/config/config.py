@@ -19,7 +19,8 @@ from rlmagent.model.settings import (
 # Known provider identifiers
 # ---------------------------------------------------------------------------
 
-_KNOWN_PROVIDERS = ("anthropic", "openai", "openrouter", "ollama", "huggingface", "scripted", "cli", "vertex")
+_KNOWN_PROVIDERS = ("anthropic", "openai", "openrouter", "ollama", "huggingface", "scripted", "cli", "vertex",
+                    "google", "mistral", "azure", "codex", "copilot", "claude-subscription", "xai", "xai-subscription")
 
 # OpenAI-compatible backends reuse the OpenAI adapter with a different base URL.
 _OPENAI_COMPATIBLE = ("openai", "openrouter", "ollama", "huggingface")
@@ -95,10 +96,57 @@ def resolve_provider(name: str | None = None) -> ModelProvider:
         )
 
     resolved = resolved.strip().lower()
+    if resolved == "copilot":
+        from rlmagent.model.copilot import CopilotProvider
+        return CopilotProvider()
+    if resolved == "xai-subscription":
+        from rlmagent.model.registered_oauth import BASE, resolve
+        from rlmagent.model.settings import Credential
+
+        return _build_openai(OpenAIProfile(name=resolved, credential=Credential(None, BASE),
+                                          resolver=resolve, endpoint="chat"))
+    if resolved == "claude-subscription":
+        from rlmagent.model.external import ExternalAgentProvider
+        return ExternalAgentProvider()
+
+    if resolved == "codex":
+        from rlmagent.model.settings import Credential
+        from rlmagent.model.subscription import RESOURCE, resolve
+
+        transport = os.environ.get("RLM_AGENT_CODEX_TRANSPORT", "http")
+        if transport not in ("http", "websocket"):
+            raise ConfigError("RLM_AGENT_CODEX_TRANSPORT must be http or websocket")
+        return _build_openai(OpenAIProfile(
+            name="codex", credential=Credential(None, RESOURCE),
+            resolver=resolve, endpoint="responses", transport=transport,
+        ))
 
     if resolved == "anthropic":
         profile = load_anthropic_profile()
         return _build_anthropic(profile)
+
+    if resolved == "google":
+        from rlmagent.model.google import build_google
+
+        return build_google()
+
+    if resolved in ("mistral", "azure", "xai"):
+        from rlmagent.config.loader import load_api_key
+        from rlmagent.config.store import load_config, provider_info
+        from rlmagent.model.settings import Credential
+
+        info = provider_info(resolved)
+        key = load_api_key(resolved)
+        if not key:
+            raise ConfigError(f"{info.key_env} is not set")
+        base = os.environ.get("AZURE_OPENAI_BASE_URL" if resolved == "azure" else resolved.upper() + "_BASE_URL")
+        base = base or load_config().base_urls.get(resolved) or info.base_url
+        if not base:
+            raise ConfigError("Set AZURE_OPENAI_BASE_URL to your deployed /openai/v1 endpoint")
+        credential = (Credential(None, base, (("api-key", key),)) if resolved == "azure"
+                      else Credential(key, base))
+        return _build_openai(OpenAIProfile(name=resolved, credential=credential,
+                                          endpoint="responses" if resolved == "azure" else "chat"))
 
     if resolved in _OPENAI_COMPATIBLE:
         # Named for the chosen provider, so replies, stats, and errors say
@@ -133,6 +181,14 @@ def resolve_provider(name: str | None = None) -> ModelProvider:
 
 def _probe_status(provider_name: str) -> str:
     """Return a short status string for a provider: 'ready', 'no key', etc."""
+    if provider_name == "codex":
+        return "subscription  (rlm-agent provider login codex)"
+    if provider_name in ("google", "mistral", "azure"):
+        from rlmagent.config.loader import load_api_key
+        from rlmagent.config.store import provider_info
+
+        return "key configured" if load_api_key(provider_name) else (
+            f"no key  (set {provider_info(provider_name).key_env})")
     if provider_name == "anthropic":
         if not os.environ.get("ANTHROPIC_API_KEY"):
             return "no key  (set ANTHROPIC_API_KEY)"
@@ -172,6 +228,12 @@ def setup_provider() -> None:
     """Print environment-variable guidance for configuring each provider."""
     sys.stderr.write(
         "Provider setup\n"
+        "\nCodex subscription:\n"
+        "  Install rlmagent[subscription], then run rlm-agent provider login codex.\n"
+        "  Use --provider codex; tokens stay in the platform credential store.\n"
+        "\nNative providers:\n"
+        "  GOOGLE_API_KEY, MISTRAL_API_KEY, or AZURE_OPENAI_API_KEY\n"
+        "  Azure also requires AZURE_OPENAI_BASE_URL ending in /openai/v1.\n"
         "\n"
         "Set the following environment variables for your chosen provider.\n"
         "\n"

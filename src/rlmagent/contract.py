@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import copy
+import math
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 FORMAT = "rlmagent.run/1"
 BUILTIN_TOOLS = ("python", "Read", "Write", "Edit")
@@ -14,7 +18,14 @@ _BASE_URLS = {
     "openai": "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "ollama": "http://localhost:11434/v1",
+    "google": "https://generativelanguage.googleapis.com/v1beta",
+    "mistral": "https://api.mistral.ai/v1",
+    "azure": "",
+    "xai": "https://api.x.ai/v1",
+    "codex": "https://api.openai.com/v1",
+    "claude-subscription": "",
 }
+ACCOUNT_PROVIDERS = frozenset({"codex", "claude-subscription"})
 _KEYLESS = {"ollama"}
 
 
@@ -39,6 +50,8 @@ class Limits:
     max_agents: int
     max_seconds: float | None
     cell_timeout: float
+    request_timeout: float = 300.0
+    max_new_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -83,7 +96,9 @@ class Contract:
     engine: str = "session"
     policy: dict | None = None
 
-    def api_key(self) -> str:
+    def api_key(self) -> str | None:
+        if self.model.provider in ACCOUNT_PROVIDERS:
+            return None
         if self.model.provider in _KEYLESS and self.model.api_key_env is None:
             return self.model.provider
         name = self.model.api_key_env
@@ -132,6 +147,7 @@ N = type(None)
 
 
 def parse_contract(doc: object) -> Contract:
+    doc = copy.deepcopy(doc)
     original = doc
     engine = "session"
     if isinstance(doc, dict) and "engine" in doc:
@@ -147,14 +163,39 @@ def parse_contract(doc: object) -> Contract:
         doc = {key: value for key, value in doc.items() if key != "playbook"}
     policy = None
     if isinstance(doc, dict) and "policy" in doc:
+        policy_doc = doc["policy"]
+        shell_access, shell_network, allowed_tools = "workspace", False, None
+        if isinstance(policy_doc, dict):
+            shell_access = _check(policy_doc.get("shell_access", "workspace"),
+                                  (str,), "policy.shell_access")
+            shell_network = _check(policy_doc.get("shell_network", False),
+                                   (bool,), "policy.shell_network")
+            if shell_access not in ("workspace", "host"):
+                raise ContractError("policy.shell_access: expected workspace or host")
+            allowed_tools = _check(policy_doc.get("allowed_tools"), (list, N),
+                                   "policy.allowed_tools")
+            if allowed_tools is not None and (
+                any(not isinstance(name, str) or not re.fullmatch(r"[a-zA-Z][a-zA-Z_0-9]*", name)
+                    for name in allowed_tools)
+                or len(set(allowed_tools)) != len(allowed_tools)
+            ):
+                raise ContractError("policy.allowed_tools: expected unique tool names")
+            policy_doc = {key: value for key, value in policy_doc.items()
+                          if key not in ("shell_access", "shell_network", "allowed_tools")}
         # Optional: every field must be given, null where the default applies.
-        policy = _fields(doc["policy"], "policy", {
+        policy = _fields(policy_doc, "policy", {
             "allow_git": (bool,), "max_tool_output_bytes": (int, N),
             "max_compactions": (int, N), "agent_max_tokens": (int, N),
             "search_block": (list,),
         })
         if not all(isinstance(rule, str) for rule in policy["search_block"]):
             raise ContractError("policy.search_block: expected a list of strings")
+        if "shell_access" in doc["policy"]:
+            policy["shell_access"] = shell_access
+        if "shell_network" in doc["policy"]:
+            policy["shell_network"] = shell_network
+        if allowed_tools is not None:
+            policy["allowed_tools"] = allowed_tools
         doc = {key: value for key, value in doc.items() if key != "policy"}
     kernel = KernelSpec()
     if isinstance(doc, dict) and "kernel" in doc:
@@ -184,12 +225,45 @@ def parse_contract(doc: object) -> Contract:
     })
     if m["provider"] not in _BASE_URLS:
         raise ContractError(f"model.provider: {m['provider']!r} is not one of {sorted(_BASE_URLS)}")
-    if m["api_key_env"] is None and m["provider"] not in _KEYLESS:
+    account = m["provider"] in ACCOUNT_PROVIDERS
+    if account and (m["api_key_env"] is not None or m["base_url"] is not None):
+        raise ContractError("model: account routes require null api_key_env and base_url")
+    if m["api_key_env"] is None and m["provider"] not in _KEYLESS and not account:
         raise ContractError("model.api_key_env: required for this provider")
-    lim = _fields(top["limits"], "limits", {
+    if m["provider"] == "azure" and not m["base_url"]:
+        raise ContractError("model.base_url: required for the deployed Azure endpoint")
+    address = m["base_url"] or _BASE_URLS[m["provider"]]
+    parsed = urlsplit(address)
+    if not account and (parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username
+            or parsed.password or parsed.query or parsed.fragment):
+        raise ContractError("model.base_url: use an HTTP(S) endpoint without credentials, query or fragment")
+    if m["provider"] == "claude-subscription":
+        if re.fullmatch(r"cli:claude-code(?:\?model=[A-Za-z0-9][A-Za-z0-9._/-]{0,127})?", m["name"]) is None:
+            raise ContractError("model.name: use cli:claude-code or cli:claude-code?model=MODEL")
+    elif m["name"].startswith(("cli:", "acp:")):
+        raise ContractError("model.name: this native-provider contract requires a native model identifier")
+    limit_input = top["limits"]
+    if isinstance(limit_input, dict):
+        limit_input = {"request_timeout": 300.0, "max_new_tokens": None, **limit_input}
+    lim = _fields(limit_input, "limits", {
         "max_depth": (int,), "max_calls": (int,), "max_cost": (float,), "max_live": (int,),
         "max_agents": (int,), "max_seconds": (float, N), "cell_timeout": (float,),
+        "request_timeout": (float,), "max_new_tokens": (int, N),
     })
+    for name, value in lim.items():
+        if value is None:
+            continue
+        if not math.isfinite(value) or value < 0:
+            raise ContractError(f"limits.{name}: must be finite and nonnegative")
+        if name in ("max_live", "cell_timeout", "request_timeout") and value == 0:
+            raise ContractError(f"limits.{name}: must be positive")
+    if policy is not None:
+        for name in ("max_tool_output_bytes", "max_compactions", "agent_max_tokens"):
+            if policy[name] is not None and policy[name] < 0:
+                raise ContractError(f"policy.{name}: must be nonnegative or null")
+    for name in ("name", "base_url"):
+        if m[name] is not None and not m[name].strip():
+            raise ContractError(f"model.{name}: must not be blank")
     pr = _fields(top["prompt"], "prompt", {
         "system_file": (str, N), "append": (str, N), "append_sub_agent": (str, N),
         "append_leaf": (str, N),
@@ -201,6 +275,9 @@ def parse_contract(doc: object) -> Contract:
     if kernel.kind == "wasm" and {"Write", "Edit"} & set(tools):
         raise ContractError("tools: Write and Edit are not offered with kernel.kind 'wasm'; "
                             "the sandbox changes files through write_file and edit_file")
+    if policy is not None and "allowed_tools" in policy and kernel.kind != "wasm":
+        if "python" in tools and "python" in policy["allowed_tools"]:
+            raise ContractError("policy.allowed_tools: restricted Python requires a Wasm kernel")
     ses = _fields(top["sessions"], "sessions", {"save": (bool,), "dir": (str, N)})
     tr = _fields(top["trace"], "trace", {"file": (str,)})
     return Contract(

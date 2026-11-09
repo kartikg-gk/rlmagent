@@ -10,14 +10,17 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import time
+from uuid import uuid4
 
 from rlmness import Allowance, AllowanceSpent
 
 from rlmagent.agents.budget import BudgetedProvider
+from rlmagent.agents.child_handles import checked_name
 from rlmagent.agents.trace import TracedProvider, Tracer
 from rlmagent.agents.bridge import BridgeServer, kernel_env
 from rlmagent.agents.kernel_api import KERNEL_API
-from rlmagent.agents.approval import Approver
+from rlmagent.agents.approval import Approver, Refused
 from rlmagent.agents.wasm_api import wasm_api
 from rlmagent.agents.workspace import Workspace
 from rlmagent.kernel import KernelSession
@@ -63,11 +66,15 @@ class ChildRecord:
     outbox: list = field(default_factory=list)
     changed: asyncio.Event = field(default_factory=asyncio.Event)
     confirm: tuple[int, int] | None = None
+    name: str | None = None
+    on_status: Callable[[str], None] | None = None
 
     def set(self, status: str) -> None:
         self.status = status
         self.changed.set()
         self.changed = asyncio.Event()
+        if self.on_status is not None:
+            self.on_status(status)
 
 
 GUARD_MIN_CHARS = 5000
@@ -153,6 +160,10 @@ class AgentTree:
         self._live = asyncio.Semaphore(max(1, allowance.max_live))
         self._ids = itertools.count(1)
         self._root_id: str | None = None
+        self.listeners = []
+        self.event_path: Path | None = None
+        self._event_prefix = uuid4().hex
+        self._reported_root = False
 
     async def start(self) -> None:
         await self._bridge.start()
@@ -169,6 +180,8 @@ class AgentTree:
     def attach(self, agent_id: str, session) -> None:
         """Record sub-agents this agent starts in `session`'s saved file."""
         self._session_of[agent_id] = session
+        if agent_id == self.root_id():
+            self.session = session
 
     def root_id(self) -> str:
         if self._root_id is None:
@@ -199,6 +212,11 @@ class AgentTree:
     def _sandbox_for(self, node: AgentNode) -> WasmKernel:
         """Give each recursive agent a private interpreter in the shared Node host."""
         workspace = Workspace(self.cwd, self.approver)
+        workspace.policy = getattr(self, "policy", None)
+        functions = workspace.functions()
+        if workspace.policy is not None:
+            functions = {name: fn for name, fn in functions.items()
+                         if workspace.policy.allows_tool(name)}
 
         async def call(op, args):
             return await self._handle(node.id, op, args)
@@ -207,7 +225,7 @@ class AgentTree:
             await self._handle(node.id, "final", {"value": value, "note": ""})
 
         kernel = WasmKernel(
-            cwd=self.cwd, bridges={"_rlmagent": call, **workspace.functions()},
+            cwd=self.cwd, bridges={"_rlmagent": call, **functions},
             startup_code=wasm_api(self._can_delegate(node), node.parent_id is not None,
                                   network=self.network),
             timeout=self.cell_timeout, on_final=final, restore=self.restore_kernel,
@@ -227,6 +245,9 @@ class AgentTree:
         node = self.nodes.get(agent_id)
         if node is None:
             raise RuntimeError(f"unknown agent {agent_id!r}")
+        policy = getattr(self, "policy", None)
+        if op in ("guidance", "improve", "playbook") and policy is not None and not policy.allows_tool(op):
+            raise Refused(f"{op} is disabled by the tool policy")
         if op == "context":
             return node.context
         if op == "final":
@@ -257,7 +278,9 @@ class AgentTree:
             rec = self.records.get(agent_id)
             if rec is None:
                 raise RuntimeError("only sub-agents have a parent")
-            rec.outbox.append(str(args.get("text", "")))
+            text = str(args.get("text", ""))
+            rec.outbox.append(text)
+            self._child_event("child_progress", agent_id, text=text[:500])
             return None
         if op == "spawn":
             return self.spawn(
@@ -266,6 +289,37 @@ class AgentTree:
             )
         if op == "children":
             return list(self._kids.get(agent_id, []))
+        if op == "child_handle":
+            action = args.get("action")
+            if action in ("name", "find"):
+                name = checked_name(args.get("name"))
+                match = next((key for key in self._kids.get(agent_id, ())
+                              if self.records[key].name == name
+                              and self.records[key].status != "cancelled"), None)
+                if action == "find":
+                    if match is None:
+                        raise ValueError(f"no child named {name!r}")
+                    return {"id": match}
+                if match is not None and match != args.get("id"):
+                    raise ValueError(f"child name {name!r} is already in use")
+            rec = self._own(agent_id, str(args.get("id")))
+            if rec.status == "cancelled":
+                raise ValueError("child is cancelled")
+            ledger = getattr(getattr(self, "session", None), "steering", None)
+            if action == "steer":
+                if ledger is None:
+                    raise ValueError("child steering requires an attached session")
+                return ledger.accept(args.get("text"), args.get("message_id"), rec.node.id, once=True,
+                                     allow_new=rec.status in ("starting", "running"))
+            if action == "name":
+                rec.name = name
+                self._child_event("child_named", rec.node.id, name=name)
+            elif action != "info":
+                raise ValueError("invalid child handle operation")
+            return {"id": rec.node.id, "name": rec.name, "status": rec.status, "keep": rec.keep,
+                    "queued": rec.inbox.qsize(),
+                    "steering": ledger.receipts(target=rec.node.id) if ledger is not None else [],
+                    "usage": self.tracer.child_usage(rec.node.id, compatibility=True)}
         if op == "rlm":
             child = self.records[self.spawn(agent_id, str(args.get("task", "")), args.get("context"),
                                             role=args.get("role"), model=args.get("model"))]
@@ -357,9 +411,24 @@ class AgentTree:
             rec.holds_slot = False
             self._live.release()
 
+    def _child_event(self, kind: str, agent_id: str, **fields) -> None:
+        run_id = f"{self._event_prefix}/{agent_id}"
+        event = {"timestamp": time(), "kind": kind, "run_id": run_id, **fields}
+        if agent_id != self._root_id:
+            event["child_id"] = run_id
+        if self.event_path is not None:
+            self.event_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.event_path.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+        for listener in tuple(self.listeners):
+            listener(event)
+
     def spawn(self, parent_id: str, task: str, context: object, keep: bool = False,
               role: str | None = None, model: str | None = None, confirm: bool = True) -> str:
         parent = self.nodes[parent_id]
+        contract_model = getattr(self, "contract_model", None)
+        if contract_model is not None and model is not None and model != contract_model:
+            raise RuntimeError("sub-agents must use the model specified by the runtime contract")
         role_text = self._role(role) if role else ""
         if is_external(model):
             parse_model(model)
@@ -383,6 +452,14 @@ class AgentTree:
         self.records[node.id] = rec
         self._kids.setdefault(parent_id, []).append(node.id)
         self.tracer.spawned(parent_id, node.id)
+        if not self._reported_root:
+            root = self.nodes[self._root_id]
+            self._child_event("run_started", root.id, depth=0, model=root.model)
+            self._reported_root = True
+        self._child_event("run_started", node.id, parent_run_id=f"{self._event_prefix}/{parent_id}",
+                          depth=node.depth, model=node.model)
+        rec.on_status = lambda status: self._child_event("child_status", node.id, status=status)
+        rec.on_status(rec.status)
         rec.task = asyncio.get_running_loop().create_task(self._run(rec))
         return node.id
 
@@ -430,6 +507,7 @@ class AgentTree:
         from rlmagent.conversation import CodingSession
 
         node = rec.node
+        ledger = getattr(getattr(self, "session", None), "steering", None)
         kernel = None
         try:
             await self._acquire(rec)
@@ -466,6 +544,8 @@ class AgentTree:
             message = self.first_message_for(node)
             while True:
                 rec.value = await self._round(session, node, message)
+                if ledger is not None:
+                    ledger.expire_child(node.id)
                 if not rec.keep:
                     rec.set("done")
                     return
@@ -488,6 +568,8 @@ class AgentTree:
                 if "RLM_AGENT_BRIDGE_TOKEN" in kernel.env:
                     self._bridge.revoke(kernel.env["RLM_AGENT_BRIDGE_TOKEN"])
                 await kernel.shutdown()
+            if ledger is not None and rec.status in ("failed", "cancelled"):
+                ledger.expire_child(node.id)
 
     # -- delegation guard: a sub-agent handed most of its parent's context confirms first --
 

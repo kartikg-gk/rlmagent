@@ -134,14 +134,12 @@ class WasmKernel:
             try:
                 outcome = await asyncio.to_thread(self._runtime.execute, code)
             except CellTimeout:
-                # A cell that never ends keeps the shared Node host busy, which stalls every
-                # sandbox in it; restarting the host is the only way to stop it.
-                from rlmness.wasm_runtime import reset_host
+                from rlmness.wasm_runtime import WasmRuntime, reset_host
 
                 self._runtime = None
-                await asyncio.to_thread(reset_host)
-                return CellResult(output=self._lost(why=f"no answer within {cell_timeout:.0f}s; "
-                                                     "every agent's sandbox was restarted"),
+                if not getattr(WasmRuntime, "ISOLATED", False):
+                    await asyncio.to_thread(reset_host)
+                return CellResult(output=self._lost(why=f"no answer within {cell_timeout:.0f}s"),
                                   timed_out=True, restarted=True)
             except RuntimeGone:
                 await self._drop()

@@ -132,4 +132,4 @@ def test_a_background_job_and_the_git_guard(tmp_path):
                   "you get to guard.txt. FINAL done.", "--deny-git")
     assert done.returncode == 0, done.stderr[-2000:]
     assert "job-finished" in (work / "out.txt").read_text()
-    assert "beyond the current branch" in (work / "guard.txt").read_text()
+    assert "touches other branches" in (work / "guard.txt").read_text()
