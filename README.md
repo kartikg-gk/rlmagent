@@ -305,11 +305,13 @@ restart outcome. A one-shot job interrupted by a worker exit remains visible in
 workers at startup and continues checking while it runs. Use `worker watch --stop`
 from another terminal to stop the monitor.
 `worker service install` registers and starts a watcher for the current app home
-using Windows Task Scheduler or the Linux systemd user manager. It starts again
+using Windows Task Scheduler, the Linux systemd user manager or a macOS launchd
+agent. It starts again
 when the user logs in. Use `worker service status`, `start`, `stop`, and
 `uninstall` to manage it. The service uses the Python installation and session
-directory from installation time. On Windows, watcher output goes to
-`fleet-service.log` in the app home. On Linux, use the user journal.
+directory from installation time. On Windows and macOS, watcher output goes to
+`fleet-service.log` in the app home. On Linux, use the user journal. The macOS
+agent is covered by tests of its definition and commands, not yet on a Mac.
 `worker stop-all` lets the current turns finish and records the stop request
 for interrupted workers, so recovery skips them.
 

@@ -65,3 +65,37 @@ def test_worker_service_dispatch_keeps_the_manager_exit_status(monkeypatch):
 
     monkeypatch.setattr(worker_service, "manage", status)
     assert worker.handle(["service", "status"]) == 3
+
+
+def test_launchd_agent_lifecycle_uses_the_gui_domain(tmp_path, monkeypatch):
+    import plistlib
+    from pathlib import Path
+
+    commands = []
+
+    def command(*args, check=True):
+        commands.append(args)
+        return CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(worker_service, "_command", command)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(worker_service.os, "getuid", lambda: 501, raising=False)
+    argv = ["/Users/me/My Env/python", "-m", "rlmagent.worker_service", "/h", "/s"]
+    home = tmp_path / "home"
+    assert worker_service._macos("install", "test", argv, home) == 0
+    plist = tmp_path / "Library/LaunchAgents/com.rlmagent.fleet.test.plist"
+    definition = plistlib.loads(plist.read_bytes())
+    assert definition["ProgramArguments"] == argv
+    assert definition["KeepAlive"] == {"SuccessfulExit": False}
+    assert definition["StandardErrorPath"] == str(home / "fleet-service.log")
+    assert worker_service._macos("status", "test", argv, home) == 0
+    assert worker_service._macos("uninstall", "test", argv, home) == 0
+    assert not plist.exists()
+    target = "gui/501/com.rlmagent.fleet.test"
+    assert commands == [
+        ("launchctl", "bootout", target),
+        ("launchctl", "bootstrap", "gui/501", str(plist)),
+        ("launchctl", "kickstart", "-k", target),
+        ("launchctl", "print", target),
+        ("launchctl", "bootout", target),
+    ]

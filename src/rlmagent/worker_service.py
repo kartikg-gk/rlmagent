@@ -117,6 +117,54 @@ def _linux(action: str, name: str, argv: list[str]) -> int:
     return _print_result(_command(*manager, action, "--no-pager", name, check=False))
 
 
+def _launchd_plist(label: str, argv: list[str], home: Path) -> bytes:
+    import plistlib
+
+    log = str(home / "fleet-service.log")
+    return plistlib.dumps({
+        "Label": label,
+        "ProgramArguments": argv,
+        "RunAtLoad": True,
+        # Restart only after a failure, as the other service managers do.
+        "KeepAlive": {"SuccessfulExit": False},
+        "ThrottleInterval": 5,
+        "ProcessType": "Background",
+        "StandardOutPath": log,
+        "StandardErrorPath": log,
+    })
+
+
+def _macos(action: str, name: str, argv: list[str], home: Path) -> int:
+    label = f"com.rlmagent.fleet.{name}"
+    agents = Path.home() / "Library" / "LaunchAgents"
+    plist = agents / f"{label}.plist"
+    domain = f"gui/{os.getuid()}"
+    target = f"{domain}/{label}"
+    if action == "install":
+        home.mkdir(parents=True, exist_ok=True)
+        agents.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=agents) as directory:
+            staged = Path(directory) / plist.name
+            staged.write_bytes(_launchd_plist(label, argv, home))
+            staged.replace(plist)
+        # Reinstalling replaces a loaded definition rather than failing on it.
+        _command("launchctl", "bootout", target, check=False)
+        _command("launchctl", "bootstrap", domain, str(plist))
+        return _print_result(_command("launchctl", "kickstart", "-k", target, check=False))
+    if action == "uninstall":
+        result = _command("launchctl", "bootout", target, check=False)
+        plist.unlink(missing_ok=True)
+        return _print_result(result)
+    if action == "start":
+        if not plist.exists():
+            raise ValueError("The worker service is not installed; run worker service install")
+        _command("launchctl", "bootstrap", domain, str(plist), check=False)
+        return _print_result(_command("launchctl", "kickstart", target, check=False))
+    if action == "stop":
+        return _print_result(_command("launchctl", "bootout", target, check=False))
+    return _print_result(_command("launchctl", "print", target, check=False))
+
+
 def manage(action: str) -> int:
     paths = default_paths()
     home = paths.home.resolve()
@@ -129,7 +177,9 @@ def manage(action: str) -> int:
         return _windows(action, name, argv, home)
     if sys.platform == "linux":
         return _linux(action, name, argv)
-    raise ValueError("Worker service management requires Windows Task Scheduler or Linux systemd")
+    if sys.platform == "darwin":
+        return _macos(action, name, argv, home)
+    raise ValueError("Worker service management needs Windows Task Scheduler, systemd or launchd")
 
 
 def _run(home: str, sessions: str) -> int:
