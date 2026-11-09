@@ -1058,6 +1058,8 @@ def handle(argv: list[str]) -> int:
     recover.add_argument("name", nargs="?")
     watch = sub.add_parser("watch", help="Monitor the fleet and recover interrupted saved workers.")
     watch.add_argument("--stop", action="store_true", help="Stop the fleet watcher.")
+    service = sub.add_parser("service", help="Manage the user-level fleet watcher service.")
+    service.add_argument("operation", choices=("install", "status", "start", "stop", "uninstall"))
     stop_all = sub.add_parser("stop-all", help="Ask the worker fleet to finish and stop.")
     stop_all.add_argument("--wait", type=float, default=60.0)
     for action, text in (("attach", "Follow a worker and type to it."),
@@ -1119,6 +1121,10 @@ def handle(argv: list[str]) -> int:
             return max(results, default=0)
         if ns.action == "watch":
             return _watch_fleet(ns.stop)
+        if ns.action == "service":
+            from rlmagent.worker_service import manage
+
+            return manage(ns.operation)
         if ns.action == "stop-all":
             return _stop_all(ns.wait)
         if ns.action == "stop":
