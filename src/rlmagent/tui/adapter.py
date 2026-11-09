@@ -355,9 +355,13 @@ class SessionBridge:
         both are put on one queue and handed on in the order they came.
         """
         self._streamed = 0
-        self.steps = StepBook()
+        # Cleared rather than replaced: an open agent tree keeps this book.
+        self.steps.clear()
         backend = getattr(self._session, "backend", None)
         if backend is None or not hasattr(backend, "listeners"):
+            # The session engine's tree reports its children the same way.
+            backend = getattr(self._session, "agent_tree", None)
+        if backend is None or not isinstance(getattr(backend, "listeners", None), list):
             async for event in events:
                 update = self._translate(event)
                 if update is not None:
@@ -380,7 +384,9 @@ class SessionBridge:
                 await merged.put(("done", finished))
 
         backend.listeners.append(on_event)
-        backend.cards = True
+        cards = hasattr(backend, "cards")
+        if cards:
+            backend.cards = True
         task = asyncio.create_task(pump())
         try:
             while True:
@@ -403,7 +409,8 @@ class SessionBridge:
                     yield StepChanged(step)
         finally:
             backend.listeners.remove(on_event)
-            backend.cards = False
+            if cards:
+                backend.cards = False
             if not task.done():
                 task.cancel()
                 with suppress(asyncio.CancelledError, Exception):

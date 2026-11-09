@@ -303,6 +303,7 @@ class BackendProvider:
         # draws steps itself sets cards, and the reply then carries only text.
         self.listeners = []
         self.cards = False
+        self.background.record_event = self.record_event
 
     def record_event(self, event):
         with self._event_lock:
@@ -445,6 +446,10 @@ class BackendProvider:
                 reuse = kwargs.pop("reuse", None)
                 owner_session = kwargs.pop("owner_session", None)
                 node_prepare = kwargs.pop("_node_prepare", False)
+                if child_id := self.background.owners.get(agent):
+                    self.record_event({"kind": "child_bound", "run_id": agent,
+                                       "child_id": child_id,
+                                       "name": self.background.names.get(child_id)})
 
                 def wrap(fn):
                     def call(*args, **kw):

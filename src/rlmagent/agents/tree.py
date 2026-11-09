@@ -10,6 +10,8 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import time
+from uuid import uuid4
 
 from rlmness import Allowance, AllowanceSpent
 
@@ -65,11 +67,14 @@ class ChildRecord:
     changed: asyncio.Event = field(default_factory=asyncio.Event)
     confirm: tuple[int, int] | None = None
     name: str | None = None
+    on_status: Callable[[str], None] | None = None
 
     def set(self, status: str) -> None:
         self.status = status
         self.changed.set()
         self.changed = asyncio.Event()
+        if self.on_status is not None:
+            self.on_status(status)
 
 
 GUARD_MIN_CHARS = 5000
@@ -155,6 +160,10 @@ class AgentTree:
         self._live = asyncio.Semaphore(max(1, allowance.max_live))
         self._ids = itertools.count(1)
         self._root_id: str | None = None
+        self.listeners = []
+        self.event_path: Path | None = None
+        self._event_prefix = uuid4().hex
+        self._reported_root = False
 
     async def start(self) -> None:
         await self._bridge.start()
@@ -269,7 +278,9 @@ class AgentTree:
             rec = self.records.get(agent_id)
             if rec is None:
                 raise RuntimeError("only sub-agents have a parent")
-            rec.outbox.append(str(args.get("text", "")))
+            text = str(args.get("text", ""))
+            rec.outbox.append(text)
+            self._child_event("child_progress", agent_id, text=text[:500])
             return None
         if op == "spawn":
             return self.spawn(
@@ -302,6 +313,7 @@ class AgentTree:
                                      allow_new=rec.status in ("starting", "running"))
             if action == "name":
                 rec.name = name
+                self._child_event("child_named", rec.node.id, name=name)
             elif action != "info":
                 raise ValueError("invalid child handle operation")
             return {"id": rec.node.id, "name": rec.name, "status": rec.status, "keep": rec.keep,
@@ -399,6 +411,18 @@ class AgentTree:
             rec.holds_slot = False
             self._live.release()
 
+    def _child_event(self, kind: str, agent_id: str, **fields) -> None:
+        run_id = f"{self._event_prefix}/{agent_id}"
+        event = {"timestamp": time(), "kind": kind, "run_id": run_id, **fields}
+        if agent_id != self._root_id:
+            event["child_id"] = run_id
+        if self.event_path is not None:
+            self.event_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.event_path.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+        for listener in tuple(self.listeners):
+            listener(event)
+
     def spawn(self, parent_id: str, task: str, context: object, keep: bool = False,
               role: str | None = None, model: str | None = None, confirm: bool = True) -> str:
         parent = self.nodes[parent_id]
@@ -428,6 +452,14 @@ class AgentTree:
         self.records[node.id] = rec
         self._kids.setdefault(parent_id, []).append(node.id)
         self.tracer.spawned(parent_id, node.id)
+        if not self._reported_root:
+            root = self.nodes[self._root_id]
+            self._child_event("run_started", root.id, depth=0, model=root.model)
+            self._reported_root = True
+        self._child_event("run_started", node.id, parent_run_id=f"{self._event_prefix}/{parent_id}",
+                          depth=node.depth, model=node.model)
+        rec.on_status = lambda status: self._child_event("child_status", node.id, status=status)
+        rec.on_status(rec.status)
         rec.task = asyncio.get_running_loop().create_task(self._run(rec))
         return node.id
 

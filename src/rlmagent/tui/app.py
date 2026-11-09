@@ -419,7 +419,7 @@ class RlmAgentApp(App[None]):
     async def _stream(self, text: str, *, resume: bool = False) -> None:
         """Consume the runtime's event stream and render it."""
         assert self._bridge is not None
-        transcript = self.query_one(TranscriptView)
+        transcript = self.screen_stack[0].query_one(TranscriptView)
         transcript.new_run()
         self._busy = True
         self._cancelled = False
@@ -486,20 +486,21 @@ class RlmAgentApp(App[None]):
         from rlmagent.reasoning import DEFAULT_THINKING_LEVEL
 
         session = self._bridge.session
-        self.query_one(StatusBar).show(self._bridge.status(), busy=self._busy)
+        main = self.screen_stack[0]
+        main.query_one(StatusBar).show(self._bridge.status(), busy=self._busy)
         tasks = getattr(session, "tasks", None)
         if tasks is not None:
-            self.query_one(Sidebar).show_tasks(tasks.items)
+            main.query_one(Sidebar).show_tasks(tasks.items)
         effort = session.thinking_level or DEFAULT_THINKING_LEVEL
         tree = getattr(session, "agent_tree", None)
         auto = tree is not None and tree.approver.policy == "auto"
-        self.query_one(ModelBadge).show(session.model, effort, auto)
+        main.query_one(ModelBadge).show(session.model, effort, auto)
 
     async def _refresh_sidebar(self) -> None:
         """Repaint the session list from the catalog."""
         if self._bridge is None:
             return
-        await self.query_one(Sidebar).show(self._bridge.sessions())
+        await self.screen_stack[0].query_one(Sidebar).show(self._bridge.sessions())
 
 
 def needs_setup(ns: argparse.Namespace) -> bool:

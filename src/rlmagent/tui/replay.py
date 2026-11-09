@@ -123,6 +123,8 @@ class ReplayApp(App[None]):
         for book in self.books:
             merged.agents.update(book.agents)
             merged.steps.update(book.steps)
+            merged.child_names.update(book.child_names)
+            merged.child_notes.update(book.child_notes)
         return merged
 
     def action_agent_tree(self) -> None:

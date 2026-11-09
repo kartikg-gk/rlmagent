@@ -280,6 +280,8 @@ async def _build_session(ns: argparse.Namespace, *, session_id: str | None = Non
                 sessions_dir / f"{session.session_id}.backend.json")
     if getattr(ns, "engine", "session") == "rlmness":
         session.backend = provider
+    elif sessions_dir is not None:
+        tree.event_path = sessions_dir / f"{session.session_id}.backend.events.jsonl"
     session.agent_tree = tree
     session.shadow = Shadow(session.cwd, rlm_agent_home())
     session.load_undo()

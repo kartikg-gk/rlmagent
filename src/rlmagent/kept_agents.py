@@ -21,6 +21,11 @@ class KeptAgents(Background):
         self.live_states: dict[str, Session] = {}
         self.names: dict[str, str] = {}
         self.steering = None
+        self.record_event = None
+
+    def _progress(self, key, text):
+        if self.record_event is not None:
+            self.record_event({"kind": "child_progress", "child_id": key, "text": str(text)[:500]})
 
     def _expire_steering(self, key: str) -> None:
         if self.steering is not None:
@@ -108,6 +113,8 @@ class KeptAgents(Background):
                             self.saved[key]["name"] = old
                         raise
                 self.names[key] = name
+                if self.record_event is not None:
+                    self.record_event({"kind": "child_named", "child_id": key, "name": name})
             elif action != "info":
                 raise ValueError("invalid child handle operation")
             deliveries = self.saved.get(key, {}).get("deliveries", {})
@@ -129,6 +136,7 @@ class KeptAgents(Background):
                 self._expire_steering(key)
             job.status = record["status"]
             job.value = record.get("value")
+            previous_messages = job.outbox
             job.outbox = list(record.get("messages", []))
             if job.status in ("idle", "done", "failed", "cancelled"):
                 job.ready.set()
@@ -149,6 +157,9 @@ class KeptAgents(Background):
                 if name := self.names.get(key):
                     self.saved[key]["name"] = name
                 self._write(key)
+            if job.outbox[:len(previous_messages)] == previous_messages:
+                for message in job.outbox[len(previous_messages):]:
+                    self._progress(key, message)
 
     def bindings(self, parent, child):
         owner = self.owners.get(parent)
@@ -157,6 +168,13 @@ class KeptAgents(Background):
             parent = owner
             self.owners[parent] = owner
         bindings = super().bindings(parent, child)
+        tell_parent = bindings["tell_parent"]
+
+        def tell(text):
+            tell_parent(text)
+            self._progress(self.owners[parent], text)
+
+        bindings["tell_parent"] = tell
         if (parent != "root" and parent not in self.saved) or self.directory is None:
             return bindings
 

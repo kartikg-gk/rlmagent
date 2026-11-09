@@ -129,3 +129,49 @@ def test_engine_timestamps_in_iso_text_are_read_as_times():
     step = book.feed({"kind": "step_completed", "run_id": "root", "step": 1,
                       "usage": {"total_tokens": 5}, "ended": "2026-11-03T14:33:44.000000+00:00"})
     assert step.seconds == 2.5
+
+
+def test_child_names_progress_and_status_reach_the_book():
+    book = StepBook()
+    book.feed({"kind": "run_started", "run_id": "p/c1", "parent_run_id": "p/root",
+               "depth": 1, "child_id": "p/c1"})
+    book.feed({"kind": "child_named", "run_id": "p/c1", "child_id": "p/c1", "name": "tests"})
+    book.feed({"kind": "child_progress", "run_id": "p/c1", "child_id": "p/c1",
+               "text": "ran 40 of\n90"})
+    book.feed({"kind": "child_status", "run_id": "p/c1", "status": "idle"})
+    agent = book.agents["p/c1"]
+    assert agent.status == "idle" and book.child_names["p/c1"] == "tests"
+    assert book.child_notes["p/c1"] == "ran 40 of 90"
+    from rlmagent.tui.inspect import agent_label
+    assert agent_label(book, "p/c1").startswith("tests · d1 · idle")
+    assert agent_label(book, "p/c1").endswith("· ran 40 of 90")
+    book.clear()
+    assert not book.agents and not book.child_names
+
+
+async def test_the_session_engine_tree_feeds_the_bridge():
+    class Tree:
+        def __init__(self):
+            self.listeners = []
+
+    class Session:
+        backend = None
+
+        def __init__(self):
+            self.agent_tree = Tree()
+
+        async def submit(self, text):
+            for listener in self.agent_tree.listeners:
+                listener({"kind": "run_started", "run_id": "x/c", "depth": 1, "child_id": "x/c"})
+                listener({"kind": "child_progress", "run_id": "x/c", "child_id": "x/c",
+                          "text": "halfway"})
+            await asyncio.sleep(0.05)
+            return
+            yield
+
+    session = Session()
+    bridge = SessionBridge(session)
+    book = bridge.steps
+    [u async for u in bridge.submit("go")]
+    assert bridge.steps is book and book.child_notes["x/c"] == "halfway"
+    assert session.agent_tree.listeners == []
