@@ -10,8 +10,13 @@ from rlmagent.contract_run import build_contract_session
 from rlmagent.model.scripted import ReplayProvider
 
 
-async def test_contract_new_token_budget_counts_uncached_usage_and_refuses_next_call(tmp_path):
+async def test_contract_new_token_budget_counts_uncached_usage_and_refuses_next_call(
+        tmp_path, monkeypatch):
+    from rlmagent.agents.budget import BudgetedProvider
     from rlmagent.harness.contracts.transcript.diagnostics import UsageStats
+
+    # This test is about settling measured usage; sizing requests up front is below.
+    monkeypatch.setattr(BudgetedProvider, "request_size", lambda self, system, messages: 0)
 
     first = text_turn("first")
     first[0].message.usage = UsageStats(input=2, output=3, cache_read=100, total_tokens=105)
@@ -29,6 +34,32 @@ async def test_contract_new_token_budget_counts_uncached_usage_and_refuses_next_
     finally:
         await session.shutdown()
 
+
+
+async def test_a_request_that_could_pass_the_budget_is_not_sent(tmp_path):
+    provider = ReplayProvider([text_turn("must not run")])
+    session = await build_contract_session(
+        _contract(tmp_path, tools=[], limits__max_new_tokens=1000), provider=provider,
+    )
+    try:
+        async for _ in session.submit("hello"):
+            pass
+        assert provider.calls == []
+        refusal = session.agent_tree.provider.refusal
+        assert "the next request could use about" in refusal and "0 of 1000" in refusal
+    finally:
+        await session.shutdown()
+
+
+def test_request_size_counts_the_prompt_and_the_longest_reply():
+    from types import SimpleNamespace
+
+    from rlmagent.agents.budget import estimate_prompt_tokens, reply_limit
+
+    assert estimate_prompt_tokens("a" * 30, [SimpleNamespace(text="b" * 30)]) == 21
+    inner = SimpleNamespace(_profile=SimpleNamespace(max_tokens=4000))
+    assert reply_limit(SimpleNamespace(inner=inner)) == 4000
+    assert reply_limit(SimpleNamespace()) == 8192
 
 def _contract(tmp_path, **changes):
     doc = copy.deepcopy(VALID)

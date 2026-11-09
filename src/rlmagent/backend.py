@@ -228,7 +228,9 @@ class Client:
                 )
 
             budget = getattr(getattr(self.tree, "allowance", None), "new_token_budget", None)
-            stream = self.tree.provider.measured_stream(model, start) if budget is not None else start()
+            stream = (self.tree.provider.measured_stream(
+                          model, start, self.tree.provider.request_size(system, entries))
+                      if budget is not None else start())
             async for event in correlated(bounded_stream(stream, model,
                     getattr(self.tree, "request_timeout", 300.0)), call, tracer):
                 if isinstance(event, StreamFaultEvent):

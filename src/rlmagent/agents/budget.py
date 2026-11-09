@@ -29,6 +29,45 @@ def to_spend(usage: UsageStats) -> Spend:
 
 REFUSED = "budget reached"
 
+#: Characters per token assumed when sizing a request before it is sent. Lower
+#: than any tokenizer's real average, so the estimate errs high.
+CHARS_PER_TOKEN = 3
+#: Reply tokens assumed when the provider's own reply limit cannot be read.
+DEFAULT_REPLY_TOKENS = 8192
+
+
+def _text_of(value) -> str:
+    if isinstance(value, str):
+        return value
+    text = getattr(value, "text", None)
+    if isinstance(text, str):
+        return text
+    content = getattr(value, "content", None)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(_text_of(part) for part in content)
+    return str(value) if value is not None else ""
+
+
+def estimate_prompt_tokens(system, messages) -> int:
+    """An upper estimate of a request's prompt, all of it counted as uncached."""
+    chars = len(_text_of(system)) + sum(len(_text_of(m)) for m in messages or ())
+    return chars // CHARS_PER_TOKEN + 1
+
+
+def reply_limit(provider) -> int:
+    """The most tokens the provider will write in one reply, as far as it says."""
+    seen = set()
+    while provider is not None and id(provider) not in seen:
+        seen.add(id(provider))
+        profile = getattr(provider, "_profile", None)
+        limit = getattr(profile, "max_tokens", None)
+        if isinstance(limit, int) and limit > 0:
+            return limit
+        provider = getattr(provider, "inner", None) or getattr(provider, "_inner", None)
+    return DEFAULT_REPLY_TOKENS
+
 
 class NewTokenBudget:
     """Reserve the unmeasured balance for one provider request at a time."""
@@ -39,11 +78,15 @@ class NewTokenBudget:
         self.unmeasured = False
         self.lock = asyncio.Lock()
 
-    def refusal(self) -> str | None:
+    def refusal(self, upcoming: int = 0) -> str | None:
+        """Why the next request may not go out; `upcoming` is its estimated size."""
         if self.unmeasured:
             return "new tokens could not be measured for the preceding request"
         if self.used >= self.limit:
             return f"{self.used} new tokens reaches the limit of {self.limit}"
+        if upcoming and self.used + upcoming > self.limit:
+            return (f"the next request could use about {upcoming} new tokens, and "
+                    f"{self.used} of {self.limit} are already used")
         return None
 
     def settle(self, usage: UsageStats) -> None:
@@ -71,7 +114,13 @@ class BudgetedProvider:
     def stream_response(self, *, model, **kwargs) -> AsyncIterator:
         if getattr(self.allowance, "new_token_budget", None) is None:
             return self._reserved_stream(model=model, **kwargs)
-        return self.measured_stream(model, lambda: self._reserved_stream(model=model, **kwargs))
+        upcoming = self.request_size(kwargs.get("system"), kwargs.get("messages"))
+        return self.measured_stream(model, lambda: self._reserved_stream(model=model, **kwargs),
+                                    upcoming)
+
+    def request_size(self, system, messages) -> int:
+        """Estimated new tokens of a request: its whole prompt plus the longest reply."""
+        return estimate_prompt_tokens(system, messages) + reply_limit(self.inner)
 
     def _refuse(self, model, message, usage=None):
         self.refusal = message
@@ -79,11 +128,11 @@ class BudgetedProvider:
                            error_message=f"{REFUSED}: {message}", usage=usage)
         return StreamFaultEvent(reason="error", error=entry)
 
-    async def measured_stream(self, model, start) -> AsyncIterator:
+    async def measured_stream(self, model, start, upcoming: int = 0) -> AsyncIterator:
         budget = self.allowance.new_token_budget
         terminal = None
         async with budget.lock:
-            if (reason := budget.refusal()) is not None:
+            if (reason := budget.refusal(upcoming)) is not None:
                 terminal = self._refuse(model, reason)
             else:
                 settled = False

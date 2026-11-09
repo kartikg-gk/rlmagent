@@ -554,9 +554,11 @@ Python requires Wasm. Delegation and guest networking use the separate
 
 Optional `limits.max_new_tokens` meters reported uncached input and output
 across the whole run, including compaction. The run admits one provider
-request at a time with this limit enabled. A request can cross the limit
-before the provider reports usage. The run reports `max_tokens` and
-refuses further requests after reaching the limit or losing usage coverage.
+request at a time with this limit enabled. Before each request it estimates
+the request's size high (the whole prompt counted as uncached, plus the
+provider's longest reply) and refuses a request that could pass the limit,
+so a run stops short of it rather than over it. The run reports `max_tokens`
+and refuses further requests after reaching the limit or losing usage coverage.
 
 Cells that fail in a familiar way (a missing `await`, quotes nested in an f-string, a
 missing module, a timeout, an empty reply) get a one-line hint with the error.
