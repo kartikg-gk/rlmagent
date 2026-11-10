@@ -220,10 +220,12 @@ def _build_run_parser() -> argparse.ArgumentParser:
     ownership = p.add_mutually_exclusive_group()
     ownership.add_argument(
         "--supervised", action="store_true",
-        help="Start or reconnect to a saved interactive session owned by a worker.",
+        help="Run the session in a background worker that keeps going when this window "
+             "closes, and attach to it.",
     )
     ownership.add_argument(
-        "--foreground", action="store_true", help="Run the interactive session in this process.",
+        "--foreground", action="store_true",
+        help="Run the interactive session in this process (the default).",
     )
     trust = p.add_mutually_exclusive_group()
     trust.add_argument(
@@ -1140,7 +1142,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Default: run mode
     ns = _build_run_parser().parse_args(args)
 
-    if ns.supervised or (_saved_interactive(ns) and sys.stdin.isatty()):
+    # A background worker owns the session only when asked for, or when the session
+    # being resumed already has one; otherwise the full UI runs in this process.
+    if ns.supervised or (_saved_interactive(ns) and sys.stdin.isatty()
+                         and _live_worker_owns(ns.resume)):
         tui = not ns.repl and sys.stdin.isatty() and sys.stdout.isatty() and _textual_available()
         return _handle_supervised(ns, args, tui=tui)
 
@@ -1153,6 +1158,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         _info("\nInterrupted.")
         return 130
+
+
+def _live_worker_owns(session_id: str | None) -> bool:
+    """Whether a running background worker holds this saved session."""
+    if not session_id:
+        return False
+    from rlmagent import worker
+
+    for name in worker._worker_names():
+        meta = worker.state_of(name)
+        if meta.get("session") == session_id and (meta["alive"] or worker._supervised(meta)):
+            return True
+    return False
 
 
 def _saved_interactive(ns: argparse.Namespace) -> bool:
