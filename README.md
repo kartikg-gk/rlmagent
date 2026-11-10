@@ -31,7 +31,7 @@ set in the environment, which take precedence for a run. `rlm-agent config path`
 prints where the file is. Providers include OpenAI, Anthropic, OpenRouter, Ollama,
 Hugging Face, Google Gemini, Mistral, Azure OpenAI, Vertex and Codex subscription sign-in.
 
-This revision requires `rlmness>=0.2.3`. When installing unreleased local builds,
+This revision requires `rlmness>=0.2.4`. When installing unreleased local builds,
 install the matching backend wheel before the application wheel.
 
 ## Run
@@ -363,6 +363,20 @@ For a worker, the receipt reports the queued, running, or final task outcome.
 worker, and `await heartbeat(text)` reports progress, shown in the terminal and in
 `rlm-agent worker log`.
 
+Use `await watch_start(job=job_id)` or `await watch_start(path="results")` to save a
+subscription. The recursive backend also supports `await watch_child(handle)` for a
+kept child you own. `watch_list()` shows watch IDs and unread counts. Read event
+metadata with `watch_events(watch_id)` and retrieve an event with
+`watch_read(watch_id, event_id)`. Read status survives reopening. Watches sample
+changes and can combine several changes into one event. `watch_cancel(watch_id)`
+removes a watch and its history.
+
+End a backend cell with `await wait_for_activity(watch_id, timeout=60)` to pause
+before the next provider request, until a new watch event, pending steering, or
+the timeout. The cell finishes before the wait starts. In the Node engine a
+waiting batch child also returns its fan-out permit and reacquires it before
+continuing.
+
 Other functions: `await web_search(query)` when `BRAVE_API_KEY`, `TAVILY_API_KEY` or
 `SERPER_API_KEY` is set; `await context_usage()`; `await compact()` to summarize older
 conversation when the turn ends. `/btw QUESTION` answers from the conversation so far; neither the
@@ -418,7 +432,10 @@ kernel values across reopening. Find them with `children()` and send a new task
 when the child is idle. In-flight child work is not replayed after a restart.
 
 Use `await name_child(handle, "reviewer")` to name a child under its parent,
-then `await find_child("reviewer")` to recover its handle. `await child_info(handle)`
+then `await find_child("reviewer")` to recover its handle. `await child_messages(handle)`
+lists unread child-note receipts and `await read_child_message(handle, id)` retrieves a
+note and records its read state. `await child_delivery_receipt(handle, id)` looks up
+an existing backend send receipt. `await child_info(handle)`
 shows status, pending deliveries, and recorded model usage without consuming the
 result or messages. In the backend engine, names and usage for kept children
 survive reopening the saved session.
@@ -560,11 +577,16 @@ Python requires Wasm. Delegation and guest networking use the separate
 
 Optional `limits.max_new_tokens` meters reported uncached input and output
 across the whole run, including compaction. The run admits one provider
-request at a time with this limit enabled. Before each request it estimates
-the request's size high (the whole prompt counted as uncached, plus the
-provider's longest reply) and refuses a request that could pass the limit,
-so a run stops short of it rather than over it. The run reports `max_tokens`
-and refuses further requests after reaching the limit or losing usage coverage.
+request at a time with this limit enabled. It estimates each request's size
+from the full prompt and the provider's reply limit. An estimate can be low.
+The run reports `max_tokens` when the budget refuses admission or settlement.
+
+Set `limits.strict_new_tokens` to `true` for counted admission with a
+provider-enforced reply cap. The first-party OpenAI Responses API over HTTP
+supports this mode. Each admitted generation has one attempt. Cached input
+counts toward the reservation, then only new tokens count toward settlement.
+The Codex and Claude subscription routes reject strict mode before generation.
+Omitting `strict_new_tokens` keeps estimate-based admission on those routes.
 
 Cells that fail in a familiar way (a missing `await`, quotes nested in an f-string, a
 missing module, a timeout, an empty reply) get a one-line hint with the error.

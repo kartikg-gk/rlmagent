@@ -154,6 +154,7 @@ class Client:
         accounting=None,
         record=None,
         images=(),
+        activity_waits=None,
     ):
         self.provider, self.loop, self.signal = provider, loop, signal
         self.pending = pending if pending is not None else set()
@@ -162,6 +163,7 @@ class Client:
         self.background = background
         self.accounting, self.record = accounting, record
         self.images = images
+        self.activity_waits = activity_waits if activity_waits is not None else {}
         self.host_context = contextvars.copy_context()
 
     def complete(self, messages, *, model):
@@ -192,6 +194,15 @@ class Client:
                             content=[TextSegment(text=entry.text), *self.images]
                         )
                         break
+            child = self.background.owners.get(agent) if self.background is not None else None
+            session = getattr(self.tree, "session", None)
+            ledger = getattr(session, "steering", None)
+            root = child is None and getattr(self.tree, "backend_agents", {}).get(agent, {}).get("depth", 0) == 0
+            if waiting := self.activity_waits.pop(agent, None):
+                subscriptions, request = waiting
+                outcome = await subscriptions.wait_for_change(
+                    request, lambda: ledger is not None and bool(ledger.context(agent, root=root, child=child)[1]))
+                entries.append(HumanEntry(content="Activity wait ended: " + json.dumps(outcome)))
             tracer = getattr(self.tree, "tracer", None)
             policy = getattr(self.tree, "policy", None)
             limit = getattr(policy, "agent_max_tokens", None)
@@ -200,37 +211,26 @@ class Client:
                 if spent >= limit:
                     raise RuntimeError(f"agent {agent} reached its limit of {limit} "
                                        "completion tokens")
-            child = self.background.owners.get(agent) if self.background is not None else None
             call = tracer.begin(agent, model, child=child) if tracer is not None else None
             if tracer is not None:
                 def close_unfinished(task):
                     if call in tracer._open:
                         tracer.end(call, None, "aborted" if task.cancelled() else "error")
                 asyncio.current_task().add_done_callback(close_unfinished)
-            session = getattr(self.tree, "session", None)
-            ledger = getattr(session, "steering", None)
             pending_steering = []
             if ledger is not None:
-                metadata = getattr(self.tree, "backend_agents", {}).get(agent, {})
-                text, pending_steering = ledger.context(
-                    agent, root=child is None and metadata.get("depth", 0) == 0, child=child,
-                )
+                text, pending_steering = ledger.context(agent, root=root, child=child)
                 if text:
                     entries.append(HumanEntry(content="Steering instructions:\n" + text))
             from rlmagent.agents.trace import correlated
             from rlmagent.model.deadline import bounded_stream
 
-            def start():
-                return self.provider.stream_response(
-                    model=model, system=system, messages=entries, tools=[], signal=self.signal,
-                    cache_key=(str(getattr(session, "session_id", "run")) + ":" + (
-                        "root" if getattr(self.tree, "backend_agents", {}).get(agent, {}).get("depth", 0) == 0 else agent)),
-                )
-
+            arguments = dict(model=model, system=system, messages=entries, tools=[], signal=self.signal,
+                cache_key=str(getattr(session, "session_id", "run")) + ":" + (
+                    "root" if getattr(self.tree, "backend_agents", {}).get(agent, {}).get("depth", 0) == 0 else agent))
             budget = getattr(getattr(self.tree, "allowance", None), "new_token_budget", None)
-            stream = (self.tree.provider.measured_stream(
-                          model, start, self.tree.provider.request_size(system, entries))
-                      if budget is not None else start())
+            stream = (self.tree.provider.model_stream(self.provider, **arguments)
+                      if budget is not None else self.provider.stream_response(**arguments))
             async for event in correlated(bounded_stream(stream, model,
                     getattr(self.tree, "request_timeout", 300.0)), call, tracer):
                 if isinstance(event, StreamFaultEvent):
@@ -335,12 +335,15 @@ class BackendProvider:
     def function_names(self) -> list[str]:
         """The names a cell can call, without starting a run."""
         fixed = {"FINAL", "capabilities", "rlm", "gather_rlm", "spawn", "children", "tell_parent",
-                 "name_child", "find_child", "child_info", "steer_child"}
+                 "name_child", "find_child", "child_info", "steer_child", "child_messages",
+                 "read_child_message", "child_delivery_receipt"}
         optional = {"fetch_url", "guidance", "improve", "playbook"}
         workspace = Workspace(self.tree.cwd, self.tree.approver).functions()
         extended = getattr(self.tree, "extension_functions", {})
         builtin = getattr(self.tree, "host_functions", {})
         optional |= set(workspace) | set(extended) | set(builtin)
+        if hasattr(getattr(getattr(self.tree, "session", None), "jobs", None), "subscriptions"):
+            optional.update(("wait_for_activity", "watch_child"))
         policy = getattr(self.tree, "policy", None)
         if policy is not None:
             optional = {name for name in optional if policy.allows_tool(name)}
@@ -399,6 +402,7 @@ class BackendProvider:
             updates = queue.Queue()
             context = threading.local()
             accounting = []
+            activity_waits = {}
             runtimes = []
             self.active = (None, runtimes)
 
@@ -453,7 +457,7 @@ class BackendProvider:
                                        "child_id": child_id,
                                        "name": self.background.names.get(child_id)})
 
-                def wrap(fn):
+                def wrap(fn, *, record_result=True):
                     def call(*args, **kw):
                         async def invoke():
                             from rlmagent.agents.approval import Refused
@@ -462,14 +466,9 @@ class BackendProvider:
                                 value = await fn(*args, **kw)
                             except (Refused, OSError, ValueError, UnicodeError) as error:
                                 value = f"Error: {error}"
-                            self.record_event(
-                                {
-                                    "kind": "host_result",
-                                    "run_id": agent,
-                                    "tool": fn.__name__,
-                                    "result": value,
-                                }
-                            )
+                            if record_result:
+                                self.record_event({"kind": "host_result", "run_id": agent,
+                                                   "tool": fn.__name__, "result": value})
                             return value
 
                         future = host_context.copy().run(
@@ -535,18 +534,52 @@ class BackendProvider:
                 async def capabilities():
                     names = {name for name in joined if not name.startswith("_")}
                     if "_spawn" in joined:
-                        names |= {"spawn", "children", "name_child", "find_child", "child_info", "steer_child"}
+                        names |= {"spawn", "children", "name_child", "find_child", "child_info",
+                                  "steer_child", "child_messages", "read_child_message", "child_delivery_receipt"}
+                        if watch_child_available:
+                            names.add("watch_child")
                     return {
                         "functions": sorted(names | {tool.name for tool in tools} | {"FINAL"}),
                         **limits_of(tree),
                     }
 
+                jobs = getattr(getattr(tree, "session", None), "jobs", None)
+                if jobs is not None and hasattr(jobs, "subscriptions"):
+                    jobs.child_snapshot = self.background.watch_snapshot
+                    watch_owner = self.background.owners.get(agent, agent)
+                    joined.update({name: wrap(fn) for name, fn in jobs.subscriptions.functions(owner=watch_owner).items()})
+
+                    async def wait_for_activity(watch_id=None, timeout=60.0):
+                        """Park at the next model boundary. Call as the last action in a cell."""
+                        subscriptions = jobs.subscriptions
+                        request = subscriptions.prepare_wait(watch_id, timeout, owner=watch_owner)
+                        activity_waits[agent] = subscriptions, request
+                        return True
+
+                    async def activity_wait_status():
+                        waiting = activity_waits.get(agent)
+                        if waiting is None:
+                            return {"event": "cancelled"}
+                        subscriptions, request = waiting
+                        child = self.background.owners.get(agent)
+                        session = getattr(tree, "session", None)
+                        ledger = getattr(session, "steering", None)
+                        depth = getattr(tree, "backend_agents", {}).get(agent, {}).get("depth", 0)
+                        status = subscriptions.wait_status(request, lambda: ledger is not None and bool(
+                            ledger.context(agent, root=child is None and depth == 0, child=child)[1]))
+                        if "event" in status:
+                            activity_waits.pop(agent, None)
+                        return status
+
+                    joined["wait_for_activity"] = wrap(wait_for_activity)
                 joined["guidance"] = wrap(guidance)
                 joined["capabilities"] = wrap(capabilities)
                 joined.update(
                     playbook=wrap(playbook), improve=wrap(improve), fetch_url=wrap(fetch_url)
                 )
                 policy = getattr(tree, "policy", None)
+                watch_child_available = (hasattr(jobs, "subscriptions") and
+                                         (policy is None or policy.allows_tool("watch_child")))
                 if policy is not None:
                     joined = {name: fn for name, fn in joined.items()
                               if name in bridges or name == "capabilities" or policy.allows_tool(name)}
@@ -563,7 +596,8 @@ class BackendProvider:
                 if "_spawn" in bridges:
                     from rlmagent.agents.child_handles import HELPERS
 
-                    async def child_registry(action, key=None, name=None, text=None, message_id=None):
+                    async def child_registry(action, key=None, name=None, text=None, message_id=None,
+                                             identity=None, unread_only=True):
                         background = self.background
                         parent = background.owners.get(agent, agent)
                         if not node_prepare and parent not in background.saved:
@@ -573,8 +607,13 @@ class BackendProvider:
                         for attempt in range(40):
                             try:
                                 with background.lock:
-                                    operation = "info" if action == "steer" else action
-                                    info = background.child_handle(parent, operation, key, name)
+                                    operation = "info" if action in ("steer", "watch") else action
+                                    info = background.child_handle(parent, operation, key, name,
+                                                                   identity=identity, unread_only=unread_only)
+                                    if action == "watch":
+                                        if not watch_child_available or not info["keep"]:
+                                            raise ValueError("child watches require a kept child and permission to watch")
+                                        return jobs.subscriptions.watch_child(key, parent)
                                     ledger = background.steering
                                     if action == "steer":
                                         if ledger is None:
@@ -608,7 +647,15 @@ class BackendProvider:
                         "    return result\n"
                         "def _child_handle(key):\n"
                         "    return _AgentHandle(key)\n"
-                    ) + HELPERS
+                    ) + HELPERS + (
+                        "\nasync def child_delivery_receipt(handle, message_id):\n"
+                        "    return await _child_operation('delivery', handle.id, identity=message_id)\n"
+                    )
+                    if watch_child_available:
+                        startup += (
+                            "async def watch_child(handle):\n"
+                            "    return await _child_operation('watch', handle.id)\n"
+                        )
                 if node_prepare:
                     from rlmagent.hints import EMPTY_CELL, _RULES
                     from rlmagent.policy import DEFAULT_OUTPUT_BYTES
@@ -616,8 +663,13 @@ class BackendProvider:
                     if tree.network:
                         from rlmagent.agents.wasm_api import NETWORK
                         startup += "\n" + NETWORK
+                    activity = None
+                    if "wait_for_activity" in joined:
+                        activity = {"schedule": "wait_for_activity", "status": "_activity_wait_status"}
+                        joined[activity["status"]] = wrap(activity_wait_status, record_result=False)
                     return {
                         "host_functions": {key: value for key, value in joined.items() if value is not None},
+                        "activity_wait": activity,
                         "startup": startup,
                         "cell_policy": {
                             "maxOutputBytes": getattr(workspace.policy, "max_tool_output_bytes",
@@ -738,7 +790,9 @@ class BackendProvider:
                     "Long commands: await job_start(cmd) then job_read(id, cursor), "
                     "job_wait(id), job_stop(id); await service_start(name, cmd, ready=regex) "
                     "for servers; await watch(job=id | path=p | messages=True) waits for a "
-                    "change. await history(start, end, agent=None) reads the full record "
+                    "change. Durable watches use watch_start, watch_events and watch_read. "
+                    "End a cell with await wait_for_activity(watch_id) to park the next model request. "
+                    "Await history(start, end, agent=None) to read the full record "
                     "after compaction. "
                     "When the user set a goal, await goal() shows it and "
                     "await goal_done(summary) marks it achieved. "
@@ -768,6 +822,7 @@ class BackendProvider:
                         accounting,
                         self.record_event,
                         images=images,
+                        activity_waits=activity_waits,
                     ),
                     config=config,
                     instruction=instruction,

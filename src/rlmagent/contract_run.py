@@ -69,7 +69,7 @@ async def build_contract_session(c: Contract, *, provider=None, engine="session"
     allowance = ContractAllowance(
         max_depth=lim.max_depth, max_calls=lim.max_calls, max_cost=lim.max_cost,
         max_live=lim.max_live, max_seconds=lim.max_seconds,
-        new_token_budget=(NewTokenBudget(lim.max_new_tokens)
+        new_token_budget=(NewTokenBudget(lim.max_new_tokens, strict=lim.strict_new_tokens)
                           if lim.max_new_tokens is not None else None),
     )
 
@@ -169,6 +169,7 @@ async def build_contract_session(c: Contract, *, provider=None, engine="session"
                             lambda command: git_refusal(command, tree.policy),
                             shell_access=tree.policy.shell_access,
                             shell_network=tree.policy.shell_network)
+        session.jobs.subscriptions.start()
         tree.host_functions = {
             **session.jobs.functions(),
             "history": make_history(lambda: getattr(getattr(session, "_vault", None), "path", None),

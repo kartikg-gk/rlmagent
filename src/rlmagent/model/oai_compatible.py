@@ -25,6 +25,7 @@ from rlmagent.model._oai.parsers import ChatDecoder, ParseFault, ResponsesDecode
 from rlmagent.model._oai.payloads import build_chat_payload, build_responses_payload
 from rlmagent.model._oai.transport import HttpStreamError, MalformedPayload, open_event_stream
 from rlmagent.model.settings import Credential, OpenAIProfile, ReasoningPolicy
+from rlmagent.model.token_bounds import TokenBoundError, TokenReservation
 from rlmagent.model.transport.backoff import build_retry_event, compute_delay, pause_for_retry
 from rlmagent.model.transport.client import build_async_client
 from rlmagent.model.transport.faults import format_http_error
@@ -106,6 +107,44 @@ class OpenAIProvider:
             cache_key=cache_key,
         )
 
+    async def prepare_token_request(self, *, model, system, messages, tools, remaining,
+                                    signal=None, cache_key=None):
+        if self._profile.name == "codex":
+            raise TokenBoundError("Codex subscription does not accept a provider-enforced output cap")
+        if self._profile.name != "openai" or self._profile.transport != "http":
+            raise TokenBoundError("strict token reservations require first-party Responses over HTTP")
+        cred = await self._resolve_credential()
+        base = cred.base_url.rstrip("/")
+        if base != "https://api.openai.com/v1" or (self._profile.endpoint or pick_endpoint(model, base)) != "responses":
+            raise TokenBoundError("strict token reservations require the first-party Responses endpoint")
+        payload = self._responses_payload(model, system, messages, tools)
+        counted = {key: value for key, value in payload.items() if key != "stream"}
+        try:
+            response = await self._client.post(f"{base}/responses/input_tokens", json=counted,
+                                               headers=self._build_headers(cred))
+            response.raise_for_status()
+            result = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise TokenBoundError("Responses did not supply an input token count") from exc
+        count = result.get("input_tokens") if isinstance(result, dict) else None
+        if type(count) is not int or count < 0:
+            raise TokenBoundError("Responses returned an invalid input token count")
+        output = min(8192, remaining - count)
+        if output < 16:
+            raise TokenBoundError(f"{count} input tokens leave less than 16 tokens for a reply")
+        payload.update(max_output_tokens=output, store=False)
+
+        def start():
+            return self._stream(model=model, system=system, messages=messages, tools=tools,
+                                signal=signal, cache_key=cache_key, prepared=(cred, payload))
+
+        return TokenReservation(count, output, start)
+
+    def _responses_payload(self, model, system, messages, tools):
+        reasoning = build_reasoning_extra(self._profile.reasoning, model=model, endpoint="responses")
+        return build_responses_payload(model=model, system=system, messages=messages,
+                                       tools=tools, extra=reasoning or None)
+
     # --- internals ----------------------------------------------------------
 
     async def _resolve_credential(self) -> Credential:
@@ -134,28 +173,21 @@ class OpenAIProvider:
         tools: Sequence[ToolSpec],
         signal: CancelToken | None,
         cache_key: str | None = None,
+        prepared=None,
     ) -> AsyncIterator[WireEvent]:
         """Execute the streaming request with retry and normalisation."""
         self.served_by = None
         self.last_failure_status = None
-        cred = await self._resolve_credential()
+        cred = prepared[0] if prepared is not None else await self._resolve_credential()
         base_url = cred.base_url.rstrip("/")
-        endpoint = self._profile.endpoint or pick_endpoint(model, base_url)
-        reasoning_extra = build_reasoning_extra(
-            self._profile.reasoning, model=model, endpoint=endpoint,
-        )
+        endpoint = "responses" if prepared is not None else self._profile.endpoint or pick_endpoint(model, base_url)
 
         if endpoint == "responses":
             url = f"{base_url}/responses"
-            payload = build_responses_payload(
-                model=model,
-                system=system,
-                messages=messages,
-                tools=tools,
-                extra=reasoning_extra or None,
-            )
+            payload = prepared[1] if prepared is not None else self._responses_payload(model, system, messages, tools)
         else:
             url = f"{base_url}/chat/completions"
+            reasoning_extra = build_reasoning_extra(self._profile.reasoning, model=model, endpoint=endpoint)
             payload = build_chat_payload(
                 model=model,
                 system=system,
@@ -173,6 +205,8 @@ class OpenAIProvider:
             payload["prompt_cache_key"] = routing_key
 
         retry = self._profile.retry
+        if prepared is not None:
+            retry = replace(retry, max_retries=0)
         max_attempts = retry.max_retries + 1
         # One key per logical call, kept across its retries, so a proxy in
         # front of the provider can drop a duplicate of a request it served.
