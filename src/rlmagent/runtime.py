@@ -552,6 +552,8 @@ def git_branch(cwd: str | None = None) -> str | None:
             capture_output=True,
             text=True,
             timeout=2,
+            encoding="utf-8",
+            errors="replace",
         )
     except (OSError, subprocess.SubprocessError):
         return None

@@ -37,6 +37,8 @@ class ApplicationCredentials:
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=20,
             )
             if result.returncode != 0 or not result.stdout.strip():

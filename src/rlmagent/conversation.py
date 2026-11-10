@@ -744,13 +744,17 @@ class CodingSession:
                 return True
         return False
 
+    def _why_no_undo(self, what: str) -> str:
+        reason = getattr(self.shadow, "reason", "") if self.shadow is not None else ""
+        return reason.replace("Undo", what, 1) if reason else f"{what} needs git on PATH."
+
     async def _cmd_diff(self, arg: str) -> str:
         arg = arg.strip()
         if arg not in ("", "last", "stat", "last stat"):
             return "Usage: /diff [last | stat]"
         if not self._undo_stack:
             ready = self.shadow is not None and self.shadow.available
-            return "Nothing has changed yet." if ready else "Diff needs git on PATH."
+            return "Nothing has changed yet." if ready else self._why_no_undo("Diff")
         commit = self._undo_stack[-1 if arg.startswith("last") else 0][0]
         try:
             text = await asyncio.to_thread(self.shadow.diff, commit, arg.endswith("stat"))
@@ -860,7 +864,7 @@ class CodingSession:
     async def _cmd_undo(self, arg: str) -> str:
         if not self._undo_stack:
             ready = self.shadow is not None and self.shadow.available
-            return "Nothing to undo." if ready else "Undo needs git on PATH."
+            return "Nothing to undo." if ready else self._why_no_undo("Undo")
         if getattr(self, "_undo_problem", None):
             return (f"The last turn has no snapshot ({self._undo_problem}), so undo would "
                     "go back further than you expect. Nothing was changed.")
@@ -1349,6 +1353,8 @@ class CodingSession:
                     stdin=subprocess.DEVNULL,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=timeout,
                 ),
                 timeout=timeout + 5,
