@@ -25,7 +25,7 @@ def _config() -> Check:
                                 "RLM_AGENT_API_KEY") if os.environ.get(n)), None)
         if env:
             return Check("provider", True, f"no saved configuration; {env} is set")
-        return Check("provider", False, "no configuration; run: rlm-agent config")
+        return Check("provider", False, "no configuration; run rlm-agent to pick a provider, or rlm-agent config")
     cfg = load_config()
     has_key = bool(cfg.api_keys.get(cfg.provider or "", ""))
     return Check("provider", bool(cfg.provider),

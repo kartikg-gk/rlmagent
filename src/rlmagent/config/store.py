@@ -152,7 +152,7 @@ def forget_model(provider: str, model: str) -> None:
 
 def config_dir() -> Path:
     """Directory holding rlm-agent's user configuration."""
-    override = os.environ.get("RLM_AGENT_CONFIG_DIR")
+    override = os.environ.get("RLM_AGENT_CONFIG_DIR") or os.environ.get("RLM_AGENT_HOME")
     if override:
         return Path(override)
     return Path.home() / ".rlm-agent"

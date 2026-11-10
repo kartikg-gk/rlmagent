@@ -83,6 +83,10 @@ class RunLogger:
         base = (root or log_root(cwd)) / session_id
         try:
             base.mkdir(parents=True, exist_ok=True)
+            # The logs sit in the user's project; keep them out of its git status.
+            ignore = base.parent / ".gitignore"
+            if not ignore.exists():
+                ignore.write_text("*\n", encoding="utf-8")
         except OSError:
             return None
         logger = cls(session_id=session_id, root=base, provider=provider, model=model)

@@ -22,6 +22,7 @@ node_modules/
 venv/
 __pycache__/
 .rlm-agent/
+.logs/
 .env
 .env.*
 *.pem

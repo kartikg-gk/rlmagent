@@ -92,7 +92,7 @@ def resolve_provider(name: str | None = None) -> ModelProvider:
         raise ConfigError(
             "No provider configured.\n"
             "  Set RLM_AGENT_PROVIDER or export an API key env var.\n"
-            "  Run 'rlm-agent provider setup' for guidance."
+            "  Run 'rlm-agent' to pick a provider and model, or 'rlm-agent config'."
         )
 
     resolved = resolved.strip().lower()
