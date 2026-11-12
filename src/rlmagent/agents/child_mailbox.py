@@ -15,9 +15,9 @@ def record_notes(notes, previous, current):
                     for text in current[len(previous):]]
 
 
-def notes_metadata(notes, unread_only):
+def notes_metadata(notes, new_only):
     return [{k: v for k, v in note.items() if k != "text"}
-            for note in notes if not unread_only or note["status"] == "unread"]
+            for note in notes if not new_only or note["status"] == "unread"]
 
 
 def read_note(notes, identity):

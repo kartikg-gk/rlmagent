@@ -311,7 +311,7 @@ class AgentTree:
                 raise ValueError("child is cancelled")
             ledger = getattr(getattr(self, "session", None), "steering", None)
             if action == "messages":
-                return notes_metadata(rec.notes, args.get("unread_only", True))
+                return notes_metadata(rec.notes, args.get("new_only", True))
             if action == "read_message":
                 rec.notes, note = read_note(rec.notes, args.get("identity"))
                 return note

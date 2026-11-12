@@ -597,7 +597,7 @@ class BackendProvider:
                     from rlmagent.agents.child_handles import HELPERS
 
                     async def child_registry(action, key=None, name=None, text=None, message_id=None,
-                                             identity=None, unread_only=True):
+                                             identity=None, new_only=True):
                         background = self.background
                         parent = background.owners.get(agent, agent)
                         if not node_prepare and parent not in background.saved:
@@ -609,7 +609,7 @@ class BackendProvider:
                                 with background.lock:
                                     operation = "info" if action in ("steer", "watch") else action
                                     info = background.child_handle(parent, operation, key, name,
-                                                                   identity=identity, unread_only=unread_only)
+                                                                   identity=identity, new_only=new_only)
                                     if action == "watch":
                                         if not watch_child_available or not info["keep"]:
                                             raise ValueError("child watches require a kept child and permission to watch")

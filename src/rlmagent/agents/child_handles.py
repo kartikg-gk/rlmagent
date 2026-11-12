@@ -23,9 +23,9 @@ async def child_info(handle):
     """Inspect a child's status, identity and recorded usage without consuming its output."""
     return await _child_operation("info", handle.id)
 
-async def child_messages(handle, unread_only=True):
+async def child_messages(handle, new_only=True):
     """List metadata for child notes without marking them read."""
-    return await _child_operation("messages", handle.id, unread_only=unread_only)
+    return await _child_operation("messages", handle.id, new_only=new_only)
 
 async def read_child_message(handle, message_id):
     """Read a specific note and keep its receipt available for later lookup."""

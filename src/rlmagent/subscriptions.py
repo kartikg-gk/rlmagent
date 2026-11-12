@@ -90,12 +90,12 @@ class Subscriptions:
         self.poll()
         return [self._summary(watch) for watch in self._visible(owner).values()]
 
-    async def watch_events(self, watch_id, unread_only=True, *, owner=None):
+    async def watch_events(self, watch_id, new_only=True, *, owner=None):
         """List event metadata without changing read state."""
         self.poll()
         return [{k: v for k, v in event.items() if k != "change"}
                 for event in self._get(watch_id, owner)["events"]
-                if not unread_only or event["status"] == "unread"]
+                if not new_only or event["status"] == "unread"]
 
     async def watch_read(self, watch_id, event_id, *, owner=None):
         """Read one event by ID. Repeated reads return the same event."""

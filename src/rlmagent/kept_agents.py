@@ -113,7 +113,7 @@ class KeptAgents(Background):
                     "settled": sum(item["status"] not in ("queued", "running")
                                    for item in deliveries.values())}
 
-    def child_handle(self, parent, action, key=None, name=None, *, identity=None, unread_only=True):
+    def child_handle(self, parent, action, key=None, name=None, *, identity=None, new_only=True):
         with self.lock:
             if action in ("name", "find"):
                 name = checked_name(name)
@@ -131,7 +131,7 @@ class KeptAgents(Background):
                 raise ValueError("child is not available to this agent")
             notes = self.notes.get(key, [])
             if action == "messages":
-                return notes_metadata(notes, unread_only)
+                return notes_metadata(notes, new_only)
             if action == "read_message":
                 updated, note = read_note(notes, identity)
                 if updated is not notes:
