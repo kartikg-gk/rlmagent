@@ -289,6 +289,7 @@ async def _build_session(ns: argparse.Namespace, *, session_id: str | None = Non
     session.mcp = hub
     session.agentnet = net
     session.jobs = jobs
+    jobs.subscriptions.start()
     session.remote_tools = getattr(tree, "remote_tools", None)
     session.policy = policy
     built["session"] = session

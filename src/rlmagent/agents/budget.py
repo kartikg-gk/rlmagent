@@ -12,6 +12,7 @@ from rlmness import Allowance, AllowanceSpent, Spend
 from rlmagent.harness.contracts.transcript import ModelEntry, TextSegment
 from rlmagent.harness.contracts.transcript.diagnostics import UsageStats
 from rlmagent.harness.provider.wire import StreamCloseEvent, StreamFaultEvent
+from rlmagent.model.token_bounds import TokenBoundError, TokenReservation
 
 
 def to_spend(usage: UsageStats) -> Spend:
@@ -29,8 +30,7 @@ def to_spend(usage: UsageStats) -> Spend:
 
 REFUSED = "budget reached"
 
-#: Characters per token assumed when sizing a request before it is sent. Lower
-#: than any tokenizer's real average, so the estimate errs high.
+#: A heuristic for advisory sizing. Token density varies by model and input.
 CHARS_PER_TOKEN = 3
 #: Reply tokens assumed when the provider's own reply limit cannot be read.
 DEFAULT_REPLY_TOKENS = 8192
@@ -51,7 +51,7 @@ def _text_of(value) -> str:
 
 
 def estimate_prompt_tokens(system, messages) -> int:
-    """An upper estimate of a request's prompt, all of it counted as uncached."""
+    """Estimate the prompt for advisory sizing, treating it as uncached."""
     chars = len(_text_of(system)) + sum(len(_text_of(m)) for m in messages or ())
     return chars // CHARS_PER_TOKEN + 1
 
@@ -72,8 +72,9 @@ def reply_limit(provider) -> int:
 class NewTokenBudget:
     """Reserve the unmeasured balance for one provider request at a time."""
 
-    def __init__(self, limit: int) -> None:
+    def __init__(self, limit: int, *, strict: bool = False) -> None:
         self.limit = limit
+        self.strict = strict
         self.used = 0
         self.unmeasured = False
         self.lock = asyncio.Lock()
@@ -112,11 +113,20 @@ class BudgetedProvider:
         return getattr(self.inner, name)
 
     def stream_response(self, *, model, **kwargs) -> AsyncIterator:
-        if getattr(self.allowance, "new_token_budget", None) is None:
-            return self._reserved_stream(model=model, **kwargs)
-        upcoming = self.request_size(kwargs.get("system"), kwargs.get("messages"))
-        return self.measured_stream(model, lambda: self._reserved_stream(model=model, **kwargs),
-                                    upcoming)
+        return self.model_stream(self.inner, model=model, reserve=True, **kwargs)
+
+    def model_stream(self, provider, *, model, reserve=False, **kwargs) -> AsyncIterator:
+        budget = getattr(self.allowance, "new_token_budget", None)
+
+        def request():
+            return provider.stream_response(model=model, **kwargs)
+
+        def start(factory=request):
+            return self._reserved_stream(model, factory) if reserve else factory()
+
+        if budget is None:
+            return start()
+        return self.measured_stream(provider, model, kwargs, start)
 
     def request_size(self, system, messages) -> int:
         """Estimated new tokens of a request: its whole prompt plus the longest reply."""
@@ -128,27 +138,57 @@ class BudgetedProvider:
                            error_message=f"{REFUSED}: {message}", usage=usage)
         return StreamFaultEvent(reason="error", error=entry)
 
-    async def measured_stream(self, model, start, upcoming: int = 0) -> AsyncIterator:
+    async def _token_plan(self, provider, model, kwargs, budget):
+        from rlmagent.model.external import is_external
+
+        prepare = getattr(provider, "prepare_token_request", None)
+        if is_external(model) or prepare is None:
+            raise TokenBoundError("this route has no verified input counter and provider-enforced reply cap")
+        plan = await prepare(model=model, remaining=budget.limit - budget.used, **kwargs)
+        if (not isinstance(plan, TokenReservation) or type(plan.input_tokens) is not int
+                or type(plan.output_tokens) is not int or plan.input_tokens < 0
+                or plan.output_tokens <= 0 or not callable(plan.start)
+                or plan.input_tokens + plan.output_tokens > budget.limit - budget.used):
+            raise TokenBoundError("provider did not establish a reservation within the remaining token budget")
+        return plan
+
+    async def measured_stream(self, provider, model, kwargs, start) -> AsyncIterator:
         budget = self.allowance.new_token_budget
         terminal = None
         async with budget.lock:
-            if (reason := budget.refusal(upcoming)) is not None:
+            plan = None
+            upcoming = 0 if budget.strict else self.request_size(kwargs.get("system"), kwargs.get("messages"))
+            reason = budget.refusal(upcoming)
+            if reason is None and budget.strict:
+                try:
+                    plan = await self._token_plan(provider, model, kwargs, budget)
+                except TokenBoundError as exc:
+                    reason = str(exc)
+            if reason is not None:
                 terminal = self._refuse(model, reason)
             else:
                 settled = False
                 try:
-                    async with aclosing(start()) as stream:
+                    async with aclosing(start(plan.start) if plan else start()) as stream:
                         async for event in stream:
                             if isinstance(event, StreamCloseEvent):
                                 budget.settle(event.message.usage)
                                 settled = True
                                 terminal = event
-                                if budget.used > budget.limit:
-                                    terminal = self._refuse(model, budget.refusal(), event.message.usage)
+                                usage = event.message.usage
+                                if plan and (budget.unmeasured or usage.output > plan.output_tokens
+                                        or max(usage.input + usage.cache_read + usage.cache_write,
+                                               usage.total_tokens - usage.output) > plan.input_tokens):
+                                    budget.unmeasured = True
+                                    terminal = self._refuse(model, "provider usage did not match the strict reservation", usage)
+                                elif budget.used > budget.limit:
+                                    terminal = self._refuse(model, budget.refusal(), usage)
                                 break
                             if isinstance(event, StreamFaultEvent):
                                 if not (event.error.error_message or "").startswith(REFUSED):
                                     budget.settle(event.error.usage)
+                                    if plan:
+                                        budget.unmeasured = True
                                 settled = True
                                 terminal = event
                                 break
@@ -159,16 +199,14 @@ class BudgetedProvider:
         if terminal is not None:
             yield terminal
 
-    async def _reserved_stream(self, *, model, system, messages, tools, signal=None, **extra) -> AsyncIterator:
+    async def _reserved_stream(self, model, start) -> AsyncIterator:
         try:
             self.allowance.reserve()
         except AllowanceSpent as exc:
             # No allowance.cancel(): later calls would say "abandoned", not the limit.
             yield self._refuse(model, str(exc))
             return
-        async for event in self.inner.stream_response(
-            model=model, system=system, messages=messages, tools=tools, signal=signal, **extra
-        ):
+        async for event in start():
             if isinstance(event, StreamCloseEvent):
                 self.allowance.settle(to_spend(event.message.usage))
             yield event

@@ -23,6 +23,14 @@ async def child_info(handle):
     """Inspect a child's status, identity and recorded usage without consuming its output."""
     return await _child_operation("info", handle.id)
 
+async def child_messages(handle, unread_only=True):
+    """List metadata for child notes without marking them read."""
+    return await _child_operation("messages", handle.id, unread_only=unread_only)
+
+async def read_child_message(handle, message_id):
+    """Read a specific note and keep its receipt available for later lookup."""
+    return await _child_operation("read_message", handle.id, identity=message_id)
+
 async def steer_child(handle, text, message_id=None):
     """Deliver an instruction at an active child's next model request."""
     return await _child_operation("steer", handle.id, text=text, message_id=message_id)

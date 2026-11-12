@@ -297,3 +297,177 @@ async def test_node_shapes_multibyte_cell_output_and_recognised_errors(tmp_path)
         assert "�" not in observed and "Hint: The module is not installed" in observed
     finally:
         await backend.close()
+
+
+async def test_node_waits_between_cells_before_next_provider_request(tmp_path, monkeypatch):
+    from rlmagent.jobs import Jobs
+
+    monkeypatch.setattr("rlmagent.subscriptions.POLL_SECONDS", 0.01)
+    jobs = Jobs(str(tmp_path), tmp_path / "jobs")
+    model = ReplayProvider([
+        text_turn("```python\nwatcher = await watch_start(path='wake.txt')\n"
+                  "await wait_for_activity(watcher['id'], timeout=10)\n```"),
+        text_turn("```python\nFINAL('resumed')\n```"),
+    ])
+    tree = SimpleNamespace(cwd=str(tmp_path), approver=Approver("auto"), network=False,
+        kernel_kind="wasm", recursive_engine="node", cell_timeout=30,
+        allowance=Allowance(max_calls=4, max_cost=2), session=SimpleNamespace(jobs=jobs),
+        host_functions=jobs.functions())
+    backend = BackendProvider(model, model, tree)
+
+    async def run():
+        return [event async for event in backend.stream_response(model="fixture", system="base",
+            messages=[HumanEntry(content="wait for a workspace change")],
+            tools=[SimpleNamespace(name="python")])]
+
+    turn = asyncio.create_task(run())
+    try:
+        async with asyncio.timeout(20):
+            while not any(row.get("tool") == "wait_for_activity" for row in backend.events):
+                if turn.done():
+                    pytest.fail(f"backend completed before requesting wait: {turn.result()}")
+                await asyncio.sleep(0.02)
+        await asyncio.sleep(0.05)
+        assert len(model.calls) == 1
+        (tmp_path / "wake.txt").write_text("wake", encoding="utf-8")
+        events = await asyncio.wait_for(turn, 15)
+        assert events[-1].message.text == "resumed"
+        assert len(model.calls) == 2
+        watch, = await jobs.subscriptions.watch_list()
+        assert watch["unread"] == 1
+    finally:
+        if not turn.done():
+            turn.cancel()
+            await asyncio.gather(turn, return_exceptions=True)
+        await backend.close()
+        await jobs.close()
+
+
+async def test_node_reads_kept_child_receipt_after_reopen(tmp_path):
+    from rlmness.session import Session
+    from rlmagent.jobs import Jobs
+
+    state = tmp_path / "backend.json"
+
+    async def solve_steps(steps):
+        model = ReplayProvider([text_turn("```python\n" + step + "\n```") for step in steps])
+        jobs = Jobs(str(tmp_path), tmp_path / "jobs")
+        tree = SimpleNamespace(cwd=str(tmp_path), approver=Approver("auto"), network=False,
+            kernel_kind="wasm", recursive_engine="node", cell_timeout=30,
+            allowance=Allowance(max_calls=6, max_cost=2), session=SimpleNamespace(jobs=jobs),
+            host_functions=jobs.functions())
+        backend = BackendProvider(model, model, tree)
+        backend.state = Session.load(state)
+        try:
+            events = [event async for event in backend.stream_response(model="fixture", system="base",
+                messages=[HumanEntry(content="get a child note")],
+                tools=[SimpleNamespace(name="python")])]
+            assert events[-1].type == "done", events[-1]
+            return events[-1].message.text
+        finally:
+            await backend.close()
+            await jobs.close()
+
+    ids = await solve_steps([
+        "h = await spawn('report', keep=True)\nawait name_child(h, 'reporter')\n"
+        "await h.result(10)\nw = await watch_child(h)\n"
+        "sent = await h.send('follow-up')\nawait h.result(10)\n"
+        "assert (await child_delivery_receipt(h, sent))['status'] == 'done'\n"
+        "rows = await child_messages(h)\nevents = await watch_events(w['id'])\n"
+        "FINAL('|'.join([rows[0]['id'], w['id'], events[-1]['id']]))",
+        "await tell_parent('ready')\nFINAL('done')",
+        "assert not await watch_list()\nawait tell_parent('follow-up finished')\nFINAL('done')",
+    ])
+    identity, watch_id, event_id = ids.split('|')
+    assert len(identity) == 32
+    assert await solve_steps([
+        "h = await find_child('reporter')\n"
+        f"note = await read_child_message(h, {identity!r})\n"
+        "assert note['status'] == 'read' and len(await child_messages(h)) == 1\n"
+        f"event = await watch_read({watch_id!r}, {event_id!r})\n"
+        "assert event['status'] == 'read' and event['change']['notes'] == 2\n"
+        "FINAL(note['text'])",
+    ]) == "ready"
+
+
+async def test_parked_batch_child_releases_the_only_fanout_slot(tmp_path, monkeypatch):
+    from rlmagent import backend as backend_module
+    from rlmagent.jobs import Jobs
+
+    config = backend_module.Config
+    monkeypatch.setattr(backend_module, "Config", lambda **kwargs: config(max_concurrent=1, **kwargs))
+    monkeypatch.setattr("rlmagent.subscriptions.POLL_SECONDS", 0.01)
+    jobs = Jobs(str(tmp_path), tmp_path / "jobs")
+    model = ReplayProvider([
+        text_turn("```python\nresults = await gather_rlm(['waiter', 'writer'])\n"
+                  "FINAL('|'.join(results))\n```"),
+        text_turn("```python\nassert PROMPT == 'waiter'\n"
+                  "w = await watch_start(path='signal.txt')\n"
+                  "assert await wait_for_activity(w['id'], timeout=60)\n```"),
+        text_turn("```python\nassert PROMPT == 'writer'\n"
+                  "await write_file('signal.txt', 'ready')\nFINAL(PROMPT)\n```"),
+        text_turn("```python\nassert PROMPT == 'waiter'\n"
+                  "assert await read_file('signal.txt') == 'ready'\nFINAL(PROMPT)\n```"),
+    ])
+    tree = SimpleNamespace(cwd=str(tmp_path), approver=Approver("auto"), network=False,
+        kernel_kind="wasm", recursive_engine="node", cell_timeout=30,
+        allowance=Allowance(max_calls=8, max_live=1, max_cost=2),
+        session=SimpleNamespace(jobs=jobs), host_functions=jobs.functions())
+    backend = BackendProvider(model, model, tree)
+    try:
+        async with asyncio.timeout(30):
+            events = [event async for event in backend.stream_response(model="fixture", system="base",
+                messages=[HumanEntry(content="run a waiting child and a writer")],
+                tools=[SimpleNamespace(name="python")])]
+        assert events[-1].type == "done", "\n".join(str(row) for row in backend.events
+            if row.get("error") or row["kind"] in ("child_status", "host_result", "run_failed"))
+        assert events[-1].message.text == "waiter|writer"
+        rows = backend.events
+        parked = next(i for i, row in enumerate(rows) if row.get("status") == "waiting")
+        wrote = next(i for i, row in enumerate(rows) if row.get("tool") == "write_file")
+        resumed = next(i for i, row in enumerate(rows) if row.get("kind") == "child_status"
+                       and row.get("status") == "running" and row["run_id"] == rows[parked]["run_id"])
+        assert parked < wrote < resumed
+        assert len(model.calls) == 4
+    finally:
+        await backend.close()
+        await jobs.close()
+
+
+async def test_failed_batch_cancels_parked_and_queued_children(tmp_path, monkeypatch):
+    from rlmagent import backend as backend_module
+    from rlmagent.harness.contracts.transcript import ModelEntry
+    from rlmagent.harness.provider.wire import StreamFaultEvent
+    from rlmagent.jobs import Jobs
+
+    config = backend_module.Config
+    monkeypatch.setattr(backend_module, "Config", lambda **kwargs: config(max_concurrent=1, **kwargs))
+    jobs = Jobs(str(tmp_path), tmp_path / "jobs")
+    model = ReplayProvider([
+        text_turn("```python\ntry:\n    await gather_rlm(['waiter', 'failure', 'queued'])\n"
+                  "except RuntimeError as error:\n    FINAL(str(error))\n```"),
+        text_turn("```python\nawait wait_for_activity(timeout=60)\n```"),
+        [StreamFaultEvent(reason="error", error=ModelEntry(
+            stop_reason="error", error_message="fixture sibling failed"))],
+    ])
+    tree = SimpleNamespace(cwd=str(tmp_path), approver=Approver("auto"), network=False,
+        kernel_kind="wasm", recursive_engine="node", cell_timeout=30,
+        allowance=Allowance(max_calls=8, max_live=1, max_cost=2),
+        session=SimpleNamespace(jobs=jobs), host_functions=jobs.functions())
+    backend = BackendProvider(model, model, tree)
+    try:
+        async with asyncio.timeout(30):
+            events = [event async for event in backend.stream_response(model="fixture", system="base",
+                messages=[HumanEntry(content="verify that the batch can cancel")],
+                tools=[SimpleNamespace(name="python")])]
+        assert events[-1].type == "done", events[-1]
+        assert "fixture sibling failed" in events[-1].message.text
+        parked, = [row["run_id"] for row in backend.events if row.get("status") == "waiting"]
+        assert any(row["kind"] == "run_failed" and row["run_id"] == parked
+                   and "abandoned" in row["error"] for row in backend.events)
+        assert sum(row["kind"] == "run_started" and row.get("depth") == 1
+                   for row in backend.events) == 2
+        assert len(model.calls) == 3
+    finally:
+        await backend.close()
+        await jobs.close()

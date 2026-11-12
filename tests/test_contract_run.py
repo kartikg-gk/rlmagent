@@ -199,3 +199,54 @@ async def test_a_wasm_contract_runs_sandboxed(tmp_path, monkeypatch):
         assert json.loads(json.dumps(tree.kernel_kind)) == "wasm"
     finally:
         await session.shutdown()
+
+
+async def test_strict_budget_is_shared_by_recursive_node_calls_and_compaction(tmp_path):
+    from rlmagent.harness.contracts.transcript import HumanEntry, ModelEntry, TextSegment
+    from rlmagent.harness.contracts.transcript.diagnostics import UsageStats
+    from rlmagent.kernel.wasm import available
+    from rlmagent.model.token_bounds import TokenReservation
+
+    if not available():
+        pytest.skip("Node and Pyodide are unavailable")
+
+    class CountedFixture(ReplayProvider):
+        def __init__(self, turns):
+            super().__init__(turns)
+            self.balances = []
+
+        async def prepare_token_request(self, *, remaining, **request):
+            self.balances.append(remaining)
+            return TokenReservation(3, min(4, remaining - 3), lambda: self.stream_response(**request))
+
+    turns = [
+        text_turn("```python\nvalue = await rlm('21', instruction='double the input')\nFINAL(value)\n```"),
+        text_turn("```python\nFINAL(int(PROMPT) * 2)\n```"),
+        text_turn("fixture compaction summary"),
+    ]
+    for turn in turns:
+        turn[0].message.usage = UsageStats(input=3, output=2, total_tokens=5)
+    provider = CountedFixture(turns)
+    session = await build_contract_session(
+        _contract(tmp_path, tools=["python"], limits__max_new_tokens=15,
+                  limits__strict_new_tokens=True,
+                  kernel={"kind": "wasm", "approve": "deny", "network": False}),
+        provider=provider, engine="rlmness",
+    )
+    try:
+        async for _ in session.submit("compute through a child"):
+            pass
+        assert session.transcript[-1].text == "42"
+        messages = [message for index in range(12) for message in (
+            HumanEntry(content=f"turn {index}"),
+            ModelEntry(content=[TextSegment(text=f"answer {index}")]))]
+        session.harness.set_messages(messages)
+        summary = await session.compact()
+        assert "fixture compaction summary" in summary.summary
+        assert provider.balances == [15, 10, 5]
+        assert session.agent_tree.allowance.new_token_budget.used == 15
+        async for _ in session.submit("this request cannot start"):
+            pass
+        assert len(provider.calls) == 3
+    finally:
+        await session.shutdown()

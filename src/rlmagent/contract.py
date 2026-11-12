@@ -52,6 +52,7 @@ class Limits:
     cell_timeout: float
     request_timeout: float = 300.0
     max_new_tokens: int | None = None
+    strict_new_tokens: bool = False
 
 
 @dataclass(frozen=True)
@@ -244,12 +245,15 @@ def parse_contract(doc: object) -> Contract:
         raise ContractError("model.name: this native-provider contract requires a native model identifier")
     limit_input = top["limits"]
     if isinstance(limit_input, dict):
-        limit_input = {"request_timeout": 300.0, "max_new_tokens": None, **limit_input}
+        limit_input = {"request_timeout": 300.0, "max_new_tokens": None,
+                       "strict_new_tokens": False, **limit_input}
     lim = _fields(limit_input, "limits", {
         "max_depth": (int,), "max_calls": (int,), "max_cost": (float,), "max_live": (int,),
         "max_agents": (int,), "max_seconds": (float, N), "cell_timeout": (float,),
-        "request_timeout": (float,), "max_new_tokens": (int, N),
+        "request_timeout": (float,), "max_new_tokens": (int, N), "strict_new_tokens": (bool,),
     })
+    if lim["strict_new_tokens"] and lim["max_new_tokens"] is None:
+        raise ContractError("limits.strict_new_tokens: requires max_new_tokens")
     for name, value in lim.items():
         if value is None:
             continue
