@@ -36,6 +36,8 @@ install the matching backend wheel before the application wheel.
 
 ## Run
 
+Run `rlm-agent` in a project folder. The first run opens a page to pick a provider and model; after that it opens the terminal UI. Where a security policy blocks the `rlm-agent` launcher, `python -m rlmagent` runs the same command.
+
 Configure an API provider, or use an installed and authenticated external CLI:
 
 ```sh

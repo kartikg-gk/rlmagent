@@ -323,3 +323,14 @@ async def test_repl_does_not_send_unrun_registered_command_to_model(
     output = captured.out + captured.err
     assert "/login is not available in the line REPL" in output
     assert "Provider produced no assistant message" not in output
+
+
+def test_python_dash_m_runs_the_same_command():
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    src = str(Path(__file__).resolve().parents[1] / "src")
+    done = subprocess.run([sys.executable, "-m", "rlmagent", "--version"], capture_output=True,
+                          text=True, env={**__import__("os").environ, "PYTHONPATH": src}, timeout=60)
+    assert done.returncode == 0 and "rlm-agent" in done.stdout
