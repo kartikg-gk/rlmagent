@@ -1,21 +1,28 @@
-"""Left sidebar — the session switcher."""
+"""Left sidebar — the session switcher, grouped by what each session is doing."""
 
 from __future__ import annotations
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.message import Message
-from rich.markup import escape
-from textual.widgets import Label, ListItem, ListView, Static
+from textual.widgets import Input, Label, ListItem, ListView, Static
 
 from rlmagent.tui.adapter import SessionEntry
+
+#: Section order and headings. Each session sits under exactly one.
+SECTIONS: tuple[tuple[str, str], ...] = (
+    ("running", "Running"),
+    ("idle", "Idle"),
+    ("inactive", "Inactive"),
+)
 
 
 class SessionItem(ListItem):
     """A session row. Identity is carried as an attribute, not a widget id."""
 
     def __init__(self, label: str, session_id: str | None) -> None:
-        super().__init__(Label(label))
+        super().__init__(Label(label, markup=False))
         self.session_id = session_id
 
     @property
@@ -24,11 +31,25 @@ class SessionItem(ListItem):
         return self.session_id is None
 
 
+class SectionHeading(ListItem):
+    """A section title inside the list; it cannot be chosen."""
+
+    def __init__(self, title: str, count: int) -> None:
+        super().__init__(Label(f"{title} ({count})", markup=False), classes="session-heading")
+        self.disabled = True
+
+
 class SessionList(ListView):
-    """Selectable list of sessions, newest first."""
+    """Selectable list of sessions, grouped by status, newest first in each group."""
 
     def __init__(self) -> None:
         super().__init__(id="session-list")
+
+
+def matches(entry: SessionEntry, query: str) -> bool:
+    """Whether *entry* fits a search by title or id, case-insensitively."""
+    query = query.strip().lower()
+    return not query or query in entry.label.lower() or query in entry.session_id.lower()
 
 
 class Sidebar(Vertical):
@@ -46,15 +67,16 @@ class Sidebar(Vertical):
 
     def __init__(self) -> None:
         super().__init__()
-        #: Session ids currently rendered, in order — used to decide whether a
-        #: refresh can update in place instead of rebuilding.
-        self._ids: list[str] = []
+        #: What the list was last built from, so an unchanged refresh only restyles.
+        self._shape: tuple = ()
+        self._entries: list[SessionEntry] = []
         #: Active session id at the last repaint, so the cursor only moves
         #: when the active session actually changes.
         self._active: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Label("Sessions", id="sidebar-title")
+        yield Input(placeholder="search sessions", id="session-search")
         yield SessionList()
         yield Static("", id="task-panel")
 
@@ -65,43 +87,56 @@ class Sidebar(Vertical):
         panel.update("Tasks\n" + "\n".join(lines) if lines else "")
         panel.display = bool(lines)
 
+    @property
+    def query_text(self) -> str:
+        return self.query_one("#session-search", Input).value
+
     async def show(self, entries: list[SessionEntry]) -> None:
         """Repaint the list, highlighting the active session."""
-        listing = self.query_one(SessionList)
-        ids = [e.session_id for e in entries]
-        active = next((e.session_id for e in entries if e.is_active), None)
+        self._entries = list(entries)
+        await self._rebuild()
 
-        if ids == self._ids:
-            self._restyle(listing, entries)
-            # Follow the active session, but only when it actually changed —
-            # otherwise the cursor would be yanked back on every repaint.
+    async def _rebuild(self) -> None:
+        listing = self.query_one(SessionList)
+        query = self.query_text
+        shown = [e for e in self._entries if matches(e, query)]
+        active = next((e.session_id for e in self._entries if e.is_active), None)
+        shape = (query, tuple((e.session_id, e.status) for e in shown))
+
+        if shape == self._shape:
+            self._restyle(listing, shown)
             if active != self._active:
                 self._active = active
-                listing.index = self._active_index(entries)
+                listing.index = self._active_index(listing)
             return
 
-        # Membership actually changed — rebuild. clear() removes children
-        # lazily, so await it or the appends race still-mounted widgets.
+        # clear() removes children lazily, so await it or the appends race
+        # still-mounted widgets.
         await listing.clear()
-        await listing.append(SessionItem("+ New session", None))
-        for entry in entries:
-            await listing.append(
-                SessionItem(self._label_for(entry), entry.session_id)
-            )
-        self._ids = ids
+        if not query:
+            await listing.append(SessionItem("+ New session", None))
+        for status, title in SECTIONS:
+            group = [e for e in shown if e.status == status]
+            if not group:
+                continue
+            await listing.append(SectionHeading(title, len(group)))
+            for entry in group:
+                await listing.append(SessionItem(self._label_for(entry), entry.session_id))
+        if query and not shown:
+            await listing.append(SectionHeading("No match", 0))
+        self._shape = shape
         self._active = active
-        self._restyle(listing, entries)
-        listing.index = self._active_index(entries)
+        self._restyle(listing, shown)
+        listing.index = self._active_index(listing)
 
     @staticmethod
     def _label_for(entry: SessionEntry) -> str:
         marker = "●" if entry.is_active else " "
         return f"{marker} {entry.label}"
 
-    @staticmethod
-    def _active_index(entries: list[SessionEntry]) -> int:
-        for i, entry in enumerate(entries, start=1):
-            if entry.is_active:
+    def _active_index(self, listing: SessionList) -> int:
+        for i, child in enumerate(listing.children):
+            if isinstance(child, SessionItem) and child.has_class("active-session"):
                 return i
         return 0
 
@@ -115,8 +150,21 @@ class Sidebar(Vertical):
             if entry is None:
                 continue
             child.set_class(entry.is_active, "active-session")
-            label = child.query(Label).first()
-            label.update(self._label_for(entry))
+            child.query(Label).first().update(self._label_for(entry))
+
+    async def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "session-search":
+            event.stop()
+            await self._rebuild()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in the search box opens the first match."""
+        if event.input.id != "session-search":
+            return
+        event.stop()
+        first = next((e for e in self._entries if matches(e, event.value)), None)
+        if first is not None and not first.is_active:
+            self.post_message(self.SwitchRequested(first.session_id))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Translate a row activation into an intent message."""
@@ -130,4 +178,4 @@ class Sidebar(Vertical):
             self.post_message(self.SwitchRequested(item.session_id or ""))
 
 
-__all__ = ["SessionItem", "SessionList", "Sidebar"]
+__all__ = ["SECTIONS", "SectionHeading", "SessionItem", "SessionList", "Sidebar", "matches"]

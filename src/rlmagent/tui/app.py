@@ -562,7 +562,7 @@ class RlmAgentApp(App[None]):
         """Repaint the session list from the catalog."""
         if self._bridge is None:
             return
-        await self.screen_stack[0].query_one(Sidebar).show(self._bridge.sessions())
+        await self.screen_stack[0].query_one(Sidebar).show(self._bridge.sessions(busy=self._busy))
 
 
 def needs_setup(ns: argparse.Namespace) -> bool:

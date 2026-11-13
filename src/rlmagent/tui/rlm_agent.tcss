@@ -363,3 +363,43 @@ ModelScreen {
     background: #0a0a0a;
     border-top: solid #1e1e1e;
 }
+
+/* ── session search and sections ─────────────────────────────────── */
+
+#session-search {
+    height: 3;
+    margin: 0 0 1 0;
+    background: #0a0a0a;
+    border: solid #1e1e1e;
+    color: #c8c8c8;
+}
+
+#session-search:focus {
+    border: solid #333333;
+}
+
+#session-list > ListItem.session-heading {
+    padding: 1 1 0 1;
+    color: #5a5a5a;
+    background: #000000;
+}
+
+/* ── session search and sections ─────────────────────────────────── */
+
+#session-search {
+    height: 3;
+    margin: 0 0 1 0;
+    background: #0a0a0a;
+    border: solid #1e1e1e;
+    color: #c8c8c8;
+}
+
+#session-search:focus {
+    border: solid #333333;
+}
+
+#session-list > ListItem.session-heading {
+    padding: 1 1 0 1;
+    color: #5a5a5a;
+    background: #000000;
+}

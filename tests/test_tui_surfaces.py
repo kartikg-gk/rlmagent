@@ -163,3 +163,30 @@ def test_prices_come_only_from_the_listing():
     assert price_label("openrouter", "free/model") == "free"
     assert price_label("openrouter", "no/price") == ""
     assert price_label("anthropic", "anything") == ""
+
+
+@pytest.mark.asyncio
+async def test_sidebar_groups_sessions_and_searches():
+    from rlmagent.tui.adapter import SessionEntry
+    from rlmagent.tui.sidebar import SectionHeading, SessionItem, Sidebar
+
+    entries = [
+        SessionEntry("aaa111", "Fix the parser", 3.0, True, "running"),
+        SessionEntry("bbb222", "Write docs", 2.0, False, "idle"),
+        SessionEntry("ccc333", "Old spike", 1.0, False, "inactive"),
+    ]
+    app = RlmAgentApp()
+    async with app.run_test() as pilot:
+        bar = app.query_one(Sidebar)
+        await bar.show(entries)
+        await pilot.pause()
+        headings = [h.query_one("Label").content for h in bar.query(SectionHeading)]
+        assert [str(h) for h in headings] == ["Running (1)", "Idle (1)", "Inactive (1)"]
+        search = bar.query_one("#session-search")
+        search.value = "docs"
+        await pilot.pause()
+        rows = [i.session_id for i in bar.query(SessionItem)]
+        assert rows == ["bbb222"]
+        search.value = "ccc"
+        await pilot.pause()
+        assert [i.session_id for i in bar.query(SessionItem)] == ["ccc333"]
