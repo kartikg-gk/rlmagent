@@ -101,7 +101,7 @@ _RUNNABLE_COMMANDS: frozenset[str] = frozenset({
     "goal", "autonomous", "btw", "image",
     "export", "help", "model", "name", "plan", "provider", "quit", "reload",
     "refine", "rewind", "session", "shell", "skills", "stats", "system", "think", "tools", "undo",
-    "version", "tier", "fast",
+    "version", "tier", "fast", "update", "share", "logs", "changelog",
 })
 
 _RUNNABLE_COMMAND_TABLE: tuple[tuple[str, str], ...] = tuple(
@@ -744,13 +744,17 @@ class CodingSession:
                 return True
         return False
 
+    def _why_no_undo(self, what: str) -> str:
+        reason = getattr(self.shadow, "reason", "") if self.shadow is not None else ""
+        return reason.replace("Undo", what, 1) if reason else f"{what} needs git on PATH."
+
     async def _cmd_diff(self, arg: str) -> str:
         arg = arg.strip()
         if arg not in ("", "last", "stat", "last stat"):
             return "Usage: /diff [last | stat]"
         if not self._undo_stack:
             ready = self.shadow is not None and self.shadow.available
-            return "Nothing has changed yet." if ready else "Diff needs git on PATH."
+            return "Nothing has changed yet." if ready else self._why_no_undo("Diff")
         commit = self._undo_stack[-1 if arg.startswith("last") else 0][0]
         try:
             text = await asyncio.to_thread(self.shadow.diff, commit, arg.endswith("stat"))
@@ -815,17 +819,123 @@ class CodingSession:
     async def _cmd_btw(self, arg: str) -> str:
         """Answer from the conversation so far; the exchange is not kept in it."""
         question = arg.strip()
+        thread = self.__dict__.setdefault("_btw_thread", [])
+        if question.lower() in ("clear", "new"):
+            thread.clear()
+            return "Side thread cleared."
         if not question:
-            return "Usage: /btw QUESTION"
+            return "Usage: /btw QUESTION (follow-ups remember earlier side questions; /btw clear)"
         recent = "\n".join(f"[{getattr(m, 'role', '?')}] {getattr(m, 'text', '')}"
                            for m in list(self.transcript)[-30:])[-60_000:]
-        prompt = f"Conversation so far:\n{recent}\n\nSide question: {question}"
+        earlier = "".join(f"\nSide question: {q}\nAnswer: {a}\n" for q, a in thread[-6:])
+        prompt = (f"Conversation so far:\n{recent}\n"
+                  + (f"\nEarlier side questions:{earlier}" if earlier else "")
+                  + f"\nSide question: {question}")
         system = ("Answer the user's side question briefly from the conversation. It is not "
                   "part of the task; do not suggest running tools.")
         try:
-            return (await self._utility_completion(prompt, system)).strip() or "(no answer)"
+            answer = (await self._utility_completion(prompt, system)).strip() or "(no answer)"
         except Exception as exc:  # noqa: BLE001 - shown to the user, the session goes on
             return f"Could not answer: {exc}"
+        thread.append((question, answer))
+        del thread[:-6]
+        return answer
+
+    async def _cmd_update(self, arg: str) -> str:
+        """Report the newest release; with ``apply``, install it in the background."""
+        import subprocess
+        import sys
+
+        from rlmagent.cli.main import get_version
+        from rlmagent.cli.update import select_release
+        from rlmagent.model.transport.client import fetch_json
+
+        installed = get_version()
+        if os.environ.get("RLM_AGENT_OFFLINE") == "1":
+            return f"rlm-agent {installed}. Update checks are off in offline mode."
+        try:
+            document = await asyncio.to_thread(
+                fetch_json, "https://pypi.org/pypi/rlmness-cli/json", timeout=15)
+            latest = select_release(document, "stable")
+        except Exception as exc:  # noqa: BLE001 - reported, the session goes on
+            return f"Could not check for updates: {exc}"
+        if latest == installed:
+            return f"rlm-agent {installed} is the newest release."
+        if arg.strip().lower() != "apply":
+            return (f"rlm-agent {latest} is available (installed {installed}). "
+                    "Run /update apply to install it, then restart.")
+        result = await asyncio.to_thread(
+            subprocess.run, [sys.executable, "-m", "rlmagent", "update", "--apply"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+        tail = "\n".join((result.stdout + result.stderr).strip().splitlines()[-8:])
+        if result.returncode != 0:
+            return f"Update failed (exit {result.returncode}):\n{tail}"
+        return f"Installed rlm-agent {latest}. Restart rlm-agent to use it.\n{tail}"
+
+    async def _cmd_share(self, arg: str) -> str:
+        """Preview the unlisted gist; publish only with the previewed SHA-256."""
+        from rlmagent.session_share import prepare, publish
+
+        words = arg.split()
+        body, digest = prepare(self.session_id, await self.export("html"),
+                               await self.export("jsonl"))
+        if words[:1] != ["publish"]:
+            size = sum(len(f["content"]) for f in body["files"].values())
+            return (f"Unlisted gist preview for session {self.session_id}: "
+                    f"{size:,} characters (session.html, session.jsonl). Nothing uploaded.\n"
+                    f"SHA-256: {digest}\n"
+                    "Anyone with the link can read it. To upload: /share publish <SHA-256>")
+        if len(words) != 2:
+            return "Use /share publish SHA256, with the digest the preview showed."
+        try:
+            url = await publish(body, expected_digest=words[1],
+                                token=os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))
+        except ValueError as exc:
+            return str(exc)
+        return f"Shared: {url}"
+
+    def _cmd_logs(self, arg: str) -> str:
+        """The last lines of this session's newest log file."""
+        from rlmagent.logs import log_root
+
+        try:
+            count = max(1, min(int(arg.strip() or 40), 400))
+        except ValueError:
+            return "Use /logs [LINES]."
+        folder = log_root(self.cwd) / str(self.session_id)
+        files = sorted((p for p in folder.glob("*") if p.is_file()),
+                       key=lambda p: p.stat().st_mtime) if folder.is_dir() else []
+        if not files:
+            return f"No logs yet for this session (looked in {folder})."
+        newest = files[-1]
+        try:
+            lines = newest.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError as exc:
+            return f"Could not read {newest}: {exc}"
+        return f"{newest} (last {min(count, len(lines))} of {len(lines)} lines)\n" + "\n".join(lines[-count:])
+
+    async def _cmd_changelog(self, _arg: str) -> str:
+        """Recent releases from the package index, newest first."""
+        from rlmagent.cli.main import get_version
+        from rlmagent.model.transport.client import fetch_json
+
+        if os.environ.get("RLM_AGENT_OFFLINE") == "1":
+            return f"rlm-agent {get_version()}. The release list needs the network."
+        try:
+            document = await asyncio.to_thread(
+                fetch_json, "https://pypi.org/pypi/rlmness-cli/json", timeout=15)
+        except Exception as exc:  # noqa: BLE001
+            return f"Could not fetch releases: {exc}"
+        rows = []
+        for version, files in (document.get("releases") or {}).items():
+            uploaded = min((f.get("upload_time", "") for f in files or []), default="")
+            if uploaded:
+                rows.append((uploaded[:10], version))
+        rows.sort(reverse=True)
+        installed = get_version()
+        lines = [f"{day}  {version}{'  (installed)' if version == installed else ''}"
+                 for day, version in rows[:10]]
+        return "Recent releases:\n" + ("\n".join(lines) or "none listed")
 
     def _cmd_goal(self, arg: str) -> str:
         pilot = getattr(self, "autopilot", None)
@@ -860,7 +970,7 @@ class CodingSession:
     async def _cmd_undo(self, arg: str) -> str:
         if not self._undo_stack:
             ready = self.shadow is not None and self.shadow.available
-            return "Nothing to undo." if ready else "Undo needs git on PATH."
+            return "Nothing to undo." if ready else self._why_no_undo("Undo")
         if getattr(self, "_undo_problem", None):
             return (f"The last turn has no snapshot ({self._undo_problem}), so undo would "
                     "go back further than you expect. Nothing was changed.")
@@ -1120,16 +1230,27 @@ class CodingSession:
             max_chars=_CONTEXT_LIMITS.max_summary_chars,
         )
         summary_text = ""
+        cap = _CONTEXT_LIMITS.max_summary_chars
+        prompt = user_prompt
         for attempt in range(3):
             try:
-                candidate = await self._utility_completion(user_prompt, system_prompt)
+                candidate = await self._utility_completion(prompt, system_prompt)
                 if not candidate.strip():
                     raise ValueError("the summary response was empty")
+                if len(candidate) > cap and attempt < 2:
+                    # Slicing would drop whatever came last, often the most
+                    # recent state. Ask again for a tighter summary instead.
+                    prompt = (
+                        f"{user_prompt}\n\nYour last summary ran to {len(candidate)} "
+                        f"characters; the limit is {cap}. Write it again, shorter, "
+                        "keeping the newest facts and open work."
+                    )
+                    continue
             except ValueError as error:
                 if attempt == 2:
                     raise ValueError("Compaction failed after 3 invalid summaries; history was retained") from error
             else:
-                summary_text = candidate[:_CONTEXT_LIMITS.max_summary_chars]
+                summary_text = candidate[:cap]
                 break
         # The transcript shrinks but the kernel does not: say so, or the
         # model rebuilds variables it still has.
@@ -1298,6 +1419,10 @@ class CodingSession:
             "mcp": self._cmd_mcp,
             "goal": self._cmd_goal,
             "btw": self._cmd_btw,
+            "update": self._cmd_update,
+            "share": self._cmd_share,
+            "logs": self._cmd_logs,
+            "changelog": self._cmd_changelog,
             "image": self._cmd_image,
             "autonomous": self._cmd_autonomous,
             "stats": self._cmd_stats,
@@ -1349,6 +1474,8 @@ class CodingSession:
                     stdin=subprocess.DEVNULL,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=timeout,
                 ),
                 timeout=timeout + 5,

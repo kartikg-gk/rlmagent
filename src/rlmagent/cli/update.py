@@ -103,7 +103,7 @@ def run(argv: list[str]) -> int:
     if args.drain or args.restart_workers:
         parser.error("Worker drain and restart require a managed installation")
     try:
-        package = importlib.metadata.distribution("rlmagent")
+        package = importlib.metadata.distribution("rlmness-cli")
     except importlib.metadata.PackageNotFoundError:
         parser.exit(1, "rlmagent must be installed to update it.\n")
     if package.read_text("direct_url.json"):
@@ -131,7 +131,7 @@ def run(argv: list[str]) -> int:
 
         try:
             latest = select_release(
-                fetch_json("https://pypi.org/pypi/rlmagent/json", timeout=15), args.channel
+                fetch_json("https://pypi.org/pypi/rlmness-cli/json", timeout=15), args.channel
             )
         except ValueError as error:
             parser.exit(1, str(error) + "\n")
@@ -144,16 +144,16 @@ def run(argv: list[str]) -> int:
 
     prefix = Path(sys.prefix)
     if (prefix / "uv-receipt.toml").is_file():
-        command = ["uv", "tool", "upgrade", "rlmagent"]
+        command = ["uv", "tool", "upgrade", "rlmness-cli"]
     elif (prefix / "pipx_metadata.json").is_file():
-        command = ["pipx", "upgrade", "rlmagent"]
+        command = ["pipx", "upgrade", "rlmness-cli"]
     elif (package.read_text("INSTALLER") or "").strip() == "uv":
-        command = ["uv", "pip", "install", "--python", sys.executable, "--upgrade", "rlmagent"]
+        command = ["uv", "pip", "install", "--python", sys.executable, "--upgrade", "rlmness-cli"]
     else:
-        command = [sys.executable, "-m", "pip", "install", "--upgrade", "rlmagent"]
+        command = [sys.executable, "-m", "pip", "install", "--upgrade", "rlmness-cli"]
 
     if target is not None:
-        spec = f"rlmagent=={target}"
+        spec = f"rlmness-cli=={target}"
         if command[:3] == ["uv", "tool", "upgrade"]:
             command = ["uv", "tool", "install", "--force", spec]
         elif command[:2] == ["pipx", "upgrade"]:

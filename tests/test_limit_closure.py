@@ -117,7 +117,7 @@ def test_nightly_update_pins_dev_release_and_never_substitutes_an_rc(tmp_path, m
         lambda command, **kw: calls.append(command) or SimpleNamespace(returncode=0),
     )
     assert update.run(["--channel", "nightly", "--apply"]) == 0
-    assert "rlmagent==1.2.dev20261105" in calls[0]
+    assert "rlmness-cli==1.2.dev20261105" in calls[0]
     with pytest.raises(ValueError, match="No compatible"):
         update.select_release({"releases": {"1.1rc1": [{}]}}, "nightly")
 

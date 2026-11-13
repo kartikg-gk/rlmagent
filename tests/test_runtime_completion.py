@@ -71,7 +71,7 @@ async def test_recursive_runtime_inherits_fixed_model_and_delivers_steering_to_c
         assert result["metrics"]["cells"] == sum(
             event["kind"] == "output_received" for event in session.backend.events
         )
-        assert result["limits"] == {**settings["limits"], "request_timeout": 300.0,
+        assert result["limits"] == {**settings["limits"], "request_timeout": 300.0, "strict_new_tokens": False,
                                     "max_new_tokens": None}
         assert result["runtime"]["kernel"]["network"] is False
         assert result["stop_reason"] == "done"

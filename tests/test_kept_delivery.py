@@ -138,3 +138,34 @@ def test_node_kept_child_queues_busy_messages_and_restores_pending_delivery(tmp_
         assert result.output == ["recovered", "interrupted", "done"]
     finally:
         reopened.close()
+
+
+def test_kept_note_ids_and_read_state_survive_legacy_drain_and_reopen(tmp_path):
+    state = tmp_path / "parent.json"
+    key = "f" * 32
+    record = {"keep": True, "status": "idle", "parent": "root"}
+    agents = KeptAgents(4)
+    try:
+        agents.open(state)
+        agents.node_record(key, {**record, "messages": ["same"]})
+        agents.node_record(key, {**record, "messages": ["same", "same"]})
+        first, second = agents.child_handle("root", "messages", key)
+        assert first["id"] != second["id"]
+        note = agents.child_handle("root", "read_message", key, identity=first["id"])
+        assert note["status"] == "read" and note["text"] == "same"
+        assert agents.child_handle("root", "messages", key) == [second]
+        with pytest.raises(ValueError, match="not available"):
+            agents.child_handle("another", "read_message", key, identity=first["id"])
+    finally:
+        agents.close()
+
+    reopened = KeptAgents(4)
+    try:
+        reopened.open(state)
+        assert reopened.child_handle("root", "messages", key) == [second]
+        reopened.node_record(key, {**record, "messages": []})
+        assert not reopened.child_handle("root", "messages", key)
+        assert reopened.child_handle("root", "read_message", key, identity=first["id"]) == note
+        assert reopened.child_handle("root", "read_message", key, identity=second["id"])["status"] == "read"
+    finally:
+        reopened.close()

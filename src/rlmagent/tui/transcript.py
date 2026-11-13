@@ -5,9 +5,15 @@ from __future__ import annotations
 from textual.containers import VerticalScroll
 
 from rlmagent.tui.adapter import summarize_call
+from rlmagent.tui.logo import Logo
 from rlmagent.tui.messages import (
     AssistantBlock,
+    CommandEcho,
+    ErrorBlock,
+    KindNotice,
     NoticeBlock,
+    ShellBlock,
+    SideAnswer,
     ToolCode,
     ToolLine,
     ToolOutput,
@@ -26,6 +32,11 @@ class TranscriptView(VerticalScroll):
         self._tools: dict[str, ToolLine] = {}
         self._cards: dict[tuple[str, int], StepCard] = {}
 
+    def on_mount(self) -> None:
+        # The name heads the conversation and scrolls away with it.
+        if not self.children:
+            self.mount(Logo())
+
     # -- appending ----------------------------------------------------------
 
     def add_user(self, text: str) -> None:
@@ -34,8 +45,33 @@ class TranscriptView(VerticalScroll):
         self._scroll()
 
     def add_notice(self, text: str, *, error: bool = False) -> None:
-        """Append a notice (command output, error, cancellation)."""
-        self.mount(NoticeBlock(text, error=error))
+        """Append a notice (command output, error, cancellation).
+
+        A multi-line error shows its first line and folds the rest.
+        """
+        if error and "\n" in text.strip():
+            self.mount(ErrorBlock(text))
+        else:
+            self.mount(NoticeBlock(text, error=error))
+        self._scroll()
+
+    def add_command(self, text: str) -> None:
+        """Echo a slash command the user ran."""
+        self.mount(CommandEcho(text))
+        self._scroll()
+
+    def add_shell(self, command: str, output: str, exit_code: int | None = None) -> None:
+        """A shell result in its box, last lines only."""
+        self.mount(ShellBlock(command, output, exit_code))
+        self._scroll()
+
+    def add_side_answer(self, question: str, answer: str) -> None:
+        self.mount(SideAnswer(question, answer))
+        self._scroll()
+
+    def add_kind(self, kind: str, text: str) -> None:
+        """A labelled notice: compaction, refinement, skill, injected prompt."""
+        self.mount(KindNotice(kind, text))
         self._scroll()
 
     def start_tool(self, call_id: str, summary: str, code: str = "") -> None:
@@ -79,6 +115,10 @@ class TranscriptView(VerticalScroll):
     def cards(self) -> list[StepCard]:
         return list(self._cards.values())
 
+    def cards_all(self) -> list[StepCard]:
+        """Every step row on screen, this run's and earlier runs'."""
+        return list(self.query(StepCard))
+
     # -- streaming ----------------------------------------------------------
 
     def stream_delta(self, delta: str) -> None:
@@ -110,6 +150,7 @@ class TranscriptView(VerticalScroll):
         self._tools.clear()
         self._cards.clear()
         self.remove_children()
+        self.mount(Logo())
 
     def replay(self, entries) -> None:
         """Repaint the view from a session's stored transcript."""
@@ -129,7 +170,7 @@ class TranscriptView(VerticalScroll):
                 if entry.text:
                     self.mount(AssistantBlock(entry.text))
             elif role == "compactionSummary":
-                self.mount(NoticeBlock(f"[compacted] {entry.summary}"))
+                self.mount(KindNotice("compacted", entry.summary))
         self._scroll()
 
     # -- internal -----------------------------------------------------------

@@ -23,6 +23,8 @@ from pathlib import Path
 
 from rlmness.environment import execution_environment
 
+from rlmagent.subscriptions import Subscriptions
+
 MAX_READ = 64 * 1024
 MAX_JOBS = 32
 MAX_LOG = 8 * 1024 * 1024
@@ -111,6 +113,8 @@ class Jobs:
         self.approve = approve  # async (command) -> None, raises when refused
         self.check = check  # (command) -> reason or None, for policy refusals
         self.jobs: dict[str, Job] = {}
+        self.subscriptions = Subscriptions(folder / ".watches", self._watch_snapshot)
+        self.child_snapshot = None
         self.env = dict(env or {})
         self.shell_access, self.shell_network = shell_access, shell_network
         self.max_log_bytes = max(4, int(max_log_bytes))
@@ -296,7 +300,27 @@ class Jobs:
             await asyncio.sleep(POLL)
         return {"event": "timeout"}
 
+    def _watch_snapshot(self, kind, target):
+        if kind == "child":
+            if self.child_snapshot is None:
+                raise ValueError("no child watch source is attached")
+            return target, self.child_snapshot(target)
+        if kind == "job":
+            job = self._get(target)
+            return job.id, {key: value for key, value in job.summary().items()
+                            if key in {"bytes", "total_bytes", "done", "exit"}}
+        root = Path(self.cwd).resolve()
+        absolute = (root / target).resolve()
+        if not absolute.is_relative_to(root):
+            raise ValueError(f"{target} is outside the workspace")
+        storage = str(self.subscriptions.storage.resolve())
+        return absolute.relative_to(root).as_posix(), {
+            Path(name).relative_to(root).as_posix(): stamp
+            for name, stamp in _stamp(absolute, follow_files=False).items() if name != storage
+        }
+
     async def close(self) -> None:
+        await self.subscriptions.close()
         for job in self.jobs.values():
             if not job.persistent:
                 self._kill(job)
@@ -312,10 +336,11 @@ class Jobs:
 
         return {"job_start": self.job_start, "job_read": self.job_read,
                 "job_wait": self.job_wait, "job_stop": self.job_stop, "jobs": self.jobs_list,
-                "service_start": self.service_start, "watch": watch}
+                "service_start": self.service_start, "watch": watch,
+                **self.subscriptions.functions()}
 
 
-def _stamp(target: Path) -> dict:
+def _stamp(target: Path, *, follow_files=True) -> dict:
     """Modification times under a path (one level of files for a folder, skipping noise)."""
     if target.is_file():
         return {str(target): target.stat().st_mtime_ns}
@@ -326,6 +351,8 @@ def _stamp(target: Path) -> dict:
         dirs[:] = [d for d in dirs if d not in {".git", "node_modules", ".venv", "__pycache__"}]
         for name in files:
             full = Path(folder) / name
+            if not follow_files and full.is_symlink():
+                continue
             try:
                 stamps[str(full)] = full.stat().st_mtime_ns
             except OSError:

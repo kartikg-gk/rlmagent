@@ -17,6 +17,7 @@ from rlmness import Allowance, AllowanceSpent
 
 from rlmagent.agents.budget import BudgetedProvider
 from rlmagent.agents.child_handles import checked_name
+from rlmagent.agents.child_mailbox import notes_metadata, read_note, record_notes
 from rlmagent.agents.trace import TracedProvider, Tracer
 from rlmagent.agents.bridge import BridgeServer, kernel_env
 from rlmagent.agents.kernel_api import KERNEL_API
@@ -64,6 +65,7 @@ class ChildRecord:
     holds_slot: bool = False
     inbox: asyncio.Queue = field(default_factory=asyncio.Queue)
     outbox: list = field(default_factory=list)
+    notes: list = field(default_factory=list)
     changed: asyncio.Event = field(default_factory=asyncio.Event)
     confirm: tuple[int, int] | None = None
     name: str | None = None
@@ -279,7 +281,9 @@ class AgentTree:
             if rec is None:
                 raise RuntimeError("only sub-agents have a parent")
             text = str(args.get("text", ""))
-            rec.outbox.append(text)
+            messages = [*rec.outbox, text]
+            rec.notes = record_notes(rec.notes, rec.outbox, messages)
+            rec.outbox = messages
             self._child_event("child_progress", agent_id, text=text[:500])
             return None
         if op == "spawn":
@@ -306,6 +310,11 @@ class AgentTree:
             if rec.status == "cancelled":
                 raise ValueError("child is cancelled")
             ledger = getattr(getattr(self, "session", None), "steering", None)
+            if action == "messages":
+                return notes_metadata(rec.notes, args.get("new_only", True))
+            if action == "read_message":
+                rec.notes, note = read_note(rec.notes, args.get("identity"))
+                return note
             if action == "steer":
                 if ledger is None:
                     raise ValueError("child steering requires an attached session")
@@ -347,6 +356,7 @@ class AgentTree:
             return rec.status
         if op == "messages":
             out, rec.outbox = rec.outbox, []
+            rec.notes = record_notes(rec.notes, out, [])
             return out
         if op == "cancel":
             await self._cancel(rec)

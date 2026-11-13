@@ -32,7 +32,7 @@ from rlmagent.model._claude.courier import ApiRejection, relay_sse
 from rlmagent.model._claude.emitter import ResponseMachine
 from rlmagent.model.correlation import wire_call_id
 from rlmagent.model.settings import AnthropicProfile, Credential, ReasoningPolicy
-from rlmagent.model.transport.backoff import build_retry_event, compute_delay, pause_for_retry
+from rlmagent.model.transport.backoff import RetryBudget, build_retry_event, compute_delay, pause_for_retry
 from rlmagent.model.transport.client import build_async_client
 from rlmagent.model.transport.faults import format_http_error
 
@@ -320,6 +320,7 @@ class AnthropicProvider:
     """Streaming model adapter for Anthropic's Messages API."""
 
     def __init__(self, profile: AnthropicProfile) -> None:
+        self._retry_budget = RetryBudget()
         self._profile = profile
         self._client: httpx.AsyncClient = build_async_client(
             timeout=httpx.Timeout(profile.timeout_seconds),
@@ -464,7 +465,7 @@ class AnthropicProvider:
                 continue
 
             except ApiRejection as exc:
-                if not exc.retriable or attempt >= retry.max_retries:
+                if not exc.retriable or attempt >= retry.max_retries or not self._retry_budget.take():
                     yield self._rejection_fault(model, exc)
                     return
 
@@ -484,7 +485,7 @@ class AnthropicProvider:
                     return
 
             except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as exc:
-                if attempt >= retry.max_retries:
+                if attempt >= retry.max_retries or not self._retry_budget.take():
                     yield self._network_fault(model, exc)
                     return
 

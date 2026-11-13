@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from time import time
 
@@ -91,6 +91,23 @@ Update = (TextDelta | TurnFinished | ToolStarted | ToolFinished | RetryNotice | 
 # ---------------------------------------------------------------------------
 
 
+def _worker_states() -> dict[str, str]:
+    """Session id -> running/idle for sessions a live background worker holds."""
+    try:
+        from rlmagent.worker import _worker_names, state_of
+    except ImportError:
+        return {}
+    states: dict[str, str] = {}
+    try:
+        for name in _worker_names():
+            meta = state_of(name)
+            if meta.get("alive") and meta.get("session"):
+                states[str(meta["session"])] = "running" if meta.get("state") == "busy" else "idle"
+    except OSError:
+        return states
+    return states
+
+
 @dataclass(frozen=True, slots=True)
 class SessionEntry:
     """One row in the session sidebar."""
@@ -99,6 +116,9 @@ class SessionEntry:
     title: str | None
     updated_at: float
     is_active: bool
+    #: running (a turn is going), idle (open here or held by a live worker),
+    #: or inactive (only saved).
+    status: str = "inactive"
 
     @property
     def label(self) -> str:
@@ -219,7 +239,7 @@ class SessionBridge:
             parts.append(f"${totals['cost']:.4f}" + (f"/{cap:.2f}" if cap is not None else ""))
         return " ".join(parts)
 
-    def sessions(self) -> list[SessionEntry]:
+    def sessions(self, busy: bool = False) -> list[SessionEntry]:
         """List every known session in a stable order, newest first."""
         catalog = self._session.catalog
         if catalog is None:
@@ -247,7 +267,14 @@ class SessionBridge:
                 session_id=active, title=self._session.title,
                 updated_at=time(), is_active=True,
             ))
-        return entries
+        held = _worker_states()
+        return [
+            replace(entry, status=(
+                ("running" if busy else "idle") if entry.is_active
+                else held.get(entry.session_id, "inactive")
+            ))
+            for entry in entries
+        ]
 
     # -- actions ------------------------------------------------------------
 

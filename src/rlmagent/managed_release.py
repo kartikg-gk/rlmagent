@@ -121,7 +121,7 @@ def _health(record):
     script = (
         "import importlib.metadata as m; import rlmagent.cli.main; "
         "import rlmagent.tui.app; import rlmagent.model.oai_compatible; import rlmness; "
-        "assert m.version('rlmagent') == " + repr(record["version"])
+        "assert m.version('rlmness-cli') == " + repr(record["version"])
     )
     if "subscription" in record.get("extras", []):
         script += "; import jwt, keyring, websockets"
@@ -260,7 +260,7 @@ def install(path: Path, *, drain=False, wait=60, restart=False):
         _stage(data, path.parent, incoming)
         python = python_for(candidate)
         venv.EnvBuilder(with_pip=True).create(python.parent.parent)
-        requirement = "rlmagent" + (
+        requirement = "rlmness-cli" + (
             "[" + ",".join(candidate["extras"]) + "]" if candidate["extras"] else ""
         )
         result = subprocess.run(

@@ -315,3 +315,315 @@ ModelScreen {
     color: #8a8a8a;
     border-top: solid #1e1e1e;
 }
+
+/* ── folded errors, shell box, echoes, side answers, queue ───────── */
+
+.error-block {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+.shell-block {
+    height: auto;
+    margin: 0 0 1 2;
+    padding: 0 1;
+    color: #9a9a9a;
+    border: round #333333;
+    border-title-color: #c9a4ff;
+    border-subtitle-color: #5a5a5a;
+}
+
+.shell-block.shell-failed {
+    border: round #a05050;
+}
+
+.command-echo {
+    padding: 1 0 0 0;
+    color: #9a9a9a;
+}
+
+.side-answer {
+    height: auto;
+    margin: 0 0 1 2;
+    padding: 0 1;
+    color: #9a9a9a;
+    border-left: thick #c9a4ff;
+}
+
+.kind-notice {
+    padding: 0 0 1 0;
+    color: #6a6a6a;
+}
+
+#queued-strip {
+    height: auto;
+    max-height: 6;
+    padding: 0 1;
+    color: #8a8a8a;
+    background: #0a0a0a;
+    border-top: solid #1e1e1e;
+}
+
+/* ── session search and sections ─────────────────────────────────── */
+
+#session-search {
+    height: 3;
+    margin: 0 0 1 0;
+    background: #0a0a0a;
+    border: solid #1e1e1e;
+    color: #c8c8c8;
+}
+
+#session-search:focus {
+    border: solid #333333;
+}
+
+#session-list > ListItem.session-heading {
+    padding: 1 1 0 1;
+    color: #5a5a5a;
+    background: #000000;
+}
+
+/* ── session search and sections ─────────────────────────────────── */
+
+#session-search {
+    height: 3;
+    margin: 0 0 1 0;
+    background: #0a0a0a;
+    border: solid #1e1e1e;
+    color: #c8c8c8;
+}
+
+#session-search:focus {
+    border: solid #333333;
+}
+
+#session-list > ListItem.session-heading {
+    padding: 1 1 0 1;
+    color: #5a5a5a;
+    background: #000000;
+}
+
+/* ── run view, in the engine viewer's arrangement and palette ─────────
+   Thin borders with the panel name set into the top rule; the code and the
+   output are the things worth looking at, so nothing else competes. */
+
+Screen {
+    background: #000000;
+    color: #c8c8c8;
+}
+
+#query {
+    height: 4;
+    border: solid #1e1e1e;
+    border-title-color: #c9a4ff;
+    padding: 0 1;
+    background: #000000;
+}
+
+#body, #main {
+    background: #000000;
+}
+
+#runs-column {
+    width: 34;
+    layout: vertical;
+}
+
+#runs-tree, #namespace {
+    border: solid #1e1e1e;
+    border-title-color: #6a6a6a;
+    background: #000000;
+    padding: 0 1;
+    height: 1fr;
+}
+
+#runs-tree > .tree--cursor {
+    background: #2a2a2a;
+    color: #ffffff;
+}
+
+#runs-tree > .tree--guides {
+    color: #1e1e1e;
+}
+
+#info {
+    height: 5;
+    border: solid #1e1e1e;
+    border-title-color: #6a6a6a;
+    padding: 0 1;
+    background: #000000;
+}
+
+TranscriptView {
+    height: 1fr;
+    background: #000000;
+    padding: 0 1;
+}
+
+#step-panes {
+    height: 1fr;
+    layout: horizontal;
+}
+
+#code, #output {
+    width: 1fr;
+    border: solid #1e1e1e;
+    border-title-color: #6a6a6a;
+    background: #000000;
+    padding: 0 1;
+}
+
+#variables {
+    height: auto;
+    background: #000000;
+}
+
+#variables > .datatable--header {
+    color: #6a6a6a;
+    background: #000000;
+}
+
+#variables > .datatable--cursor {
+    background: #2a2a2a;
+}
+
+#status-bar {
+    background: #000000;
+    color: #6a6a6a;
+}
+
+Composer {
+    height: 3;
+    background: #0a0a0a;
+    border: tall #0a0a0a;
+}
+
+Composer:focus-within {
+    border: tall #333333;
+}
+
+#prompt-mark, PromptInput, #model-badge {
+    background: #000000;
+}
+
+Footer, FooterKey, FooterKey > .footer-key--key {
+    background: #0a0a0a;
+    color: #6a6a6a;
+}
+
+/* ── turn by turn: one row per step, the message you sent set apart ── */
+
+.step-card.step-compact {
+    margin-bottom: 0;
+    border-left: none;
+    padding: 0 0;
+}
+
+.step-card.step-compact:focus {
+    background: #0a0a0a;
+}
+
+.user-block {
+    height: auto;
+    margin: 1 0;
+    padding: 0 2;
+    background: #0a0a0a;
+    color: #e8e8e8;
+}
+
+.assistant-block {
+    padding: 1 0 1 0;
+    color: #c8c8c8;
+}
+
+#prompt-mark, PromptInput, #model-badge {
+    background: #0a0a0a;
+}
+
+#agents-line {
+    height: 1;
+    padding: 0 1;
+    background: #000000;
+    color: #6a6a6a;
+}
+
+/* The dashboard pane, opened with F5. */
+.dashboard-screen {
+    background: #000000;
+}
+
+#dash-body {
+    height: 1fr;
+}
+
+#dash-right {
+    width: 1fr;
+}
+
+#dash-right #step-panes {
+    height: 1fr;
+}
+
+/* ── side panel and minimal palette: greys, one accent ───────────── */
+
+#side-panel {
+    width: 52;
+    min-width: 36;
+    height: 100%;
+    background: #000000;
+    border-left: solid #1e1e1e;
+    padding: 0 1;
+}
+
+#side-panel TabbedContent, #side-panel TabPane, #side-panel VerticalScroll {
+    background: #000000;
+    height: 1fr;
+}
+
+#side-panel Tabs, #side-panel Tab {
+    background: #000000;
+    color: #7a7a7a;
+}
+
+#side-panel Tab.-active {
+    color: #c8c8c8;
+    text-style: bold;
+}
+
+#side-panel Underline > .underline--bar {
+    background: #1e1e1e;
+    color: #c9a4ff;
+}
+
+#side-panel TabPane {
+    padding: 1 0 0 0;
+}
+
+#status-bar, #status-bar.busy {
+    color: #7a7a7a;
+    border-top: solid #1e1e1e;
+    height: 2;
+    padding: 0 1;
+}
+
+.user-block {
+    color: #e8e8e8;
+}
+
+.assistant-block {
+    color: #c8c8c8;
+}
+
+.logo {
+    height: auto;
+    padding: 1 0 1 0;
+    background: #000000;
+}
+
+#variables, #side-panel VerticalScroll {
+    scrollbar-color: #333333;
+    scrollbar-color-hover: #4a4a4a;
+    scrollbar-background: #000000;
+    scrollbar-size-horizontal: 1;
+}

@@ -1226,3 +1226,34 @@ class TestPromptTemplatesAreLoaded:
             sessions_dir=tmp_path,
         )
         assert session.expand_template("/stats") is None
+
+
+@pytest.mark.asyncio
+async def test_compact_asks_again_when_the_summary_is_too_long(monkeypatch) -> None:
+    import rlmagent.conversation as conversation
+
+    monkeypatch.setattr(
+        conversation, "_CONTEXT_LIMITS",
+        conversation.ContextLimits(max_summary_chars=50),
+    )
+    provider = _make_provider([_make_reply(f"Reply {i}") for i in range(6)])
+    session = await CodingSession.create(
+        provider=provider, provider_name="test", model="test-model", system="s",
+    )
+    for i in range(6):
+        await _collect_events(session.submit(f"Message {i}"))
+
+    prompts: list[str] = []
+    answers = ["z" * 500, "short summary"]
+
+    async def fake(prompt, _system):
+        prompts.append(prompt)
+        return answers.pop(0)
+
+    session._utility_completion = fake
+    entry = await session.compact()
+
+    assert len(prompts) == 2
+    assert "shorter" in prompts[1]
+    assert entry.summary.startswith("short summary")
+    await session.shutdown()

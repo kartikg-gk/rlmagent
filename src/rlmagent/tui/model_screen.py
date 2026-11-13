@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import ModalScreen
+from rlmagent.tui.search_box import SearchBox
 from textual.widgets import Input, Label, ListItem, ListView
 
 from rlmagent.config.store import PROVIDERS, ProviderInfo, load_config, recent_models
@@ -55,8 +56,12 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
         ("ctrl+d", "forget", "Remove recent"),
     ]
 
-    def __init__(self, current_provider: str = "", current_model: str = "") -> None:
+    def __init__(self, current_provider: str = "", current_model: str = "",
+                 start_provider: str = "", title: str = "Select provider") -> None:
         super().__init__()
+        #: Open straight on this provider's page (``/login openai``).
+        self._start_provider = start_provider
+        self._title = title
         self._current_provider = current_provider
         self._fetched: list[str] = []
         self._current_model = current_model
@@ -71,7 +76,7 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
         with Vertical(id="model-dialog"):
             yield Label("Select provider", id="model-title")
             yield ListView(id="model-list")
-            yield Input(placeholder="Type to filter models", id="model-filter")
+            yield SearchBox(placeholder="Type to filter models", id="model-filter")
             yield Input(placeholder="API key", password=True, id="model-key")
             yield Label("", id="model-hint")
 
@@ -79,12 +84,14 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
         self.query_one("#model-key", Input).display = False
         self.query_one("#model-filter", Input).display = False
         self._show_providers()
+        if self._start_provider:
+            self._on_provider_chosen(self._start_provider)
 
     # -- steps --------------------------------------------------------------
 
     def _show_providers(self) -> None:
         """Step 1 — list the supported providers."""
-        self.query_one("#model-title", Label).update("Select provider")
+        self.query_one("#model-title", Label).update(self._title)
         listing = self.query_one("#model-list", ListView)
         listing.clear()
         for recent in recent_models():
@@ -102,9 +109,12 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
         self.query_one("#model-title", Label).update(f"{info.label} — select model")
         listing = self.query_one("#model-list", ListView)
         listing.clear()
+        from rlmagent.model.discovery import price_label
+
         for name in info.models:
             marker = "●" if name == self._current_model else " "
-            listing.append(_Row(f"{marker} {name}", name))
+            price = price_label(info.key, name)
+            listing.append(_Row(f"{marker} {name}" + (f"   {price}" if price else ""), name))
         listing.append(_Row("Enter a model identifier…", "__custom__"))
         listing.index = 0
         listing.focus()
@@ -147,9 +157,13 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
     def _list_fetched(self, text: str) -> None:
         listing = self.query_one("#model-list", ListView)
         listing.clear()
+        from rlmagent.model.discovery import price_label
+
         rows = [model for model in self._fetched if text.lower() in model.lower()]
+        provider = self._info.key if self._info is not None else ""
         for model in rows:
-            listing.append(_Row(model, model))
+            price = price_label(provider, model)
+            listing.append(_Row(f"{model}   {price}" if price else model, model))
         listing.append(_Row("Enter a model identifier…", "__custom__"))
         listing.index = rows.index(self._current_model) if self._current_model in rows else 0
 

@@ -11,6 +11,7 @@ from rlmness.background import Background, Job
 from rlmness.session import Session
 
 from rlmagent.agents.child_handles import checked_name
+from rlmagent.agents.child_mailbox import notes_metadata, read_note, record_notes
 
 
 class KeptAgents(Background):
@@ -20,6 +21,8 @@ class KeptAgents(Background):
         self.saved: dict[str, dict] = {}
         self.live_states: dict[str, Session] = {}
         self.names: dict[str, str] = {}
+        self.notes: dict[str, list[dict]] = {}
+        self.live_deliveries: dict[str, dict] = {}
         self.steering = None
         self.record_event = None
 
@@ -57,16 +60,22 @@ class KeptAgents(Background):
             self.jobs[path.stem] = job
             if name := record.get("name"):
                 self.names[path.stem] = name
+            migrated = "notes" not in record and bool(job.outbox)
+            if "notes" not in record:
+                record["notes"] = record_notes([], [], job.outbox)
+            self.notes[path.stem] = record["notes"]
             if interrupted:
                 self._expire_steering(path.stem)
+            if interrupted or migrated:
                 self._write(path.stem)
 
-    def _write(self, key: str) -> None:
+    def _write(self, key: str, record=None) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)
         path = self.directory / f"{key}.json"
         staged = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
         try:
-            staged.write_text(json.dumps(self.saved[key], allow_nan=False), encoding="utf-8")
+            data = self.saved[key] if record is None else record
+            staged.write_text(json.dumps(data, allow_nan=False), encoding="utf-8")
             staged.replace(path)
         finally:
             staged.unlink(missing_ok=True)
@@ -84,7 +93,27 @@ class KeptAgents(Background):
                 self.live_states[key] = state
             return state
 
-    def child_handle(self, parent, action, key=None, name=None):
+    def _save_notes(self, key, notes, messages):
+        record = self.saved.get(key)
+        if record is not None:
+            updated = {**record, "notes": notes, "messages": messages}
+            self._write(key, updated)
+            # Legacy workers retain a reference to the saved record while running.
+            record.update(updated)
+        self.notes[key] = notes
+
+    def watch_snapshot(self, key):
+        with self.lock:
+            job = self.jobs.get(key)
+            if job is None:
+                return {"status": "missing", "notes": 0, "settled": 0}
+            record = self.saved.get(key, {})
+            deliveries = record.get("deliveries", self.live_deliveries.get(key, {}))
+            return {"status": job.status, "notes": len(self.notes.get(key, [])),
+                    "settled": sum(item["status"] not in ("queued", "running")
+                                   for item in deliveries.values())}
+
+    def child_handle(self, parent, action, key=None, name=None, *, identity=None, new_only=True):
         with self.lock:
             if action in ("name", "find"):
                 name = checked_name(name)
@@ -100,6 +129,18 @@ class KeptAgents(Background):
             job = self.jobs[key]
             if job.parent != parent or job.status == "cancelled":
                 raise ValueError("child is not available to this agent")
+            notes = self.notes.get(key, [])
+            if action == "messages":
+                return notes_metadata(notes, new_only)
+            if action == "read_message":
+                updated, note = read_note(notes, identity)
+                if updated is not notes:
+                    self._save_notes(key, updated, job.outbox)
+                return note
+            if action == "delivery":
+                deliveries = self.saved.get(key, {}).get("deliveries", self.live_deliveries.get(key, {}))
+                item = deliveries.get(identity)
+                return {"id": identity, "status": item["status"] if item else "unknown"}
             if action == "name":
                 if key in self.saved:
                     old = self.saved[key].get("name")
@@ -134,10 +175,21 @@ class KeptAgents(Background):
                 for receipt, item in prior.items()
             ):
                 self._expire_steering(key)
+            previous_messages = job.outbox
+            messages = list(record.get("messages", []))
+            notes = record_notes(self.notes.get(key, []), previous_messages, messages)
+            if record["status"] != "cancelled" and job.keep and self.directory is not None:
+                saved = {**record, "notes": notes}
+                if name := self.names.get(key):
+                    saved["name"] = name
+                self._write(key, saved)
+                self.saved[key] = saved
+            self.notes[key] = notes
+            if key not in self.saved and current:
+                self.live_deliveries[key] = current
             job.status = record["status"]
             job.value = record.get("value")
-            previous_messages = job.outbox
-            job.outbox = list(record.get("messages", []))
+            job.outbox = messages
             if job.status in ("idle", "done", "failed", "cancelled"):
                 job.ready.set()
             else:
@@ -146,17 +198,14 @@ class KeptAgents(Background):
                 self.names.pop(key, None)
                 job.token.set()
                 self.saved.pop(key, None)
+                self.notes.pop(key, None)
+                self.live_deliveries.pop(key, None)
                 state = self.live_states.pop(key, None)
                 if state is not None:
                     state.close_runtime()
                 if self.directory is not None:
                     (self.directory / f"{key}.json").unlink(missing_ok=True)
                     (self.directory / f"{key}.state.json").unlink(missing_ok=True)
-            elif job.keep and self.directory is not None:
-                self.saved[key] = dict(record)
-                if name := self.names.get(key):
-                    self.saved[key]["name"] = name
-                self._write(key)
             if job.outbox[:len(previous_messages)] == previous_messages:
                 for message in job.outbox[len(previous_messages):]:
                     self._progress(key, message)
@@ -171,10 +220,30 @@ class KeptAgents(Background):
         tell_parent = bindings["tell_parent"]
 
         def tell(text):
-            tell_parent(text)
-            self._progress(self.owners[parent], text)
+            with self.lock:
+                key = self.owners.get(parent)
+                if key is None:
+                    return tell_parent(text)
+                job = self.jobs[key]
+                messages = [*job.outbox, text]
+                notes = record_notes(self.notes.get(key, []), job.outbox, messages)
+                self._save_notes(key, notes, messages)
+                job.outbox = messages
+                self._progress(key, text)
 
         bindings["tell_parent"] = tell
+        def messages(key):
+            with self.lock:
+                job = self.jobs[key]
+                if job.parent != parent:
+                    raise ValueError("job does not belong to this agent")
+                items = job.outbox
+                if items:
+                    self._save_notes(key, record_notes(self.notes.get(key, []), items, []), [])
+                    job.outbox = []
+                return items
+
+        bindings["_messages"] = messages
         if (parent != "root" and parent not in self.saved) or self.directory is None:
             return bindings
 
@@ -298,6 +367,7 @@ class KeptAgents(Background):
                 while pending:
                     item = pending.pop()
                     self.names.pop(item, None)
+                    self.notes.pop(item, None)
                     self._expire_steering(item)
                     if item not in self.saved:
                         continue
@@ -316,14 +386,6 @@ class KeptAgents(Background):
                         job.future.add_done_callback(lambda _future, path=state: path.unlink(missing_ok=True))
                     else:
                         state.unlink(missing_ok=True)
-
-        def messages(key):
-            with self.lock:
-                items = bindings["_messages"](key)
-                if key in self.saved and self.jobs[key].status == "idle":
-                    self.saved[key]["messages"] = []
-                    self._write(key)
-                return items
 
         with self.lock:
             for key, record in self.saved.items():

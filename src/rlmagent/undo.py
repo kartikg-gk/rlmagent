@@ -22,6 +22,7 @@ node_modules/
 venv/
 __pycache__/
 .rlm-agent/
+.logs/
 .env
 .env.*
 *.pem
@@ -37,18 +38,28 @@ class Shadow:
         self.workspace = Path(workspace).resolve()
         key = hashlib.sha1(str(self.workspace).encode()).hexdigest()[:16]
         self.git_dir = home / "shadow" / f"{key}.git"
+        self.reason = ""
         self.available = shutil.which("git") is not None
+        if not self.available:
+            self.reason = "Undo needs git on PATH."
+        elif self.workspace.parent == self.workspace or self.workspace == Path.home().resolve():
+            # Snapshotting a whole drive or home folder would copy everything in it.
+            self.available = False
+            self.reason = (f"Undo is off in {self.workspace}: it is too broad to snapshot. "
+                           "Start rlm-agent inside a project folder.")
         self.skipped: set[str] = set()
 
     def _git(self, *args: str) -> str:
         out = subprocess.run(
             ["git", f"--git-dir={self.git_dir}", f"--work-tree={self.workspace}", *args],
             stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            # File names are UTF-8 whatever the console's codepage says.
+            encoding="utf-8", errors="replace",
             cwd=self.workspace, timeout=120,
         )
         if out.returncode != 0:
-            raise RuntimeError(out.stderr.strip() or f"git {args[0]} failed")
-        return out.stdout.strip()
+            raise RuntimeError((out.stderr or "").strip() or f"git {args[0]} failed")
+        return (out.stdout or "").strip()
 
     def _init(self) -> None:
         if (self.git_dir / "HEAD").exists():

@@ -484,7 +484,7 @@ def test_a_detached_worker_survives_its_starter_and_runs_a_scheduled_prompt(tmp_
             "import sys; from rlmagent.cli.main import main; "
             "sys.stdin.isatty = lambda: True; raise SystemExit(main())"
         )
-        interactive = [sys.executable, "-c", cli_with_terminal_input, "--repl",
+        interactive = [sys.executable, "-c", cli_with_terminal_input, "--repl", "--supervised",
                        "--provider", "openai", "--model", "m", "--no-approve", "--kernel", "local"]
         launched = subprocess.run(interactive, input="/detach\n", capture_output=True,
                                   text=True, env=env, cwd=work, timeout=45)

@@ -10,7 +10,7 @@ delegation, and shared budget.
 Python 3.12 or newer is required. The default sandbox also requires Node.js.
 
 ```sh
-pip install rlmagent
+pip install rlmness-cli
 rlmness --setup
 ```
 
@@ -31,10 +31,12 @@ set in the environment, which take precedence for a run. `rlm-agent config path`
 prints where the file is. Providers include OpenAI, Anthropic, OpenRouter, Ollama,
 Hugging Face, Google Gemini, Mistral, Azure OpenAI, Vertex and Codex subscription sign-in.
 
-This revision requires `rlmness>=0.2.3`. When installing unreleased local builds,
+This revision requires `rlmness>=0.2.4`. When installing unreleased local builds,
 install the matching backend wheel before the application wheel.
 
 ## Run
+
+Run `rlm-agent` in a project folder. The first run opens a page to pick a provider and model; after that it opens the terminal UI. Where a security policy blocks the `rlm-agent` launcher, `python -m rlmagent` runs the same command.
 
 Configure an API provider, or use an installed and authenticated external CLI:
 
@@ -51,7 +53,7 @@ For native subscription sign-in, install the optional credential-store and ident
 verification dependencies, then complete browser consent:
 
 ```sh
-pip install 'rlmagent[subscription]'
+pip install 'rlmness-cli[subscription]'
 rlm-agent provider login codex
 rlm-agent provider models codex
 rlm-agent --provider codex --model MODEL_FROM_CATALOG "Inspect this project"
@@ -94,7 +96,7 @@ rlm-agent --provider claude-subscription --model cli:claude-code "Inspect this p
 Claude authentication remains within that CLI. Additional provider integrations
 are retained for compatibility; their release qualification is deferred:
 
-- `pip install 'rlmagent[copilot]'` enables `--provider copilot`. Run
+- `pip install 'rlmness-cli[copilot]'` enables `--provider copilot`. Run
   `rlm-agent provider login copilot` through the official CLI first. This adapter
   uses the official SDK with its own tools and hooks disabled. Sign out with
   `/logout` in that CLI.
@@ -233,10 +235,15 @@ all recursive model calls. Providers that omit counts cannot supply those totals
 
 ### Terminal UI
 
-With the default engine each agent step is a card: depth, a short agent id, the step
-number and its state, then the code, the first lines of output and, once it ends,
-tokens, cost and time. Sub-agent cards are indented under their parent. Enter or a
-click opens a card in full; F2 shows the agent tree, F3 a timeline of steps and F4
+The chat reads turn by turn. With the default engine each agent step is one row: its
+state, `python` or a sub-agent's short id, the first line of its code, and lines in
+and out with the time it took. Sub-agent rows are indented under their parent. Space
+opens a row to its code and output in place, Enter or a click opens the step in full,
+and Ctrl+O opens or folds every row at once.
+A side panel lists the session's skills and sub-agents (Ctrl+T switches tab, F7 hides
+it; it hides itself in terminals narrower than 120 columns). F5 opens the run
+dashboard: the tree of runs, each step's code and output, and the REPL namespace;
+F5 or Esc closes it. F2 shows the agent tree, F3 a timeline of steps and F4
 the background workers with their heartbeats and scheduled jobs. The status bar shows steps,
 running agents, depth and spend against the run's limits. Messages typed while a
 run is going are queued and sent when it ends.
@@ -255,7 +262,7 @@ identifier. The CLI offers `rlm-agent provider models openrouter` and
 `rlm-agent provider test openrouter`. A successful model-list check establishes
 access to that endpoint; it does not prove permission to generate with every model.
 
-For Google Vertex, install `rlmagent[vertex]`. Vertex support is experimental: mocked authentication checks pass,
+For Google Vertex, install `rlmness-cli[vertex]`. Vertex support is experimental: mocked authentication checks pass,
 but a live completion with a configured cloud account has not been verified.
 Configure Application Default Credentials, and set `GOOGLE_CLOUD_PROJECT` and optionally `GOOGLE_CLOUD_LOCATION`
 (default `us-central1`). Select `--provider vertex --model google/MODEL_ID`.
@@ -354,10 +361,28 @@ root cell failures, so rephrasing the final reply does not reset it.
 Open sessions and workers can reach each other. In a cell: `await list_agents()`,
 `await send_message(to, text)`, `await read_messages()`. A message to a worker runs as
 its next task; a message to a session is shown to it before its next turn.
+Pass `receipt=True` to `send_message` to get a message ID and recipient kind. The
+sender can check `await message_receipt(to, message_id, kind)` after reconnecting.
+For a session, `read` means the recipient retrieved the message through the inbox.
+For a worker, the receipt reports the queued, running, or final task outcome.
 `await schedule(task, in_seconds=..., every=None, worker=None)` or
 `await schedule(task, cron="0 9 * * 1-5", timezone="America/New_York")` queues work on a
 worker, and `await heartbeat(text)` reports progress, shown in the terminal and in
 `rlm-agent worker log`.
+
+Use `await watch_start(job=job_id)` or `await watch_start(path="results")` to save a
+subscription. The recursive backend also supports `await watch_child(handle)` for a
+kept child you own. `watch_list()` shows watch IDs and unread counts. Read event
+metadata with `watch_events(watch_id)` and retrieve an event with
+`watch_read(watch_id, event_id)`. Read status survives reopening. Watches sample
+changes and can combine several changes into one event. `watch_cancel(watch_id)`
+removes a watch and its history.
+
+End a backend cell with `await wait_for_activity(watch_id, timeout=60)` to pause
+before the next provider request, until a new watch event, pending steering, or
+the timeout. The cell finishes before the wait starts. In the Node engine a
+waiting batch child also returns its fan-out permit and reacquires it before
+continuing.
 
 Other functions: `await web_search(query)` when `BRAVE_API_KEY`, `TAVILY_API_KEY` or
 `SERPER_API_KEY` is set; `await context_usage()`; `await compact()` to summarize older
@@ -414,7 +439,10 @@ kernel values across reopening. Find them with `children()` and send a new task
 when the child is idle. In-flight child work is not replayed after a restart.
 
 Use `await name_child(handle, "reviewer")` to name a child under its parent,
-then `await find_child("reviewer")` to recover its handle. `await child_info(handle)`
+then `await find_child("reviewer")` to recover its handle. `await child_messages(handle)`
+lists unread child-note receipts and `await read_child_message(handle, id)` retrieves a
+note and records its read state. `await child_delivery_receipt(handle, id)` looks up
+an existing backend send receipt. `await child_info(handle)`
 shows status, pending deliveries, and recorded model usage without consuming the
 result or messages. In the backend engine, names and usage for kept children
 survive reopening the saved session.
@@ -430,7 +458,7 @@ with `issuer`, a registered public `client_id`, and `redirect_port`. Register
 `http://127.0.0.1:PORT/oauth/callback` with the issuer. Add `scope` if needed.
 Use `/mcp login NAME` to sign in and `/mcp logout NAME` to disconnect locally.
 Access tokens refresh when the server issues a refresh token. To reuse a login
-after reopening, install `rlmagent[mcp-keyring]` and set `"persist": true` in
+after reopening, install `rlmness-cli[mcp-keyring]` and set `"persist": true` in
 the OAuth object to use your platform credential store. With persistence
 disabled, credentials live in the current process.
 
@@ -556,11 +584,16 @@ Python requires Wasm. Delegation and guest networking use the separate
 
 Optional `limits.max_new_tokens` meters reported uncached input and output
 across the whole run, including compaction. The run admits one provider
-request at a time with this limit enabled. Before each request it estimates
-the request's size high (the whole prompt counted as uncached, plus the
-provider's longest reply) and refuses a request that could pass the limit,
-so a run stops short of it rather than over it. The run reports `max_tokens`
-and refuses further requests after reaching the limit or losing usage coverage.
+request at a time with this limit enabled. It estimates each request's size
+from the full prompt and the provider's reply limit. An estimate can be low.
+The run reports `max_tokens` when the budget refuses admission or settlement.
+
+Set `limits.strict_new_tokens` to `true` for counted admission with a
+provider-enforced reply cap. The first-party OpenAI Responses API over HTTP
+supports this mode. Each admitted generation has one attempt. Cached input
+counts toward the reservation, then only new tokens count toward settlement.
+The Codex and Claude subscription routes reject strict mode before generation.
+Omitting `strict_new_tokens` keeps estimate-based admission on those routes.
 
 Cells that fail in a familiar way (a missing `await`, quotes nested in an f-string, a
 missing module, a timeout, an empty reply) get a one-line hint with the error.

@@ -461,6 +461,12 @@ async def run_agent_loop(
                 yield ev
                 tool_events.append(ev)
 
+            # Tools can ask for the turn to end here. Only an unanimous batch
+            # ends it: one tool cannot silence results the model still needs.
+            ends = [ev.result for ev in tool_events if isinstance(ev, ToolRunEndEvent)]
+            if ends and all(result.terminate is True for result in ends):
+                has_calls = False
+
             outcomes = _pick_outcome_entries(tool_events)
             for oc in outcomes:
                 messages.append(oc)

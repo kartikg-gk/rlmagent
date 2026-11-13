@@ -104,3 +104,48 @@ async def test_sidebar_lists_tasks_only_when_there_are_some():
         bar.show_tasks([{"text": "a", "done": True}, {"text": "b", "done": False}])
         await pilot.pause()
         assert panel.display and str(panel.render()).splitlines() == ["Tasks", "✓ a", "· b"]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_snapshots_survive_file_names_the_console_codepage_cannot_read(tmp_path):
+    from rlmagent.undo import Shadow
+
+    work = tmp_path / "w"
+    work.mkdir()
+    (work / "caf\u00e9 \u201cplan\u201d \u2699.txt").write_text("one\n", encoding="utf-8")
+    shadow = Shadow(work, tmp_path / "h")
+    assert shadow.available
+    first = shadow.snapshot("start")
+    (work / "caf\u00e9 \u201cplan\u201d \u2699.txt").write_text("two\n", encoding="utf-8")
+    assert "two" in shadow.diff(first)
+
+
+def test_undo_is_off_for_a_drive_root_or_home_folder(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from rlmagent.undo import Shadow
+
+    root = Path(tmp_path.anchor)
+    shadow = Shadow(root, tmp_path / "h")
+    assert not shadow.available and "too broad to snapshot" in shadow.reason
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    assert not Shadow(tmp_path, tmp_path / "h2").available
+    assert Shadow(tmp_path / "project", tmp_path / "h3").available == (shutil.which("git") is not None)
+
+
+async def test_undo_and_diff_say_why_they_are_off(tmp_path):
+    from pathlib import Path
+
+    from _scripted import text_turn
+
+    from rlmagent.conversation import CodingSession
+    from rlmagent.model.scripted import ReplayProvider
+    from rlmagent.undo import Shadow
+
+    session = await CodingSession.create(
+        provider=ReplayProvider([text_turn("ok")]), provider_name="replay", model="m",
+        system="s", tools=[], cwd=str(tmp_path))
+    session.shadow = Shadow(Path(tmp_path.anchor), tmp_path / "h")
+    assert "too broad to snapshot" in await session.handle_command("/undo")
+    assert (await session.handle_command("/diff")).startswith("Diff is off in")
+    await session.shutdown()

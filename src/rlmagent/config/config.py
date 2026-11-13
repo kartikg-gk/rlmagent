@@ -37,7 +37,12 @@ def _detect_provider_name() -> str | None:
     if explicit:
         return explicit.strip().lower()
 
+    from rlmagent.config.loader import project_settings
     from rlmagent.config.store import load_config
+
+    project = project_settings().get("provider")
+    if project:
+        return project.lower()
 
     saved = load_config().provider
     if saved:
@@ -63,7 +68,7 @@ def _build_anthropic(profile: AnthropicProfile) -> ModelProvider:
     except ImportError:
         raise ConfigError(
             "The 'anthropic' provider requires the httpx extra.\n"
-            "  Install it with: pip install rlmagent[providers]"
+            "  Install it with: pip install rlmness-cli[providers]"
         ) from None
     return AnthropicProvider(profile)  # type: ignore[return-value]
 
@@ -75,7 +80,7 @@ def _build_openai(profile: OpenAIProfile) -> ModelProvider:
     except ImportError:
         raise ConfigError(
             "The 'openai' provider requires the httpx extra.\n"
-            "  Install it with: pip install rlmagent[providers]"
+            "  Install it with: pip install rlmness-cli[providers]"
         ) from None
     return OpenAIProvider(profile)  # type: ignore[return-value]
 
@@ -86,13 +91,20 @@ def _build_openai(profile: OpenAIProfile) -> ModelProvider:
 
 
 def resolve_provider(name: str | None = None) -> ModelProvider:
-    """Return a ready-to-use ``ModelProvider`` for *name*."""
+    """Return a ready-to-use ``ModelProvider`` for *name*, with any fallbacks."""
+    from rlmagent.model.failover import with_fallbacks
+
+    return with_fallbacks(_resolve_one(name), _resolve_one)
+
+
+def _resolve_one(name: str | None = None) -> ModelProvider:
+    """Build the provider for *name* alone."""
     resolved = name or _detect_provider_name()
     if resolved is None:
         raise ConfigError(
             "No provider configured.\n"
             "  Set RLM_AGENT_PROVIDER or export an API key env var.\n"
-            "  Run 'rlm-agent provider setup' for guidance."
+            "  Run 'rlm-agent' to pick a provider and model, or 'rlm-agent config'."
         )
 
     resolved = resolved.strip().lower()

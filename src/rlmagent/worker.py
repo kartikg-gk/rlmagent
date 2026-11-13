@@ -105,9 +105,11 @@ def _supervised(meta: dict) -> bool:
     return bool(pid and _pid_alive(pid))
 
 
-def send(name: str, text: str, source: str = "user") -> str:
+def send(name: str, text: str, source: str = "user", *, receipt_owner: str | None = None) -> str:
     message_id = f"{time.time_ns()}-{uuid.uuid4().hex}"
     message = {"text": text, "source": source, "time": time.time()}
+    if receipt_owner is not None:
+        message["receipt_owner"] = receipt_owner
     _write(folder(name) / "inbox" / f"{message_id}.json", message)
     return message_id
 
@@ -275,21 +277,34 @@ def _take_inbox(name: str, *, limit: int | None = None) -> list[dict]:
 def _finish_message(name: str, message_id: str, status: str) -> None:
     base = folder(name)
     receipt = base / "receipts" / f"{message_id}.json"
+    active = base / "in-flight" / f"{message_id}.json"
     if not receipt.exists():
-        _write(receipt, {"id": message_id, "status": status, "time": time.time()})
-    (base / "in-flight" / f"{message_id}.json").unlink(missing_ok=True)
+        message = _read(active) or {}
+        record = {"id": message_id, "status": status, "time": time.time()}
+        if "receipt_owner" in message:
+            record["receipt_owner"] = message["receipt_owner"]
+        _write(receipt, record)
+    active.unlink(missing_ok=True)
 
 
-def receipt_of(name: str, message_id: str) -> dict:
+def receipt_of(name: str, message_id: str, *, owner: str | None = None) -> dict:
     if re.fullmatch(r"[0-9]+-[0-9a-f]{6,32}", message_id) is None:
         raise ValueError("invalid worker message ID")
     base = folder(name)
     filename = f"{message_id}.json"
-    return _read(base / "receipts" / filename) or {
-        "id": message_id,
-        "status": ("queued" if (base / "inbox" / filename).is_file()
-                   else "in-flight" if (base / "in-flight" / filename).is_file() else "unknown"),
-    }
+    if owner is not None:
+        for directory, state in (("inbox", "queued"), ("in-flight", "in-flight"),
+                                 ("receipts", "unknown")):
+            message = _read(base / directory / filename) or {}
+            if message.get("receipt_owner") == owner:
+                return {"id": message_id, "status": message.get("status", state)}
+        return {"id": message_id, "status": "unknown"}
+    if record := _read(base / "receipts" / filename):
+        record.pop("receipt_owner", None)
+        return record
+    return {"id": message_id,
+            "status": ("queued" if (base / "inbox" / filename).is_file()
+                       else "in-flight" if (base / "in-flight" / filename).is_file() else "unknown")}
 
 
 def _take_due(name: str, now: float, *, limit: int | None = None) -> list[dict]:
@@ -408,8 +423,10 @@ async def serve(name: str, ns: argparse.Namespace) -> int:
 
     ns.print_mode = True
     base = folder(name)
+    from rlmagent.cli.main import get_version
+
     meta = {"pid": os.getpid(), "cwd": os.getcwd(), "started": time.time(), "beat": time.time(),
-            "state": "starting", "session": None, "error": None}
+            "state": "starting", "session": None, "error": None, "version": get_version()}
     incident_id = os.environ.get("RLM_AGENT_WORKER_INCIDENT", "")
     if re.fullmatch(r"[a-f0-9]{32}", incident_id):
         meta["session"] = ns.resume

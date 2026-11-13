@@ -42,7 +42,7 @@ from rlmagent.harness.session.store import JsonlVault
 # Constants
 # ---------------------------------------------------------------------------
 
-_PACKAGE = "rlmagent"
+_PACKAGE = "rlmness-cli"
 _DEFAULT_ANTHROPIC_MODEL = "claude-opus-5"
 _DEFAULT_OPENAI_MODEL = "gpt-5"
 _DEFAULT_SYSTEM = "You are a helpful coding assistant."
@@ -220,10 +220,12 @@ def _build_run_parser() -> argparse.ArgumentParser:
     ownership = p.add_mutually_exclusive_group()
     ownership.add_argument(
         "--supervised", action="store_true",
-        help="Start or reconnect to a saved interactive session owned by a worker.",
+        help="Run the session in a background worker that keeps going when this window "
+             "closes, and attach to it.",
     )
     ownership.add_argument(
-        "--foreground", action="store_true", help="Run the interactive session in this process.",
+        "--foreground", action="store_true",
+        help="Run the interactive session in this process (the default).",
     )
     trust = p.add_mutually_exclusive_group()
     trust.add_argument(
@@ -698,7 +700,7 @@ def _handle_tui(ns: argparse.Namespace | None = None) -> int:
     if not _textual_available():
         _die(
             "The TUI requires the 'textual' extra.\n"
-            "  Install it with: pip install rlmagent[tui]"
+            "  Install it with: pip install rlmness-cli[tui]"
         )
     from rlmagent.tui.app import run_tui
     return run_tui(ns)
@@ -1140,7 +1142,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Default: run mode
     ns = _build_run_parser().parse_args(args)
 
-    if ns.supervised or (_saved_interactive(ns) and sys.stdin.isatty()):
+    # A background worker owns the session only when asked for, or when the session
+    # being resumed already has one; otherwise the full UI runs in this process.
+    if ns.supervised or (_saved_interactive(ns) and sys.stdin.isatty()
+                         and _live_worker_owns(ns.resume)):
         tui = not ns.repl and sys.stdin.isatty() and sys.stdout.isatty() and _textual_available()
         return _handle_supervised(ns, args, tui=tui)
 
@@ -1155,6 +1160,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 130
 
 
+def _live_worker_owns(session_id: str | None) -> bool:
+    """Whether a running background worker holds this saved session."""
+    if not session_id:
+        return False
+    from rlmagent import worker
+
+    for name in worker._worker_names():
+        meta = worker.state_of(name)
+        if meta.get("session") == session_id and (meta["alive"] or worker._supervised(meta)):
+            return True
+    return False
+
+
 def _saved_interactive(ns: argparse.Namespace) -> bool:
     return not (ns.foreground or ns.no_session or ns.contract or ns.print_mode or ns.prompt is not None)
 
@@ -1165,7 +1183,7 @@ def _handle_supervised(ns: argparse.Namespace, args: list[str], *, tui: bool) ->
     from rlmagent.worker import start_interactive
 
     if tui and not _textual_available():
-        _die("The TUI requires the 'textual' extra. Install it with: pip install rlmagent[tui]")
+        _die("The TUI requires the 'textual' extra. Install it with: pip install rlmness-cli[tui]")
     try:
         return start_interactive(args, session_id=ns.resume, tui=tui)
     except ValueError as error:

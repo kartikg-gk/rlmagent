@@ -1,6 +1,6 @@
 [project]
-name = "rlmagent"
-version = "0.2.0"
+name = "rlmness-cli"
+version = "0.2.2"
 readme = "README.md"
 description = "A terminal coding agent with a persistent Python kernel and recursive sub-agents."
 requires-python = ">=3.12"
@@ -27,7 +27,7 @@ dependencies = [
     "jupyter_client>=8.6",
     "psutil>=5.9",
     "tzdata; sys_platform == 'win32'",
-    "rlmness>=0.2.3",
+    "rlmness>=0.2.4",
 ]
 
 [project.optional-dependencies]

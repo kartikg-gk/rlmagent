@@ -13,7 +13,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.css.query import NoMatches
-from textual.widgets import Footer, Header
+from textual.widgets import Footer, Static
 
 from rlmagent.tui.adapter import (
     AgentNote,
@@ -27,9 +27,11 @@ from rlmagent.tui.adapter import (
 )
 from rlmagent.tui.completions import CompletionBar, match_commands
 from rlmagent.tui.composer import Composer, ModelBadge
-from rlmagent.tui.messages import ACCENT
+from rlmagent.tui.messages import ACCENT, QueuedStrip
 from rlmagent.tui.model_screen import ModelChoice, ModelScreen
 from rlmagent.tui.prompt import PromptInput
+from rlmagent.tui.run_view import DashboardScreen, agents_line
+from rlmagent.tui.side_panel import SidePanel
 from rlmagent.tui.sidebar import Sidebar
 from rlmagent.tui.status import StatusBar
 from rlmagent.tui.transcript import TranscriptView
@@ -75,16 +77,29 @@ class RlmAgentApp(App[None]):
         Binding("f4", "workers", "Workers", id="workers", priority=True),
         Binding("f1", "show_help", "Help", id="help", priority=True),
         Binding("ctrl+shift+y", "copy_answer", "Copy answer", id="copy_answer", priority=True),
+        Binding("f5", "dashboard", "Dashboard", id="dashboard", priority=True),
+        Binding("ctrl+t", "next_panel", "Next tab", id="next_panel", priority=True),
+        Binding("ctrl+o", "expand_steps", "Open all steps", id="expand_steps", priority=True),
+        Binding("f7", "toggle_panel", "Side panel", id="toggle_panel", priority=True),
+        Binding("ctrl+b", "toggle_sessions", "Sessions", id="toggle_sessions", priority=True),
     ]
 
-    def __init__(self, bridge: SessionBridge | None = None) -> None:
+    def __init__(self, bridge: SessionBridge | None = None, *, startup_note: str = "") -> None:
         super().__init__()
         self._bridge = bridge
+        #: Shown once the screen is up: something the user must fix before work can run.
+        self._startup_note = startup_note
         self._busy = False
         #: Messages typed while the agent was working, sent in order afterwards.
         self._queued: list[str] = []
         #: Set by Ctrl+C so updates still in flight are not rendered.
         self._cancelled = False
+        #: The last thing asked, shown at the top of the dashboard.
+        self._question = ""
+        #: Animation frame for rows that show a running clock.
+        self._frame = 0
+        #: When Ctrl+C was last pressed; a second press soon after quits outright.
+        self._last_interrupt = 0.0
 
     # -- composition --------------------------------------------------------
 
@@ -93,14 +108,19 @@ class RlmAgentApp(App[None]):
         return Content.from_markup(f"[{ACCENT}]rlm[/]-agent")
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        # Kept simple: the conversation turn by turn, the prompt, and a line of
+        # status. The run dashboard opens over it on F5.
         with Horizontal(id="body"):
             yield Sidebar()
             with Vertical(id="main"):
                 yield TranscriptView()
                 yield CompletionBar()
-                yield Composer()
+                yield QueuedStrip()
+            yield SidePanel()
+        # Run state sits right above where you type, then the sub-agent line.
         yield StatusBar()
+        yield Composer()
+        yield Static("", id="agents-line")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -127,8 +147,20 @@ class RlmAgentApp(App[None]):
             pass
         except (ValueError, OSError) as exc:
             self.notify(f"Could not load keybindings: {exc}", severity="error")
+        self.query_one(Sidebar).display = False  # Ctrl+B shows the session list
+        from rich.theme import Theme
+
+        # Inline code in replies in grey, like the rest of the text.
+        self.console.push_theme(Theme({"markdown.code": "#b4b4b4 on #141414"}))
         await self._refresh_sidebar()
         self._refresh_status()
+        self._tick()
+        # Redraws run off a clock, not off events: a fan-out can post hundreds
+        # of changes a second and one repaint per tick is all a terminal shows.
+        self.set_interval(0.1, self._tick)
+        if self._startup_note:
+            self.query_one(TranscriptView).add_notice(self._startup_note, error=True)
+        self.query_one(PromptInput).focus()
         if self._bridge is not None:
             self.query_one(TranscriptView).replay(self._bridge.session.transcript)
             tree = getattr(self._bridge.session, "agent_tree", None)
@@ -136,6 +168,67 @@ class RlmAgentApp(App[None]):
                 tree.approver.ask = self._ask_approval
             if tree is not None:
                 tree.approver.question = self._ask_question
+
+    def _book(self):
+        from rlmagent.tui.steps import StepBook
+
+        return self._bridge.steps if self._bridge is not None else StepBook()
+
+    def _tick(self) -> None:
+        self._frame += 1
+        book = self._book()
+        with suppress(NoMatches):
+            main = self.screen_stack[0]
+            line = main.query_one("#agents-line", Static)
+            text = agents_line(book)
+            line.update(text)
+            line.display = bool(text)
+            skills = getattr(self._bridge.session, "skills", ()) if self._bridge is not None else ()
+            main.query_one(SidePanel).show(book, skills() if callable(skills) else skills)
+            # Steps still going show a running clock; redraw just those rows.
+            for card in main.query_one(TranscriptView).cards:
+                if card.step.state not in ("done", "failed"):
+                    card.refresh_step(card.step)
+
+    def on_resize(self, event) -> None:
+        """Narrow terminals give the chat the full width; the panel returns when there is room."""
+        with suppress(NoMatches):
+            panel = self.screen_stack[0].query_one(SidePanel)
+            if not getattr(self, "_panel_pinned", False):
+                panel.display = event.size.width >= 120
+
+    def action_next_panel(self) -> None:
+        """Ctrl+T: the side panel's next tab, showing the panel if it was hidden."""
+        panel = self.query_one(SidePanel)
+        if panel.display:
+            panel.next_tab()
+        else:
+            panel.display = True
+
+    def action_expand_steps(self) -> None:
+        """Ctrl+O: open every step's code and output, or fold them all back to rows."""
+        cards = self.query_one(TranscriptView).cards_all()
+        opening = any(card.collapsed for card in cards)
+        for card in cards:
+            card.set_open(opening)
+
+    def action_toggle_panel(self) -> None:
+        """F7: show or hide the side panel."""
+        panel = self.query_one(SidePanel)
+        panel.display = not panel.display
+        self._panel_pinned = True  # the user chose; resizing no longer overrides it
+
+    def action_dashboard(self) -> None:
+        """F5: open the run dashboard over the conversation; F5 or Esc closes it."""
+        if isinstance(self.screen, DashboardScreen):
+            self.pop_screen()
+            return
+        self.push_screen(DashboardScreen(self._book, lambda: self._question, lambda: self._busy))
+
+    def action_toggle_sessions(self) -> None:
+        """Ctrl+B: show or hide the session list."""
+        bar = self.query_one(Sidebar)
+        bar.display = not bar.display
 
     def action_toggle_auto(self) -> None:
         """Shift+Tab: stop or resume asking before file changes and commands, this session only."""
@@ -226,8 +319,7 @@ class RlmAgentApp(App[None]):
             if text.strip() and not _is_registered_command(text):
                 self.query_one(PromptInput).clear_prompt()
                 self._queued.append(text)
-                self.query_one(TranscriptView).add_notice(
-                    f"queued, sent when this run ends: {text}")
+                self._show_queue()
             return
         self.query_one(PromptInput).clear_prompt()
 
@@ -242,6 +334,7 @@ class RlmAgentApp(App[None]):
             return
 
         self.query_one(TranscriptView).add_user(text)
+        self._question = text
         self.run_worker(self._stream(text), exclusive=True)
 
     def on_step_card_inspect(self, event) -> None:
@@ -302,6 +395,7 @@ class RlmAgentApp(App[None]):
             return False
         self._cancelled = True
         self._queued.clear()
+        self._show_queue()
         self._bridge.cancel()
         transcript = self.query_one(TranscriptView)
         transcript.finish_assistant(transcript.live_text)
@@ -311,9 +405,26 @@ class RlmAgentApp(App[None]):
         return True
 
     def action_cancel(self) -> None:
-        """Ctrl+C: stop the generation if running, otherwise quit."""
-        if not self.action_stop():
+        """Ctrl+C: stop the generation if running, otherwise quit.
+
+        Pressed twice within a second and a half, it quits even mid-run.
+        """
+        import time
+
+        now = time.monotonic()
+        twice = now - self._last_interrupt < 1.5
+        self._last_interrupt = now
+        if twice:
             self.exit()
+            return
+        if self.action_stop():
+            self.notify("Stopped. Press Ctrl+C again to quit.", timeout=1.5)
+        else:
+            self.exit()
+
+    def _show_queue(self) -> None:
+        with suppress(NoMatches):
+            self.screen_stack[0].query_one(QueuedStrip).show(self._queued)
 
     def action_new_session(self) -> None:
         """Ctrl+N: start a fresh session."""
@@ -374,7 +485,36 @@ class RlmAgentApp(App[None]):
             # push_screen_wait requires a worker context.
             self.run_worker(self._open_model_picker())
             return
+        login = text.strip().split(maxsplit=1)
+        if login and login[0] == "/login":
+            # One sign-in page for every provider: keys, endpoints and
+            # subscription accounts all go through the provider dialog.
+            self.run_worker(self._open_model_picker(
+                start=login[1].strip().lower() if len(login) > 1 else "", title="Sign in: choose a provider"))
+            return
         assert self._bridge is not None
+        from rlmagent.conversation import COMMAND_REGISTRY
+        from rlmagent.directives import parse_command
+
+        name, arg = parse_command(text) or ("", "")
+        command = COMMAND_REGISTRY.get(name)
+        primary = command.name if command is not None else name
+        transcript.add_command(text)
+        if primary == "shell" and arg and hasattr(self._bridge.session, "run_shell"):
+            try:
+                entry = await self._bridge.session.run_shell(arg)
+            except Exception as exc:  # noqa: BLE001
+                transcript.add_notice(f"Shell failed: {exc}", error=True)
+            else:
+                transcript.add_shell(arg, entry.output, entry.exit_code)
+            return
+        if primary == "effort" or (primary == "think" and not arg):
+            self.run_worker(self._open_effort_picker())
+            return
+        if primary == "btw" and arg and arg.lower() not in ("clear", "new"):
+            response = await self._bridge.handle_command(text)
+            transcript.add_side_answer(arg, response or "")
+            return
         try:
             response = await self._bridge.handle_command(text)
         except Exception as exc:  # noqa: BLE001 - a bad command must not kill the UI
@@ -390,13 +530,30 @@ class RlmAgentApp(App[None]):
         await self._refresh_sidebar()
         self._refresh_status()
 
-    async def _open_model_picker(self) -> None:
+    async def _open_effort_picker(self) -> None:
+        """Pick a thinking level from a list instead of typing it."""
+        from rlmagent.reasoning import DEFAULT_THINKING_LEVEL, THINKING_LEVELS
+        from rlmagent.tui.choice_screen import ChoiceScreen
+
+        if self._bridge is None:
+            return
+        current = self._bridge.session.thinking_level or DEFAULT_THINKING_LEVEL
+        options = ["off", *THINKING_LEVELS]
+        level = await self.push_screen_wait(ChoiceScreen("Reasoning effort", options, current))
+        if level is None:
+            return
+        response = await self._bridge.handle_command(f"/think {level}")
+        # A setting change is a passing confirmation, not part of the conversation.
+        self.notify(response or f"effort: {level}", timeout=3)
+        self._refresh_status()
+
+    async def _open_model_picker(self, start: str = "", title: str = "Select provider") -> None:
         """Show the provider/model dialog and apply whatever comes back."""
         if self._bridge is None:
             return
         session = self._bridge.session
         choice = await self.push_screen_wait(
-            ModelScreen(session.provider_name, session.model)
+            ModelScreen(session.provider_name, session.model, start_provider=start, title=title)
         )
         if choice is None:
             return
@@ -465,6 +622,7 @@ class RlmAgentApp(App[None]):
             pilot = getattr(self._bridge.session, "autopilot", None)
             if self._queued and not self._cancelled:
                 following = self._queued.pop(0)
+                self._show_queue()
                 with suppress(NoMatches):
                     transcript.add_user(following)
                     self.run_worker(self._stream(following), exclusive=True)
@@ -487,7 +645,10 @@ class RlmAgentApp(App[None]):
 
         session = self._bridge.session
         main = self.screen_stack[0]
-        main.query_one(StatusBar).show(self._bridge.status(), busy=self._busy)
+        pilot = getattr(session, "autopilot", None)
+        goal = getattr(pilot, "goal", None)
+        goal_text = goal.objective if goal is not None and goal.status == "active" else ""
+        main.query_one(StatusBar).show(self._bridge.status(), busy=self._busy, goal=goal_text)
         tasks = getattr(session, "tasks", None)
         if tasks is not None:
             main.query_one(Sidebar).show_tasks(tasks.items)
@@ -500,7 +661,7 @@ class RlmAgentApp(App[None]):
         """Repaint the session list from the catalog."""
         if self._bridge is None:
             return
-        await self.screen_stack[0].query_one(Sidebar).show(self._bridge.sessions())
+        await self.screen_stack[0].query_one(Sidebar).show(self._bridge.sessions(busy=self._busy))
 
 
 def needs_setup(ns: argparse.Namespace) -> bool:
@@ -521,32 +682,81 @@ def needs_setup(ns: argparse.Namespace) -> bool:
     return False
 
 
-class SetupApp(App):
-    """Just the model page, shown before the first session exists."""
+WELCOME = (
+    "Welcome to rlm-agent.\n\n"
+    "It works in this folder: it reads and edits files, runs code in a sandbox,\n"
+    "and asks before changing anything outside it.\n\n"
+    "First, connect a model provider. You can add more now or later with /login."
+)
 
+
+class SetupApp(App):
+    """First run: a welcome, a provider, then the option to connect more."""
+
+    CSS_PATH = _CSS_PATH
     choice = None
 
+    def __init__(self) -> None:
+        super().__init__()
+        #: Further providers connected during setup; their keys are saved,
+        #: the first choice stays the default.
+        self.extra: list = []
+
     def on_mount(self) -> None:
+        from rlmagent.tui.choice_screen import ChoiceScreen
+
+        def welcomed(answer) -> None:
+            if answer is None:
+                self.exit()
+            else:
+                self._pick(first=True)
+
+        self.push_screen(ChoiceScreen(WELCOME, ["Connect a provider"]), welcomed)
+
+    def _pick(self, first: bool) -> None:
+        from rlmagent.tui.choice_screen import ChoiceScreen
         from rlmagent.tui.model_screen import ModelScreen
 
-        def done(choice) -> None:
-            self.choice = choice
-            self.exit()
+        def picked(choice) -> None:
+            if choice is not None:
+                if first:
+                    self.choice = choice
+                else:
+                    self.extra.append(choice)
+            if self.choice is None:
+                self.exit()
+                return
+            self.push_screen(ChoiceScreen("Connected. Anything else?",
+                                          [START_NOW, CONNECT_MORE]), next_step)
 
-        self.push_screen(ModelScreen(), done)
+        def next_step(answer) -> None:
+            if answer == CONNECT_MORE:
+                self._pick(first=False)
+            else:
+                self.exit()
+
+        title = "Select provider" if first else "Connect another provider"
+        self.push_screen(ModelScreen(title=title), picked)
 
 
-def save_setup(choice) -> None:
+START_NOW = "Start"
+CONNECT_MORE = "Connect another provider"
+
+
+def save_setup(choice, extra=()) -> None:
+    """Save the default provider and model, and the keys of any extra providers."""
     from rlmagent.config.store import load_config, remember_model, save_config
 
     config = load_config()
-    if choice.api_key:
-        config.api_keys[choice.provider] = choice.api_key
-    if choice.base_url:
-        config.base_urls[choice.provider] = choice.base_url
+    for item in (*extra, choice):
+        if item.api_key:
+            config.api_keys[item.provider] = item.api_key
+        if item.base_url:
+            config.base_urls[item.provider] = item.base_url
     config.provider, config.model = choice.provider, choice.model
     save_config(config)
-    remember_model(choice.provider, choice.model)
+    for item in (*extra, choice):
+        remember_model(item.provider, item.model)
 
 
 async def setup_if_needed(ns: argparse.Namespace) -> bool:
@@ -555,8 +765,20 @@ async def setup_if_needed(ns: argparse.Namespace) -> bool:
         await setup.run_async()
         if setup.choice is None:
             return False
-        save_setup(setup.choice)
+        save_setup(setup.choice, setup.extra)
     return True
+
+
+def sandbox_note(ns: argparse.Namespace) -> str:
+    """Why the default sandbox cannot start on this machine, or "" when it can."""
+    import shutil
+
+    if getattr(ns, "kernel", "wasm") != "wasm" or shutil.which("node") is not None:
+        return ""
+    return ("Node.js 18+ was not found, and the sandbox that runs the agent's code needs it.\n"
+            "Install Node (https://nodejs.org), then run `rlm-agent doctor --fix` and start again.\n"
+            "To run code directly on this machine without the sandbox, start with "
+            "`rlm-agent --kernel local`.")
 
 
 async def run_app(ns: argparse.Namespace) -> int:
@@ -569,7 +791,7 @@ async def run_app(ns: argparse.Namespace) -> int:
     if not await setup_if_needed(ns):
         return 1
     bridge = SessionBridge(await build_session(ns))
-    app = RlmAgentApp(bridge)
+    app = RlmAgentApp(bridge, startup_note=sandbox_note(ns))
     try:
         await app.run_async()
     finally:

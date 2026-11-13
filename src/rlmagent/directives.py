@@ -405,6 +405,11 @@ def _cmd_btw(ctx: CommandContext) -> CommandResult:
     return _ok()
 
 
+def _cmd_session_owned(ctx: CommandContext) -> CommandResult:
+    """Handled by the session (/update, /share, /logs, /changelog)."""
+    return _ok()
+
+
 def _cmd_goal(ctx: CommandContext) -> CommandResult:
     """Handled by the session."""
     return _ok()
@@ -618,7 +623,7 @@ def build_default_registry() -> CommandRegistry:
             description="Set thinking level (off to disable)",
             handler=_cmd_think,
             usage="/think [level|off]",
-            aliases=("thinking",),
+            aliases=("thinking", "effort"),
             search_terms=("reasoning", "depth"),
         ),
         SlashCommand(
@@ -664,6 +669,34 @@ def build_default_registry() -> CommandRegistry:
             handler=_cmd_image,
             usage="/image PATH | clear",
             search_terms=("picture", "screenshot", "attach", "vision"),
+        ),
+        SlashCommand(
+            name="update",
+            description="Check for a newer rlm-agent, or install it with /update apply",
+            handler=_cmd_session_owned,
+            usage="/update [apply]",
+            search_terms=("upgrade", "version", "release"),
+        ),
+        SlashCommand(
+            name="share",
+            description="Preview this session as an unlisted gist; publish with its SHA-256",
+            handler=_cmd_session_owned,
+            usage="/share [publish SHA256]",
+            search_terms=("gist", "link", "publish"),
+        ),
+        SlashCommand(
+            name="logs",
+            description="Show the end of this session's newest log file",
+            handler=_cmd_session_owned,
+            usage="/logs [LINES]",
+            search_terms=("log", "debug", "trace"),
+        ),
+        SlashCommand(
+            name="changelog",
+            description="List recent rlm-agent releases",
+            handler=_cmd_session_owned,
+            usage="/changelog",
+            search_terms=("releases", "news", "versions"),
         ),
         SlashCommand(
             name="btw",
