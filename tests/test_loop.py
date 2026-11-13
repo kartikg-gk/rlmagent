@@ -1146,3 +1146,54 @@ class TestEdgeCases:
         # Should have at least one start and one end for the model message
         assert len(starts) >= 1
         assert len(ends) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Tools asking for the turn to end
+# ---------------------------------------------------------------------------
+
+
+async def _final_run(
+    tool_call_id: str,
+    arguments: Mapping[str, JValue],
+    signal: CancelToken | None = None,
+    on_update: Any = None,
+) -> ToolOutcome:
+    return ToolOutcome(content=[TextSegment(text="final")], terminate=True)
+
+
+class TestTerminate:
+    @pytest.mark.asyncio
+    async def test_unanimous_terminate_ends_the_turn(self) -> None:
+        call = _tool_call("final", "c1")
+        provider = ScriptedProvider([
+            _tooluse_close(_model_entry(tool_calls=[call], stop_reason="toolUse")),
+        ])
+        messages: list[TranscriptEntry] = []
+
+        await _collect(run_agent_loop(
+            provider=provider, model="m", system="s",
+            messages=messages, tools=[_make_tool("final", _final_run)],
+        ))
+
+        # One model reply and its result; the model is not asked again.
+        assert provider._turn_idx == 1
+        assert len(messages) == 2
+        assert isinstance(messages[1], ToolOutcomeEntry)
+
+    @pytest.mark.asyncio
+    async def test_one_dissenting_tool_keeps_the_turn_going(self) -> None:
+        calls = [_tool_call("final", "c1"), _tool_call("echo", "c2")]
+        provider = ScriptedProvider([
+            _tooluse_close(_model_entry(tool_calls=calls, stop_reason="toolUse")),
+            _simple_close(_model_entry(text="done")),
+        ])
+        messages: list[TranscriptEntry] = []
+
+        await _collect(run_agent_loop(
+            provider=provider, model="m", system="s", messages=messages,
+            tools=[_make_tool("final", _final_run), _make_tool("echo")],
+        ))
+
+        assert provider._turn_idx == 2
+        assert messages[-1].content[0].text == "done"
