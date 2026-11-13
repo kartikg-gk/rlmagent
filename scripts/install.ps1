@@ -14,6 +14,16 @@ if (-not (Have 'uv')) {
     $env:Path = "$HOME\.local\bin;$env:Path"
 }
 
+# Builds published before the rename installed a tool named rlmagent that
+# owns the same rlm-agent command; take it out so the two do not clash.
+# With no tools installed uv says so on stderr, which Windows PowerShell turns
+# into a stopping error here; read the list inside try so that case is just empty.
+$listed = ''
+try { $listed = (& uv tool list 2>$null | Out-String) } catch { }
+if ($listed -match '(?m)^rlmagent ') {
+    Write-Host 'Removing the earlier rlmagent install'
+    try { uv tool uninstall rlmagent | Out-Null } catch { }
+}
 Write-Host "Installing $spec with uv"
 uv tool install --force --python 3.12 $spec
 try { uv tool update-shell | Out-Null } catch { }

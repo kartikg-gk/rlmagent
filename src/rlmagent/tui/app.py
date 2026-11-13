@@ -84,9 +84,11 @@ class RlmAgentApp(App[None]):
         Binding("ctrl+b", "toggle_sessions", "Sessions", id="toggle_sessions", priority=True),
     ]
 
-    def __init__(self, bridge: SessionBridge | None = None) -> None:
+    def __init__(self, bridge: SessionBridge | None = None, *, startup_note: str = "") -> None:
         super().__init__()
         self._bridge = bridge
+        #: Shown once the screen is up: something the user must fix before work can run.
+        self._startup_note = startup_note
         self._busy = False
         #: Messages typed while the agent was working, sent in order afterwards.
         self._queued: list[str] = []
@@ -156,6 +158,8 @@ class RlmAgentApp(App[None]):
         # Redraws run off a clock, not off events: a fan-out can post hundreds
         # of changes a second and one repaint per tick is all a terminal shows.
         self.set_interval(0.1, self._tick)
+        if self._startup_note:
+            self.query_one(TranscriptView).add_notice(self._startup_note, error=True)
         self.query_one(PromptInput).focus()
         if self._bridge is not None:
             self.query_one(TranscriptView).replay(self._bridge.session.transcript)
@@ -765,6 +769,18 @@ async def setup_if_needed(ns: argparse.Namespace) -> bool:
     return True
 
 
+def sandbox_note(ns: argparse.Namespace) -> str:
+    """Why the default sandbox cannot start on this machine, or "" when it can."""
+    import shutil
+
+    if getattr(ns, "kernel", "wasm") != "wasm" or shutil.which("node") is not None:
+        return ""
+    return ("Node.js 18+ was not found, and the sandbox that runs the agent's code needs it.\n"
+            "Install Node (https://nodejs.org), then run `rlm-agent doctor --fix` and start again.\n"
+            "To run code directly on this machine without the sandbox, start with "
+            "`rlm-agent --kernel local`.")
+
+
 async def run_app(ns: argparse.Namespace) -> int:
     """Build the shared runtime session and run the TUI over it."""
     from rlmagent.runtime import build_session, settle_project_trust
@@ -775,7 +791,7 @@ async def run_app(ns: argparse.Namespace) -> int:
     if not await setup_if_needed(ns):
         return 1
     bridge = SessionBridge(await build_session(ns))
-    app = RlmAgentApp(bridge)
+    app = RlmAgentApp(bridge, startup_note=sandbox_note(ns))
     try:
         await app.run_async()
     finally:

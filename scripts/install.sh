@@ -25,6 +25,12 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 if [ "${installer:-}" != "pipx" ]; then
+    # Builds published before the rename installed a tool named rlmagent that
+    # owns the same rlm-agent command; take it out so the two do not clash.
+    if uv tool list 2>/dev/null | grep -q '^rlmagent '; then
+        say "Removing the earlier rlmagent install"
+        uv tool uninstall rlmagent >/dev/null 2>&1 || true
+    fi
     say "Installing $spec with uv"
     uv tool install --force --python 3.12 "$spec"
     uv tool update-shell >/dev/null 2>&1 || true
