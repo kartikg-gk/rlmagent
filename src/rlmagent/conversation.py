@@ -819,17 +819,27 @@ class CodingSession:
     async def _cmd_btw(self, arg: str) -> str:
         """Answer from the conversation so far; the exchange is not kept in it."""
         question = arg.strip()
+        thread = self.__dict__.setdefault("_btw_thread", [])
+        if question.lower() in ("clear", "new"):
+            thread.clear()
+            return "Side thread cleared."
         if not question:
-            return "Usage: /btw QUESTION"
+            return "Usage: /btw QUESTION (follow-ups remember earlier side questions; /btw clear)"
         recent = "\n".join(f"[{getattr(m, 'role', '?')}] {getattr(m, 'text', '')}"
                            for m in list(self.transcript)[-30:])[-60_000:]
-        prompt = f"Conversation so far:\n{recent}\n\nSide question: {question}"
+        earlier = "".join(f"\nSide question: {q}\nAnswer: {a}\n" for q, a in thread[-6:])
+        prompt = (f"Conversation so far:\n{recent}\n"
+                  + (f"\nEarlier side questions:{earlier}" if earlier else "")
+                  + f"\nSide question: {question}")
         system = ("Answer the user's side question briefly from the conversation. It is not "
                   "part of the task; do not suggest running tools.")
         try:
-            return (await self._utility_completion(prompt, system)).strip() or "(no answer)"
+            answer = (await self._utility_completion(prompt, system)).strip() or "(no answer)"
         except Exception as exc:  # noqa: BLE001 - shown to the user, the session goes on
             return f"Could not answer: {exc}"
+        thread.append((question, answer))
+        del thread[:-6]
+        return answer
 
     def _cmd_goal(self, arg: str) -> str:
         pilot = getattr(self, "autopilot", None)

@@ -118,8 +118,94 @@ class NoticeBlock(Static):
             self.add_class("tool-error")
 
 
+#: Lines a shell result keeps on screen; earlier ones are counted, not shown.
+SHELL_TAIL = 20
+
+
+class ErrorBlock(Vertical):
+    """An error: its first line always shown, the rest folded underneath."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(classes="error-block")
+        self._text = text.strip() or "error"
+
+    @property
+    def headline(self) -> str:
+        return self._text.splitlines()[0]
+
+    def compose(self) -> ComposeResult:
+        first, _, rest = self._text.partition("\n")
+        yield Static(f"✗ {escape(first)}", classes="tool-error")
+        if rest.strip():
+            with Collapsible(title=f"details ({len(rest.splitlines())} lines)", collapsed=True):
+                yield Static(escape(rest.strip()))
+
+
+class ShellBlock(Static):
+    """A shell command's result in a box, showing only its last lines."""
+
+    def __init__(self, command: str, output: str, exit_code: int | None = None) -> None:
+        lines = output.rstrip("\n").splitlines()
+        hidden = max(0, len(lines) - SHELL_TAIL)
+        body = "\n".join(lines[-SHELL_TAIL:]) or "(no output)"
+        if hidden:
+            body = f"… {hidden} earlier line{'s' if hidden != 1 else ''}\n{body}"
+        super().__init__(escape(body), classes="shell-block")
+        self.border_title = f"$ {command}"
+        self.border_subtitle = "" if exit_code is None else f"exit {exit_code}"
+        if exit_code not in (None, 0):
+            self.add_class("shell-failed")
+        self.hidden_lines = hidden
+
+
+class CommandEcho(Static):
+    """The slash command the user ran, with its name picked out."""
+
+    def __init__(self, text: str) -> None:
+        name, _, rest = text.strip().partition(" ")
+        markup = f"[{ACCENT}]{escape(name)}[/]" + (f" {escape(rest)}" if rest else "")
+        super().__init__(f"{RLM_AGENT_MARK} {markup}", classes="command-echo")
+
+
+class SideAnswer(Static):
+    """An answer to a /btw side question, set apart from the main thread."""
+
+    def __init__(self, question: str, answer: str) -> None:
+        super().__init__(classes="side-answer")
+        self.update(render_message(f"**btw** {question}\n\n{answer}"))
+
+
+class KindNotice(Static):
+    """A notice with a kind label: compaction, refinement, skill, injected."""
+
+    def __init__(self, kind: str, text: str) -> None:
+        super().__init__(f"[{ACCENT}]{escape(kind)}[/] {escape(text)}",
+                         classes=f"kind-notice kind-{kind.replace(' ', '-')}")
+
+
+class QueuedStrip(Static):
+    """Messages waiting for the current run to end, shown above the prompt."""
+
+    def __init__(self) -> None:
+        super().__init__("", id="queued-strip")
+        self.display = False
+
+    def show(self, queued: list[str]) -> None:
+        self.display = bool(queued)
+        if queued:
+            rows = [f"{i}. {escape(text.splitlines()[0][:120])}" for i, text in enumerate(queued, 1)]
+            self.update(f"queued ({len(queued)}) — sent when this run ends\n" + "\n".join(rows))
+
+
 __all__ = [
     "AssistantBlock",
+    "CommandEcho",
+    "ErrorBlock",
+    "KindNotice",
+    "QueuedStrip",
+    "SHELL_TAIL",
+    "ShellBlock",
+    "SideAnswer",
     "NoticeBlock",
     "ToolCode",
     "ToolLine",

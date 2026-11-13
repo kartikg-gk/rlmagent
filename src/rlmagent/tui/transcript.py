@@ -7,7 +7,12 @@ from textual.containers import VerticalScroll
 from rlmagent.tui.adapter import summarize_call
 from rlmagent.tui.messages import (
     AssistantBlock,
+    CommandEcho,
+    ErrorBlock,
+    KindNotice,
     NoticeBlock,
+    ShellBlock,
+    SideAnswer,
     ToolCode,
     ToolLine,
     ToolOutput,
@@ -34,8 +39,33 @@ class TranscriptView(VerticalScroll):
         self._scroll()
 
     def add_notice(self, text: str, *, error: bool = False) -> None:
-        """Append a notice (command output, error, cancellation)."""
-        self.mount(NoticeBlock(text, error=error))
+        """Append a notice (command output, error, cancellation).
+
+        A multi-line error shows its first line and folds the rest.
+        """
+        if error and "\n" in text.strip():
+            self.mount(ErrorBlock(text))
+        else:
+            self.mount(NoticeBlock(text, error=error))
+        self._scroll()
+
+    def add_command(self, text: str) -> None:
+        """Echo a slash command the user ran."""
+        self.mount(CommandEcho(text))
+        self._scroll()
+
+    def add_shell(self, command: str, output: str, exit_code: int | None = None) -> None:
+        """A shell result in its box, last lines only."""
+        self.mount(ShellBlock(command, output, exit_code))
+        self._scroll()
+
+    def add_side_answer(self, question: str, answer: str) -> None:
+        self.mount(SideAnswer(question, answer))
+        self._scroll()
+
+    def add_kind(self, kind: str, text: str) -> None:
+        """A labelled notice: compaction, refinement, skill, injected prompt."""
+        self.mount(KindNotice(kind, text))
         self._scroll()
 
     def start_tool(self, call_id: str, summary: str, code: str = "") -> None:
@@ -129,7 +159,7 @@ class TranscriptView(VerticalScroll):
                 if entry.text:
                     self.mount(AssistantBlock(entry.text))
             elif role == "compactionSummary":
-                self.mount(NoticeBlock(f"[compacted] {entry.summary}"))
+                self.mount(KindNotice("compacted", entry.summary))
         self._scroll()
 
     # -- internal -----------------------------------------------------------

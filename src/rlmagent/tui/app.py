@@ -27,7 +27,7 @@ from rlmagent.tui.adapter import (
 )
 from rlmagent.tui.completions import CompletionBar, match_commands
 from rlmagent.tui.composer import Composer, ModelBadge
-from rlmagent.tui.messages import ACCENT
+from rlmagent.tui.messages import ACCENT, QueuedStrip
 from rlmagent.tui.model_screen import ModelChoice, ModelScreen
 from rlmagent.tui.prompt import PromptInput
 from rlmagent.tui.sidebar import Sidebar
@@ -85,6 +85,8 @@ class RlmAgentApp(App[None]):
         self._queued: list[str] = []
         #: Set by Ctrl+C so updates still in flight are not rendered.
         self._cancelled = False
+        #: When Ctrl+C was last pressed; a second press soon after quits outright.
+        self._last_interrupt = 0.0
 
     # -- composition --------------------------------------------------------
 
@@ -99,6 +101,7 @@ class RlmAgentApp(App[None]):
             with Vertical(id="main"):
                 yield TranscriptView()
                 yield CompletionBar()
+                yield QueuedStrip()
                 yield Composer()
         yield StatusBar()
         yield Footer()
@@ -226,8 +229,7 @@ class RlmAgentApp(App[None]):
             if text.strip() and not _is_registered_command(text):
                 self.query_one(PromptInput).clear_prompt()
                 self._queued.append(text)
-                self.query_one(TranscriptView).add_notice(
-                    f"queued, sent when this run ends: {text}")
+                self._show_queue()
             return
         self.query_one(PromptInput).clear_prompt()
 
@@ -302,6 +304,7 @@ class RlmAgentApp(App[None]):
             return False
         self._cancelled = True
         self._queued.clear()
+        self._show_queue()
         self._bridge.cancel()
         transcript = self.query_one(TranscriptView)
         transcript.finish_assistant(transcript.live_text)
@@ -311,9 +314,26 @@ class RlmAgentApp(App[None]):
         return True
 
     def action_cancel(self) -> None:
-        """Ctrl+C: stop the generation if running, otherwise quit."""
-        if not self.action_stop():
+        """Ctrl+C: stop the generation if running, otherwise quit.
+
+        Pressed twice within a second and a half, it quits even mid-run.
+        """
+        import time
+
+        now = time.monotonic()
+        twice = now - self._last_interrupt < 1.5
+        self._last_interrupt = now
+        if twice:
             self.exit()
+            return
+        if self.action_stop():
+            self.notify("Stopped. Press Ctrl+C again to quit.", timeout=1.5)
+        else:
+            self.exit()
+
+    def _show_queue(self) -> None:
+        with suppress(NoMatches):
+            self.screen_stack[0].query_one(QueuedStrip).show(self._queued)
 
     def action_new_session(self) -> None:
         """Ctrl+N: start a fresh session."""
@@ -375,6 +395,28 @@ class RlmAgentApp(App[None]):
             self.run_worker(self._open_model_picker())
             return
         assert self._bridge is not None
+        from rlmagent.conversation import COMMAND_REGISTRY
+        from rlmagent.directives import parse_command
+
+        name, arg = parse_command(text) or ("", "")
+        command = COMMAND_REGISTRY.get(name)
+        primary = command.name if command is not None else name
+        transcript.add_command(text)
+        if primary == "shell" and arg and hasattr(self._bridge.session, "run_shell"):
+            try:
+                entry = await self._bridge.session.run_shell(arg)
+            except Exception as exc:  # noqa: BLE001
+                transcript.add_notice(f"Shell failed: {exc}", error=True)
+            else:
+                transcript.add_shell(arg, entry.output, entry.exit_code)
+            return
+        if primary == "effort" or (primary == "think" and not arg):
+            self.run_worker(self._open_effort_picker())
+            return
+        if primary == "btw" and arg and arg.lower() not in ("clear", "new"):
+            response = await self._bridge.handle_command(text)
+            transcript.add_side_answer(arg, response or "")
+            return
         try:
             response = await self._bridge.handle_command(text)
         except Exception as exc:  # noqa: BLE001 - a bad command must not kill the UI
@@ -388,6 +430,22 @@ class RlmAgentApp(App[None]):
                 transcript.add_notice(f"autonomous turn {pilot.turns}")
                 self.run_worker(self._stream(following), exclusive=True)
         await self._refresh_sidebar()
+        self._refresh_status()
+
+    async def _open_effort_picker(self) -> None:
+        """Pick a thinking level from a list instead of typing it."""
+        from rlmagent.reasoning import DEFAULT_THINKING_LEVEL, THINKING_LEVELS
+        from rlmagent.tui.choice_screen import ChoiceScreen
+
+        if self._bridge is None:
+            return
+        current = self._bridge.session.thinking_level or DEFAULT_THINKING_LEVEL
+        options = ["off", *THINKING_LEVELS]
+        level = await self.push_screen_wait(ChoiceScreen("Reasoning effort", options, current))
+        if level is None:
+            return
+        response = await self._bridge.handle_command(f"/think {level}")
+        self.query_one(TranscriptView).add_notice(response or f"effort: {level}")
         self._refresh_status()
 
     async def _open_model_picker(self) -> None:
@@ -465,6 +523,7 @@ class RlmAgentApp(App[None]):
             pilot = getattr(self._bridge.session, "autopilot", None)
             if self._queued and not self._cancelled:
                 following = self._queued.pop(0)
+                self._show_queue()
                 with suppress(NoMatches):
                     transcript.add_user(following)
                     self.run_worker(self._stream(following), exclusive=True)
@@ -487,7 +546,10 @@ class RlmAgentApp(App[None]):
 
         session = self._bridge.session
         main = self.screen_stack[0]
-        main.query_one(StatusBar).show(self._bridge.status(), busy=self._busy)
+        pilot = getattr(session, "autopilot", None)
+        goal = getattr(pilot, "goal", None)
+        goal_text = goal.objective if goal is not None and goal.status == "active" else ""
+        main.query_one(StatusBar).show(self._bridge.status(), busy=self._busy, goal=goal_text)
         tasks = getattr(session, "tasks", None)
         if tasks is not None:
             main.query_one(Sidebar).show_tasks(tasks.items)

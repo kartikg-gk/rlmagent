@@ -67,7 +67,7 @@ async def test_btw_answers_without_adding_to_the_conversation(tmp_path):
         provider=ReplayProvider([text_turn("It is about tests.")]), provider_name="replay",
         model="m", system="s", tools=[], cwd=str(tmp_path))
     before = len(session.transcript)
-    assert await session.handle_command("/btw") == "Usage: /btw QUESTION"
+    assert (await session.handle_command("/btw")).startswith("Usage: /btw QUESTION")
     assert await session.handle_command("/btw what is this about?") == "It is about tests."
     assert len(session.transcript) == before
     await session.shutdown()

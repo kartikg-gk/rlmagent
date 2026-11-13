@@ -315,3 +315,51 @@ ModelScreen {
     color: #8a8a8a;
     border-top: solid #1e1e1e;
 }
+
+/* ── folded errors, shell box, echoes, side answers, queue ───────── */
+
+.error-block {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+.shell-block {
+    height: auto;
+    margin: 0 0 1 2;
+    padding: 0 1;
+    color: #9a9a9a;
+    border: round #333333;
+    border-title-color: #c9a4ff;
+    border-subtitle-color: #5a5a5a;
+}
+
+.shell-block.shell-failed {
+    border: round #a05050;
+}
+
+.command-echo {
+    padding: 1 0 0 0;
+    color: #9a9a9a;
+}
+
+.side-answer {
+    height: auto;
+    margin: 0 0 1 2;
+    padding: 0 1;
+    color: #9a9a9a;
+    border-left: thick #c9a4ff;
+}
+
+.kind-notice {
+    padding: 0 0 1 0;
+    color: #6a6a6a;
+}
+
+#queued-strip {
+    height: auto;
+    max-height: 6;
+    padding: 0 1;
+    color: #8a8a8a;
+    background: #0a0a0a;
+    border-top: solid #1e1e1e;
+}

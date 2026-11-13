@@ -618,7 +618,7 @@ def build_default_registry() -> CommandRegistry:
             description="Set thinking level (off to disable)",
             handler=_cmd_think,
             usage="/think [level|off]",
-            aliases=("thinking",),
+            aliases=("thinking", "effort"),
             search_terms=("reasoning", "depth"),
         ),
         SlashCommand(
