@@ -148,3 +148,18 @@ async def test_logs_changelog_update_and_share_run_in_the_session(tmp_path, monk
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     assert "SHA-256" in await session.handle_command("/share publish deadbeef")
     await session.shutdown()
+
+
+def test_prices_come_only_from_the_listing():
+    from rlmagent.model.discovery import PRICES, price_label, remember_prices
+
+    PRICES.pop("openrouter", None)
+    remember_prices("openrouter", [
+        {"id": "a/model", "pricing": {"prompt": "0.000003", "completion": "0.000015"}},
+        {"id": "free/model", "pricing": {"prompt": "0", "completion": "0"}},
+        {"id": "no/price"},
+    ])
+    assert price_label("openrouter", "a/model") == "$3.00/$15.00 per M"
+    assert price_label("openrouter", "free/model") == "free"
+    assert price_label("openrouter", "no/price") == ""
+    assert price_label("anthropic", "anything") == ""

@@ -9,6 +9,43 @@ from rlmagent.config.store import load_config, provider_info
 from rlmagent.model.transport.client import build_async_client
 
 
+#: Prices a provider's own model listing reported, per provider and model:
+#: (input, output) in dollars per million tokens. Only listings that carry
+#: prices fill it; nothing here is guessed.
+PRICES: dict[str, dict[str, tuple[float, float]]] = {}
+
+
+def _per_million(value) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number * 1_000_000 if number >= 0 else None
+
+
+def remember_prices(provider: str, rows) -> None:
+    """Keep prices from rows shaped ``{"id", "pricing": {"prompt", "completion"}}``."""
+    table = PRICES.setdefault(provider, {})
+    for row in rows or []:
+        pricing = row.get("pricing") if isinstance(row, dict) else None
+        if not isinstance(pricing, dict) or not row.get("id"):
+            continue
+        given, taken = _per_million(pricing.get("prompt")), _per_million(pricing.get("completion"))
+        if given is not None and taken is not None:
+            table[str(row["id"])] = (given, taken)
+
+
+def price_label(provider: str, model: str) -> str:
+    """``$3.00/$15.00 per M`` when the listing said, else empty."""
+    price = PRICES.get(provider, {}).get(model)
+    if price is None:
+        return ""
+    given, taken = price
+    if given == taken == 0:
+        return "free"
+    return f"${given:,.2f}/${taken:,.2f} per M"
+
+
 async def discover_models(provider: str, *, api_key=None, base_url=None, client=None) -> list[str]:
     if os.environ.get("RLM_AGENT_OFFLINE") == "1":
         raise ValueError("Model discovery is disabled in offline startup mode")
@@ -92,6 +129,7 @@ async def discover_models(provider: str, *, api_key=None, base_url=None, client=
                 models.extend(data.get("models", []))
             return sorted({row["name"].removeprefix("models/") for row in models
                            if isinstance(row, dict) and isinstance(row.get("name"), str)})
+        remember_prices(provider, data.get("data", []))
         return sorted(
             {
                 str(row["id"])

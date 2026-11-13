@@ -102,9 +102,12 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
         self.query_one("#model-title", Label).update(f"{info.label} — select model")
         listing = self.query_one("#model-list", ListView)
         listing.clear()
+        from rlmagent.model.discovery import price_label
+
         for name in info.models:
             marker = "●" if name == self._current_model else " "
-            listing.append(_Row(f"{marker} {name}", name))
+            price = price_label(info.key, name)
+            listing.append(_Row(f"{marker} {name}" + (f"   {price}" if price else ""), name))
         listing.append(_Row("Enter a model identifier…", "__custom__"))
         listing.index = 0
         listing.focus()
@@ -147,9 +150,13 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
     def _list_fetched(self, text: str) -> None:
         listing = self.query_one("#model-list", ListView)
         listing.clear()
+        from rlmagent.model.discovery import price_label
+
         rows = [model for model in self._fetched if text.lower() in model.lower()]
+        provider = self._info.key if self._info is not None else ""
         for model in rows:
-            listing.append(_Row(model, model))
+            price = price_label(provider, model)
+            listing.append(_Row(f"{model}   {price}" if price else model, model))
         listing.append(_Row("Enter a model identifier…", "__custom__"))
         listing.index = rows.index(self._current_model) if self._current_model in rows else 0
 
