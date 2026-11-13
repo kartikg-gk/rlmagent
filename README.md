@@ -10,7 +10,7 @@ delegation, and shared budget.
 Python 3.12 or newer is required. The default sandbox also requires Node.js.
 
 ```sh
-pip install rlmagent
+pip install rlmness-cli
 rlmness --setup
 ```
 
@@ -53,7 +53,7 @@ For native subscription sign-in, install the optional credential-store and ident
 verification dependencies, then complete browser consent:
 
 ```sh
-pip install 'rlmagent[subscription]'
+pip install 'rlmness-cli[subscription]'
 rlm-agent provider login codex
 rlm-agent provider models codex
 rlm-agent --provider codex --model MODEL_FROM_CATALOG "Inspect this project"
@@ -96,7 +96,7 @@ rlm-agent --provider claude-subscription --model cli:claude-code "Inspect this p
 Claude authentication remains within that CLI. Additional provider integrations
 are retained for compatibility; their release qualification is deferred:
 
-- `pip install 'rlmagent[copilot]'` enables `--provider copilot`. Run
+- `pip install 'rlmness-cli[copilot]'` enables `--provider copilot`. Run
   `rlm-agent provider login copilot` through the official CLI first. This adapter
   uses the official SDK with its own tools and hooks disabled. Sign out with
   `/logout` in that CLI.
@@ -257,7 +257,7 @@ identifier. The CLI offers `rlm-agent provider models openrouter` and
 `rlm-agent provider test openrouter`. A successful model-list check establishes
 access to that endpoint; it does not prove permission to generate with every model.
 
-For Google Vertex, install `rlmagent[vertex]`. Vertex support is experimental: mocked authentication checks pass,
+For Google Vertex, install `rlmness-cli[vertex]`. Vertex support is experimental: mocked authentication checks pass,
 but a live completion with a configured cloud account has not been verified.
 Configure Application Default Credentials, and set `GOOGLE_CLOUD_PROJECT` and optionally `GOOGLE_CLOUD_LOCATION`
 (default `us-central1`). Select `--provider vertex --model google/MODEL_ID`.
@@ -453,7 +453,7 @@ with `issuer`, a registered public `client_id`, and `redirect_port`. Register
 `http://127.0.0.1:PORT/oauth/callback` with the issuer. Add `scope` if needed.
 Use `/mcp login NAME` to sign in and `/mcp logout NAME` to disconnect locally.
 Access tokens refresh when the server issues a refresh token. To reuse a login
-after reopening, install `rlmagent[mcp-keyring]` and set `"persist": true` in
+after reopening, install `rlmness-cli[mcp-keyring]` and set `"persist": true` in
 the OAuth object to use your platform credential store. With persistence
 disabled, credentials live in the current process.
 

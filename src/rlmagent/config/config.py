@@ -68,7 +68,7 @@ def _build_anthropic(profile: AnthropicProfile) -> ModelProvider:
     except ImportError:
         raise ConfigError(
             "The 'anthropic' provider requires the httpx extra.\n"
-            "  Install it with: pip install rlmagent[providers]"
+            "  Install it with: pip install rlmness-cli[providers]"
         ) from None
     return AnthropicProvider(profile)  # type: ignore[return-value]
 
@@ -80,7 +80,7 @@ def _build_openai(profile: OpenAIProfile) -> ModelProvider:
     except ImportError:
         raise ConfigError(
             "The 'openai' provider requires the httpx extra.\n"
-            "  Install it with: pip install rlmagent[providers]"
+            "  Install it with: pip install rlmness-cli[providers]"
         ) from None
     return OpenAIProvider(profile)  # type: ignore[return-value]
 

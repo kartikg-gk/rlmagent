@@ -3,8 +3,8 @@
 # Set $env:RLMAGENT_VERSION to pin a version, e.g. $env:RLMAGENT_VERSION = '0.2.0'.
 $ErrorActionPreference = 'Stop'
 
-$spec = 'rlmagent'
-if ($env:RLMAGENT_VERSION) { $spec = "rlmagent==$($env:RLMAGENT_VERSION)" }
+$spec = 'rlmness-cli'
+if ($env:RLMAGENT_VERSION) { $spec = "rlmness-cli==$($env:RLMAGENT_VERSION)" }
 
 function Have($name) { $null -ne (Get-Command $name -ErrorAction SilentlyContinue) }
 

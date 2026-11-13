@@ -855,7 +855,7 @@ class CodingSession:
             return f"rlm-agent {installed}. Update checks are off in offline mode."
         try:
             document = await asyncio.to_thread(
-                fetch_json, "https://pypi.org/pypi/rlmagent/json", timeout=15)
+                fetch_json, "https://pypi.org/pypi/rlmness-cli/json", timeout=15)
             latest = select_release(document, "stable")
         except Exception as exc:  # noqa: BLE001 - reported, the session goes on
             return f"Could not check for updates: {exc}"
@@ -923,7 +923,7 @@ class CodingSession:
             return f"rlm-agent {get_version()}. The release list needs the network."
         try:
             document = await asyncio.to_thread(
-                fetch_json, "https://pypi.org/pypi/rlmagent/json", timeout=15)
+                fetch_json, "https://pypi.org/pypi/rlmness-cli/json", timeout=15)
         except Exception as exc:  # noqa: BLE001
             return f"Could not fetch releases: {exc}"
         rows = []

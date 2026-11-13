@@ -21,7 +21,7 @@ def test_update_requires_apply(monkeypatch, tmp_path, capsys):
     assert "--apply" in capsys.readouterr().out
     assert calls == []
     assert update.run(["--apply"]) == 7
-    assert calls == [[update.sys.executable, "-m", "pip", "install", "--upgrade", "rlmagent"]]
+    assert calls == [[update.sys.executable, "-m", "pip", "install", "--upgrade", "rlmness-cli"]]
 
 
 def test_update_refuses_a_direct_install(monkeypatch):
@@ -49,5 +49,5 @@ def test_successful_update_records_rollback_and_failure_preserves_receipt(monkey
     receipt = tmp_path / "updates" / "previous.json"
     assert json.loads(receipt.read_text()) == {"version": "0.2.0"}
     assert update.run(["--rollback", "--apply"]) == 7
-    assert calls[-1][-1] == "rlmagent==0.2.0"
+    assert calls[-1][-1] == "rlmness-cli==0.2.0"
     assert json.loads(receipt.read_text()) == {"version": "0.2.0"}

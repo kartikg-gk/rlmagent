@@ -4,9 +4,9 @@
 # Set RLMAGENT_VERSION to pin a version, e.g. RLMAGENT_VERSION=0.2.0.
 set -eu
 
-spec="rlmagent"
+spec="rlmness-cli"
 if [ -n "${RLMAGENT_VERSION:-}" ]; then
-    spec="rlmagent==${RLMAGENT_VERSION}"
+    spec="rlmness-cli==${RLMAGENT_VERSION}"
 fi
 
 say() { printf '%s\n' "$*"; }

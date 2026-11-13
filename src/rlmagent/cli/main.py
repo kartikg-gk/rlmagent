@@ -42,7 +42,7 @@ from rlmagent.harness.session.store import JsonlVault
 # Constants
 # ---------------------------------------------------------------------------
 
-_PACKAGE = "rlmagent"
+_PACKAGE = "rlmness-cli"
 _DEFAULT_ANTHROPIC_MODEL = "claude-opus-5"
 _DEFAULT_OPENAI_MODEL = "gpt-5"
 _DEFAULT_SYSTEM = "You are a helpful coding assistant."
@@ -700,7 +700,7 @@ def _handle_tui(ns: argparse.Namespace | None = None) -> int:
     if not _textual_available():
         _die(
             "The TUI requires the 'textual' extra.\n"
-            "  Install it with: pip install rlmagent[tui]"
+            "  Install it with: pip install rlmness-cli[tui]"
         )
     from rlmagent.tui.app import run_tui
     return run_tui(ns)
@@ -1183,7 +1183,7 @@ def _handle_supervised(ns: argparse.Namespace, args: list[str], *, tui: bool) ->
     from rlmagent.worker import start_interactive
 
     if tui and not _textual_available():
-        _die("The TUI requires the 'textual' extra. Install it with: pip install rlmagent[tui]")
+        _die("The TUI requires the 'textual' extra. Install it with: pip install rlmness-cli[tui]")
     try:
         return start_interactive(args, session_id=ns.resume, tui=tui)
     except ValueError as error:

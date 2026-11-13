@@ -1,5 +1,5 @@
 [project]
-name = "rlmagent"
+name = "rlmness-cli"
 version = "0.2.0"
 readme = "README.md"
 description = "A terminal coding agent with a persistent Python kernel and recursive sub-agents."
