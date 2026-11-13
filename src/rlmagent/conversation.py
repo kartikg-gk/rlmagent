@@ -101,7 +101,7 @@ _RUNNABLE_COMMANDS: frozenset[str] = frozenset({
     "goal", "autonomous", "btw", "image",
     "export", "help", "model", "name", "plan", "provider", "quit", "reload",
     "refine", "rewind", "session", "shell", "skills", "stats", "system", "think", "tools", "undo",
-    "version", "tier", "fast",
+    "version", "tier", "fast", "update", "share", "logs", "changelog",
 })
 
 _RUNNABLE_COMMAND_TABLE: tuple[tuple[str, str], ...] = tuple(
@@ -841,6 +841,102 @@ class CodingSession:
         del thread[:-6]
         return answer
 
+    async def _cmd_update(self, arg: str) -> str:
+        """Report the newest release; with ``apply``, install it in the background."""
+        import subprocess
+        import sys
+
+        from rlmagent.cli.main import get_version
+        from rlmagent.cli.update import select_release
+        from rlmagent.model.transport.client import fetch_json
+
+        installed = get_version()
+        if os.environ.get("RLM_AGENT_OFFLINE") == "1":
+            return f"rlm-agent {installed}. Update checks are off in offline mode."
+        try:
+            document = await asyncio.to_thread(
+                fetch_json, "https://pypi.org/pypi/rlmagent/json", timeout=15)
+            latest = select_release(document, "stable")
+        except Exception as exc:  # noqa: BLE001 - reported, the session goes on
+            return f"Could not check for updates: {exc}"
+        if latest == installed:
+            return f"rlm-agent {installed} is the newest release."
+        if arg.strip().lower() != "apply":
+            return (f"rlm-agent {latest} is available (installed {installed}). "
+                    "Run /update apply to install it, then restart.")
+        result = await asyncio.to_thread(
+            subprocess.run, [sys.executable, "-m", "rlmagent", "update", "--apply"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+        tail = "\n".join((result.stdout + result.stderr).strip().splitlines()[-8:])
+        if result.returncode != 0:
+            return f"Update failed (exit {result.returncode}):\n{tail}"
+        return f"Installed rlm-agent {latest}. Restart rlm-agent to use it.\n{tail}"
+
+    async def _cmd_share(self, arg: str) -> str:
+        """Preview the unlisted gist; publish only with the previewed SHA-256."""
+        from rlmagent.session_share import prepare, publish
+
+        words = arg.split()
+        body, digest = prepare(self.session_id, await self.export("html"),
+                               await self.export("jsonl"))
+        if words[:1] != ["publish"]:
+            size = sum(len(f["content"]) for f in body["files"].values())
+            return (f"Unlisted gist preview for session {self.session_id}: "
+                    f"{size:,} characters (session.html, session.jsonl). Nothing uploaded.\n"
+                    f"SHA-256: {digest}\n"
+                    "Anyone with the link can read it. To upload: /share publish <SHA-256>")
+        if len(words) != 2:
+            return "Use /share publish SHA256, with the digest the preview showed."
+        try:
+            url = await publish(body, expected_digest=words[1],
+                                token=os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))
+        except ValueError as exc:
+            return str(exc)
+        return f"Shared: {url}"
+
+    def _cmd_logs(self, arg: str) -> str:
+        """The last lines of this session's newest log file."""
+        from rlmagent.logs import log_root
+
+        try:
+            count = max(1, min(int(arg.strip() or 40), 400))
+        except ValueError:
+            return "Use /logs [LINES]."
+        folder = log_root(self.cwd) / str(self.session_id)
+        files = sorted((p for p in folder.glob("*") if p.is_file()),
+                       key=lambda p: p.stat().st_mtime) if folder.is_dir() else []
+        if not files:
+            return f"No logs yet for this session (looked in {folder})."
+        newest = files[-1]
+        try:
+            lines = newest.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError as exc:
+            return f"Could not read {newest}: {exc}"
+        return f"{newest} (last {min(count, len(lines))} of {len(lines)} lines)\n" + "\n".join(lines[-count:])
+
+    async def _cmd_changelog(self, _arg: str) -> str:
+        """Recent releases from the package index, newest first."""
+        from rlmagent.cli.main import get_version
+        from rlmagent.model.transport.client import fetch_json
+
+        if os.environ.get("RLM_AGENT_OFFLINE") == "1":
+            return f"rlm-agent {get_version()}. The release list needs the network."
+        try:
+            document = await asyncio.to_thread(
+                fetch_json, "https://pypi.org/pypi/rlmagent/json", timeout=15)
+        except Exception as exc:  # noqa: BLE001
+            return f"Could not fetch releases: {exc}"
+        rows = []
+        for version, files in (document.get("releases") or {}).items():
+            uploaded = min((f.get("upload_time", "") for f in files or []), default="")
+            if uploaded:
+                rows.append((uploaded[:10], version))
+        rows.sort(reverse=True)
+        installed = get_version()
+        lines = [f"{day}  {version}{'  (installed)' if version == installed else ''}"
+                 for day, version in rows[:10]]
+        return "Recent releases:\n" + ("\n".join(lines) or "none listed")
+
     def _cmd_goal(self, arg: str) -> str:
         pilot = getattr(self, "autopilot", None)
         return pilot.command_goal(arg) if pilot is not None else "Goals are not available here."
@@ -1323,6 +1419,10 @@ class CodingSession:
             "mcp": self._cmd_mcp,
             "goal": self._cmd_goal,
             "btw": self._cmd_btw,
+            "update": self._cmd_update,
+            "share": self._cmd_share,
+            "logs": self._cmd_logs,
+            "changelog": self._cmd_changelog,
             "image": self._cmd_image,
             "autonomous": self._cmd_autonomous,
             "stats": self._cmd_stats,

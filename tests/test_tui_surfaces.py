@@ -107,3 +107,44 @@ async def test_btw_follow_ups_see_earlier_side_questions(tmp_path):
     await session.handle_command("/btw fresh")
     assert "what file?" not in prompts[2]
     await session.shutdown()
+
+
+async def _session(tmp_path):
+    from _scripted import text_turn
+
+    from rlmagent.conversation import CodingSession
+    from rlmagent.model.scripted import ReplayProvider
+
+    return await CodingSession.create(
+        provider=ReplayProvider([text_turn("x")]), provider_name="replay",
+        model="m", system="s", tools=[], cwd=str(tmp_path))
+
+
+@pytest.mark.asyncio
+async def test_logs_changelog_update_and_share_run_in_the_session(tmp_path, monkeypatch):
+    import rlmagent.model.transport.client as client
+
+    monkeypatch.setenv("RLM_AGENT_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.delenv("RLM_AGENT_OFFLINE", raising=False)
+    session = await _session(tmp_path)
+    assert "No logs yet" in await session.handle_command("/logs")
+    folder = tmp_path / "logs" / str(session.session_id)
+    folder.mkdir(parents=True)
+    (folder / "run.log").write_text("\n".join(f"l{i}" for i in range(100)), encoding="utf-8")
+    shown = await session.handle_command("/logs 5")
+    assert shown.endswith("l99") and "l94" not in shown and "l95" in shown
+
+    document = {"info": {"version": "9.9.9"}, "releases": {
+        "9.9.9": [{"upload_time": "2026-11-12T10:00:00"}],
+        "0.1.0": [{"upload_time": "2026-01-01T10:00:00"}]}}
+    monkeypatch.setattr(client, "fetch_json", lambda *a, **k: document)
+    log = await session.handle_command("/changelog")
+    assert log.index("9.9.9") < log.index("0.1.0")
+    assert "9.9.9 is available" in await session.handle_command("/update")
+
+    preview = await session.handle_command("/share")
+    assert "Nothing uploaded" in preview and "SHA-256:" in preview
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    assert "SHA-256" in await session.handle_command("/share publish deadbeef")
+    await session.shutdown()
