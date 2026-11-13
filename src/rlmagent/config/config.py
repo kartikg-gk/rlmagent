@@ -86,7 +86,14 @@ def _build_openai(profile: OpenAIProfile) -> ModelProvider:
 
 
 def resolve_provider(name: str | None = None) -> ModelProvider:
-    """Return a ready-to-use ``ModelProvider`` for *name*."""
+    """Return a ready-to-use ``ModelProvider`` for *name*, with any fallbacks."""
+    from rlmagent.model.failover import with_fallbacks
+
+    return with_fallbacks(_resolve_one(name), _resolve_one)
+
+
+def _resolve_one(name: str | None = None) -> ModelProvider:
+    """Build the provider for *name* alone."""
     resolved = name or _detect_provider_name()
     if resolved is None:
         raise ConfigError(

@@ -26,7 +26,7 @@ from rlmagent.model._oai.payloads import build_chat_payload, build_responses_pay
 from rlmagent.model._oai.transport import HttpStreamError, MalformedPayload, open_event_stream
 from rlmagent.model.settings import Credential, OpenAIProfile, ReasoningPolicy
 from rlmagent.model.token_bounds import TokenBoundError, TokenReservation
-from rlmagent.model.transport.backoff import build_retry_event, compute_delay, pause_for_retry
+from rlmagent.model.transport.backoff import RetryBudget, build_retry_event, compute_delay, pause_for_retry
 from rlmagent.model.transport.client import build_async_client
 from rlmagent.model.transport.faults import format_http_error
 
@@ -40,6 +40,7 @@ class OpenAIProvider:
     """Streaming model adapter for OpenAI-compatible API endpoints."""
 
     def __init__(self, profile: OpenAIProfile) -> None:
+        self._retry_budget = RetryBudget()
         self._profile = profile
         self.default_service_tier = profile.service_tier
         self.supports_service_tier = profile.name in ("openai", "codex", "azure")
@@ -306,7 +307,7 @@ class OpenAIProvider:
                 continue
 
             except HttpStreamError as exc:
-                if not exc.retriable or attempt >= retry.max_retries:
+                if not exc.retriable or attempt >= retry.max_retries or not self._retry_budget.take():
                     self.last_failure_status = exc.status
                     yield self._http_error_event(model, endpoint, exc)
                     return
@@ -327,7 +328,7 @@ class OpenAIProvider:
                     return
 
             except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as exc:
-                if committed or attempt >= retry.max_retries:
+                if committed or attempt >= retry.max_retries or not self._retry_budget.take():
                     yield self._network_error_event(model, endpoint, exc)
                     return
 

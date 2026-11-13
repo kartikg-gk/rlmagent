@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from asyncio import sleep
+from collections import deque
+from time import monotonic
 
 from rlmagent.harness.contracts.tooling import CancelToken
 from rlmagent.harness.contracts.values import JValue
@@ -10,6 +12,29 @@ from rlmagent.harness.provider.wire import SourceRetryEvent
 
 RETRY_POLL_SECONDS = 0.05
 RETRY_BASE_DELAY_SECONDS = 0.25
+#: Retries one provider may spend in any rolling window, across all requests.
+#: A provider that keeps failing should fail fast, not stall every turn.
+RETRY_BUDGET = 8
+RETRY_BUDGET_WINDOW_SECONDS = 600.0
+
+
+class RetryBudget:
+    """Caps retries across every request a provider makes, per rolling window."""
+
+    def __init__(self, limit: int = RETRY_BUDGET,
+                 window_seconds: float = RETRY_BUDGET_WINDOW_SECONDS, clock=monotonic) -> None:
+        self.limit, self.window, self._clock = limit, window_seconds, clock
+        self._spent: deque[float] = deque()
+
+    def take(self) -> bool:
+        """Spend one retry if the window allows it."""
+        now = self._clock()
+        while self._spent and now - self._spent[0] >= self.window:
+            self._spent.popleft()
+        if len(self._spent) >= self.limit:
+            return False
+        self._spent.append(now)
+        return True
 
 
 def compute_delay(attempt: int, *, max_delay_seconds: float) -> float:
