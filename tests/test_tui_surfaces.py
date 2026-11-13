@@ -258,3 +258,29 @@ async def test_first_run_welcomes_then_connects_more_than_one_provider():
     config = load_config()
     assert config.provider == "openai" and config.model == "gpt-x"
     assert set(config.api_keys) == {"openai", "mistral"}
+
+
+@pytest.mark.asyncio
+async def test_search_box_undo_and_kill_ring():
+    from textual.app import App
+
+    from rlmagent.tui.search_box import SearchBox
+
+    class Host(App):
+        def compose(self):
+            yield SearchBox(id="box")
+
+    app = Host()
+    async with app.run_test() as pilot:
+        box = app.query_one(SearchBox)
+        box.focus()
+        await pilot.press(*"fix parser bug")
+        await pilot.press("ctrl+w", "ctrl+w")  # two cuts join: "parser bug"
+        await pilot.pause()
+        assert box.value == "fix " and box.killed == "parser bug"
+        await pilot.press("ctrl+a", "ctrl+y")
+        await pilot.pause()
+        assert box.value == "parser bugfix "
+        await pilot.press("ctrl+z")
+        await pilot.pause()
+        assert box.value == "fix "

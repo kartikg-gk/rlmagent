@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import ModalScreen
+from rlmagent.tui.search_box import SearchBox
 from textual.widgets import Input, Label, ListItem, ListView
 
 from rlmagent.config.store import PROVIDERS, ProviderInfo, load_config, recent_models
@@ -75,7 +76,7 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
         with Vertical(id="model-dialog"):
             yield Label("Select provider", id="model-title")
             yield ListView(id="model-list")
-            yield Input(placeholder="Type to filter models", id="model-filter")
+            yield SearchBox(placeholder="Type to filter models", id="model-filter")
             yield Input(placeholder="API key", password=True, id="model-key")
             yield Label("", id="model-hint")
 

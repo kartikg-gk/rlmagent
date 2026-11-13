@@ -9,6 +9,7 @@ from textual.message import Message
 from textual.widgets import Input, Label, ListItem, ListView, Static
 
 from rlmagent.tui.adapter import SessionEntry
+from rlmagent.tui.search_box import SearchBox
 
 #: Section order and headings. Each session sits under exactly one.
 SECTIONS: tuple[tuple[str, str], ...] = (
@@ -76,7 +77,7 @@ class Sidebar(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Label("Sessions", id="sidebar-title")
-        yield Input(placeholder="search sessions", id="session-search")
+        yield SearchBox(placeholder="search sessions", id="session-search")
         yield SessionList()
         yield Static("", id="task-panel")
 

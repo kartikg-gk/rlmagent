@@ -452,7 +452,8 @@ class RlmAgentApp(App[None]):
         if level is None:
             return
         response = await self._bridge.handle_command(f"/think {level}")
-        self.query_one(TranscriptView).add_notice(response or f"effort: {level}")
+        # A setting change is a passing confirmation, not part of the conversation.
+        self.notify(response or f"effort: {level}", timeout=3)
         self._refresh_status()
 
     async def _open_model_picker(self, start: str = "", title: str = "Select provider") -> None:
