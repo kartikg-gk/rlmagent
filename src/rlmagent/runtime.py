@@ -56,6 +56,8 @@ async def _build_session(ns: argparse.Namespace, *, session_id: str | None = Non
     from rlmagent.agents.prompts import root_system
     from rlmagent.safety import ApprovalPolicy
 
+    # Trust first: a trusted project's settings may choose the provider.
+    await settle_project_trust(ns, ask=getattr(ns, "trust_ask", None))
     provider_name = _resolve_provider_name(getattr(ns, "provider", None))
     # Export saved credentials for this process so the provider loaders
     # (which read the environment) see them. Real env vars keep precedence.
@@ -68,7 +70,6 @@ async def _build_session(ns: argparse.Namespace, *, session_id: str | None = Non
     provider = _resolve_provider(getattr(ns, "provider", None))
 
     verbose = getattr(ns, "verbose", False)
-    await settle_project_trust(ns, ask=getattr(ns, "trust_ask", None))
 
     no_session = getattr(ns, "no_session", False)
     sessions_dir = None if no_session else _sessions_dir(getattr(ns, "session_dir", None))

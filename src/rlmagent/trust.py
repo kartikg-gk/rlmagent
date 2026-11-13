@@ -108,6 +108,7 @@ def scan_project_inputs(folder: Path) -> ProjectInputs:
             if entry.suffix == ".md" and not entry.name.startswith(".")
         ),
         "theme": sum(1 for e in _entries(folder / ".rlm-agent" / "themes") if e.suffix == ".json"),
+        "settings file": int((folder / ".rlm-agent" / "settings.toml").is_file()),
         "plugin": sum(
             1
             for entry in _entries(folder / ".rlm-agent" / "extensions")
@@ -354,8 +355,19 @@ def project_inputs_allowed(project: str | os.PathLike[str]) -> bool:
     return scan_project_inputs(folder).empty
 
 
+def project_settings_allowed(project: str | os.PathLike[str]) -> bool:
+    """Whether a project's settings file may be applied.
+
+    Stricter than :func:`project_inputs_allowed`: before the trust decision
+    has been made for this process, the answer is no. Settings choose the
+    provider and model, so they wait for the folder to be trusted.
+    """
+    return _engaged and project_inputs_allowed(project)
+
+
 __all__ = [
     "Choice",
+    "project_settings_allowed",
     "DefaultPolicy",
     "ProjectInputs",
     "StartupCancelled",

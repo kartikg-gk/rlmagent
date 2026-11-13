@@ -6,7 +6,8 @@ to that provider and its failure is reported as it is: replaying a half-sent
 reply on another model would show the user two answers.
 
 Pairs come from ``RLM_AGENT_FALLBACK`` as ``provider:model`` items separated
-by commas, for example ``openrouter:qwen/qwen3-coder,anthropic:claude-sonnet-4-5``.
+by commas, for example ``openrouter:qwen/qwen3-coder,anthropic:claude-sonnet-4-5``,
+or from ``fallback`` in a trusted project's ``.rlm-agent/settings.toml``.
 """
 
 from __future__ import annotations
@@ -118,5 +119,11 @@ def with_fallbacks(
     env: dict[str, str] | None = None,
 ) -> ModelProvider:
     """Wrap *primary* when fallbacks are configured; otherwise return it as is."""
-    pairs = parse_fallbacks((env if env is not None else os.environ).get(FALLBACK_ENV))
+    source = env if env is not None else os.environ
+    text = source.get(FALLBACK_ENV)
+    if text is None and env is None:
+        from rlmagent.config.loader import project_settings
+
+        text = project_settings().get("fallback")
+    pairs = parse_fallbacks(text)
     return FailoverProvider(primary, pairs, resolve) if pairs else primary

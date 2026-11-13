@@ -37,7 +37,12 @@ def _detect_provider_name() -> str | None:
     if explicit:
         return explicit.strip().lower()
 
+    from rlmagent.config.loader import project_settings
     from rlmagent.config.store import load_config
+
+    project = project_settings().get("provider")
+    if project:
+        return project.lower()
 
     saved = load_config().provider
     if saved:
