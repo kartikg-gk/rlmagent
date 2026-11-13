@@ -225,3 +225,36 @@ def test_attach_reports_drops_returns_and_version_mismatch(monkeypatch):
     app.note_connection(view, {"alive": False})
     app.note_connection(view, {"alive": True, "version": "1.0.0"})
     assert any("stopped" in n for n in notes) and any("back" in n for n in notes)
+
+
+@pytest.mark.asyncio
+async def test_first_run_welcomes_then_connects_more_than_one_provider():
+    from rlmagent.config.store import load_config
+    from rlmagent.tui.app import CONNECT_MORE, START_NOW, SetupApp, save_setup
+    from rlmagent.tui.choice_screen import ChoiceScreen
+    from rlmagent.tui.model_screen import ModelChoice, ModelScreen
+
+    app = SetupApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert isinstance(app.screen, ChoiceScreen)  # the welcome
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, ModelScreen)
+        app.screen.dismiss(ModelChoice("openai", "OpenAI", "gpt-x", "sk-test-1"))
+        await pilot.pause()
+        assert isinstance(app.screen, ChoiceScreen)
+        assert app.screen.options == [START_NOW, CONNECT_MORE]
+        app.screen.dismiss(CONNECT_MORE)
+        await pilot.pause()
+        assert isinstance(app.screen, ModelScreen)
+        app.screen.dismiss(ModelChoice("mistral", "Mistral", "m-large", "mk-test-2"))
+        await pilot.pause()
+        app.screen.dismiss(START_NOW)
+        await pilot.pause()
+    assert app.choice.provider == "openai" and [c.provider for c in app.extra] == ["mistral"]
+
+    save_setup(app.choice, app.extra)
+    config = load_config()
+    assert config.provider == "openai" and config.model == "gpt-x"
+    assert set(config.api_keys) == {"openai", "mistral"}

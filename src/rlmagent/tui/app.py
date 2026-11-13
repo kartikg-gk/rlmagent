@@ -394,6 +394,13 @@ class RlmAgentApp(App[None]):
             # push_screen_wait requires a worker context.
             self.run_worker(self._open_model_picker())
             return
+        login = text.strip().split(maxsplit=1)
+        if login and login[0] == "/login":
+            # One sign-in page for every provider: keys, endpoints and
+            # subscription accounts all go through the provider dialog.
+            self.run_worker(self._open_model_picker(
+                start=login[1].strip().lower() if len(login) > 1 else "", title="Sign in: choose a provider"))
+            return
         assert self._bridge is not None
         from rlmagent.conversation import COMMAND_REGISTRY
         from rlmagent.directives import parse_command
@@ -448,13 +455,13 @@ class RlmAgentApp(App[None]):
         self.query_one(TranscriptView).add_notice(response or f"effort: {level}")
         self._refresh_status()
 
-    async def _open_model_picker(self) -> None:
+    async def _open_model_picker(self, start: str = "", title: str = "Select provider") -> None:
         """Show the provider/model dialog and apply whatever comes back."""
         if self._bridge is None:
             return
         session = self._bridge.session
         choice = await self.push_screen_wait(
-            ModelScreen(session.provider_name, session.model)
+            ModelScreen(session.provider_name, session.model, start_provider=start, title=title)
         )
         if choice is None:
             return
@@ -583,32 +590,81 @@ def needs_setup(ns: argparse.Namespace) -> bool:
     return False
 
 
-class SetupApp(App):
-    """Just the model page, shown before the first session exists."""
+WELCOME = (
+    "Welcome to rlm-agent.\n\n"
+    "It works in this folder: it reads and edits files, runs code in a sandbox,\n"
+    "and asks before changing anything outside it.\n\n"
+    "First, connect a model provider. You can add more now or later with /login."
+)
 
+
+class SetupApp(App):
+    """First run: a welcome, a provider, then the option to connect more."""
+
+    CSS_PATH = _CSS_PATH
     choice = None
 
+    def __init__(self) -> None:
+        super().__init__()
+        #: Further providers connected during setup; their keys are saved,
+        #: the first choice stays the default.
+        self.extra: list = []
+
     def on_mount(self) -> None:
+        from rlmagent.tui.choice_screen import ChoiceScreen
+
+        def welcomed(answer) -> None:
+            if answer is None:
+                self.exit()
+            else:
+                self._pick(first=True)
+
+        self.push_screen(ChoiceScreen(WELCOME, ["Connect a provider"]), welcomed)
+
+    def _pick(self, first: bool) -> None:
+        from rlmagent.tui.choice_screen import ChoiceScreen
         from rlmagent.tui.model_screen import ModelScreen
 
-        def done(choice) -> None:
-            self.choice = choice
-            self.exit()
+        def picked(choice) -> None:
+            if choice is not None:
+                if first:
+                    self.choice = choice
+                else:
+                    self.extra.append(choice)
+            if self.choice is None:
+                self.exit()
+                return
+            self.push_screen(ChoiceScreen("Connected. Anything else?",
+                                          [START_NOW, CONNECT_MORE]), next_step)
 
-        self.push_screen(ModelScreen(), done)
+        def next_step(answer) -> None:
+            if answer == CONNECT_MORE:
+                self._pick(first=False)
+            else:
+                self.exit()
+
+        title = "Select provider" if first else "Connect another provider"
+        self.push_screen(ModelScreen(title=title), picked)
 
 
-def save_setup(choice) -> None:
+START_NOW = "Start"
+CONNECT_MORE = "Connect another provider"
+
+
+def save_setup(choice, extra=()) -> None:
+    """Save the default provider and model, and the keys of any extra providers."""
     from rlmagent.config.store import load_config, remember_model, save_config
 
     config = load_config()
-    if choice.api_key:
-        config.api_keys[choice.provider] = choice.api_key
-    if choice.base_url:
-        config.base_urls[choice.provider] = choice.base_url
+    for item in (*extra, choice):
+        if item.api_key:
+            config.api_keys[item.provider] = item.api_key
+        if item.base_url:
+            config.base_urls[item.provider] = item.base_url
     config.provider, config.model = choice.provider, choice.model
     save_config(config)
-    remember_model(choice.provider, choice.model)
+    for item in (*extra, choice):
+        remember_model(item.provider, item.model)
 
 
 async def setup_if_needed(ns: argparse.Namespace) -> bool:
@@ -617,7 +673,7 @@ async def setup_if_needed(ns: argparse.Namespace) -> bool:
         await setup.run_async()
         if setup.choice is None:
             return False
-        save_setup(setup.choice)
+        save_setup(setup.choice, setup.extra)
     return True
 
 

@@ -55,8 +55,12 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
         ("ctrl+d", "forget", "Remove recent"),
     ]
 
-    def __init__(self, current_provider: str = "", current_model: str = "") -> None:
+    def __init__(self, current_provider: str = "", current_model: str = "",
+                 start_provider: str = "", title: str = "Select provider") -> None:
         super().__init__()
+        #: Open straight on this provider's page (``/login openai``).
+        self._start_provider = start_provider
+        self._title = title
         self._current_provider = current_provider
         self._fetched: list[str] = []
         self._current_model = current_model
@@ -79,12 +83,14 @@ class ModelScreen(ModalScreen[ModelChoice | None]):
         self.query_one("#model-key", Input).display = False
         self.query_one("#model-filter", Input).display = False
         self._show_providers()
+        if self._start_provider:
+            self._on_provider_chosen(self._start_provider)
 
     # -- steps --------------------------------------------------------------
 
     def _show_providers(self) -> None:
         """Step 1 — list the supported providers."""
-        self.query_one("#model-title", Label).update("Select provider")
+        self.query_one("#model-title", Label).update(self._title)
         listing = self.query_one("#model-list", ListView)
         listing.clear()
         for recent in recent_models():
