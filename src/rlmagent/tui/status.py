@@ -43,7 +43,10 @@ class StatusBar(Static):
         self._line = "  ·  ".join(parts)
         # Highlight the whole bar while a generation can be stopped.
         self.set_class(busy, "busy")
-        self.update(self._line)
+        from rich.markup import escape
+
+        dot = "[#c9a4ff]●[/] working" if busy else "[#7a7a7a]●[/] Ready"
+        self.update(f"{dot}   [#5a5a5a]{escape(self._line)}[/]")
 
 
 __all__ = ["StatusBar"]

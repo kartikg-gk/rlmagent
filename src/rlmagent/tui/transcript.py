@@ -5,6 +5,7 @@ from __future__ import annotations
 from textual.containers import VerticalScroll
 
 from rlmagent.tui.adapter import summarize_call
+from rlmagent.tui.logo import Logo
 from rlmagent.tui.messages import (
     AssistantBlock,
     CommandEcho,
@@ -30,6 +31,11 @@ class TranscriptView(VerticalScroll):
         self._live: AssistantBlock | None = None
         self._tools: dict[str, ToolLine] = {}
         self._cards: dict[tuple[str, int], StepCard] = {}
+
+    def on_mount(self) -> None:
+        # The name heads the conversation and scrolls away with it.
+        if not self.children:
+            self.mount(Logo())
 
     # -- appending ----------------------------------------------------------
 
@@ -109,6 +115,10 @@ class TranscriptView(VerticalScroll):
     def cards(self) -> list[StepCard]:
         return list(self._cards.values())
 
+    def cards_all(self) -> list[StepCard]:
+        """Every step row on screen, this run's and earlier runs'."""
+        return list(self.query(StepCard))
+
     # -- streaming ----------------------------------------------------------
 
     def stream_delta(self, delta: str) -> None:
@@ -140,6 +150,7 @@ class TranscriptView(VerticalScroll):
         self._tools.clear()
         self._cards.clear()
         self.remove_children()
+        self.mount(Logo())
 
     def replay(self, entries) -> None:
         """Repaint the view from a session's stored transcript."""

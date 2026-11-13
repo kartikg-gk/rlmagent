@@ -235,10 +235,15 @@ all recursive model calls. Providers that omit counts cannot supply those totals
 
 ### Terminal UI
 
-With the default engine each agent step is a card: depth, a short agent id, the step
-number and its state, then the code, the first lines of output and, once it ends,
-tokens, cost and time. Sub-agent cards are indented under their parent. Enter or a
-click opens a card in full; F2 shows the agent tree, F3 a timeline of steps and F4
+The chat reads turn by turn. With the default engine each agent step is one row: its
+state, `python` or a sub-agent's short id, the first line of its code, and lines in
+and out with the time it took. Sub-agent rows are indented under their parent. Space
+opens a row to its code and output in place, Enter or a click opens the step in full,
+and Ctrl+O opens or folds every row at once.
+A side panel lists the session's skills and sub-agents (Ctrl+T switches tab, F7 hides
+it; it hides itself in terminals narrower than 120 columns). F5 opens the run
+dashboard: the tree of runs, each step's code and output, and the REPL namespace;
+F5 or Esc closes it. F2 shows the agent tree, F3 a timeline of steps and F4
 the background workers with their heartbeats and scheduled jobs. The status bar shows steps,
 running agents, depth and spend against the run's limits. Messages typed while a
 run is going are queued and sent when it ends.

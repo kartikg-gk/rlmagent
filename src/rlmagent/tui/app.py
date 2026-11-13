@@ -13,7 +13,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.css.query import NoMatches
-from textual.widgets import Footer, Header
+from textual.widgets import Footer, Static
 
 from rlmagent.tui.adapter import (
     AgentNote,
@@ -30,6 +30,8 @@ from rlmagent.tui.composer import Composer, ModelBadge
 from rlmagent.tui.messages import ACCENT, QueuedStrip
 from rlmagent.tui.model_screen import ModelChoice, ModelScreen
 from rlmagent.tui.prompt import PromptInput
+from rlmagent.tui.run_view import DashboardScreen, agents_line
+from rlmagent.tui.side_panel import SidePanel
 from rlmagent.tui.sidebar import Sidebar
 from rlmagent.tui.status import StatusBar
 from rlmagent.tui.transcript import TranscriptView
@@ -75,6 +77,11 @@ class RlmAgentApp(App[None]):
         Binding("f4", "workers", "Workers", id="workers", priority=True),
         Binding("f1", "show_help", "Help", id="help", priority=True),
         Binding("ctrl+shift+y", "copy_answer", "Copy answer", id="copy_answer", priority=True),
+        Binding("f5", "dashboard", "Dashboard", id="dashboard", priority=True),
+        Binding("ctrl+t", "next_panel", "Next tab", id="next_panel", priority=True),
+        Binding("ctrl+o", "expand_steps", "Open all steps", id="expand_steps", priority=True),
+        Binding("f7", "toggle_panel", "Side panel", id="toggle_panel", priority=True),
+        Binding("ctrl+b", "toggle_sessions", "Sessions", id="toggle_sessions", priority=True),
     ]
 
     def __init__(self, bridge: SessionBridge | None = None) -> None:
@@ -85,6 +92,10 @@ class RlmAgentApp(App[None]):
         self._queued: list[str] = []
         #: Set by Ctrl+C so updates still in flight are not rendered.
         self._cancelled = False
+        #: The last thing asked, shown at the top of the dashboard.
+        self._question = ""
+        #: Animation frame for rows that show a running clock.
+        self._frame = 0
         #: When Ctrl+C was last pressed; a second press soon after quits outright.
         self._last_interrupt = 0.0
 
@@ -95,15 +106,19 @@ class RlmAgentApp(App[None]):
         return Content.from_markup(f"[{ACCENT}]rlm[/]-agent")
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        # Kept simple: the conversation turn by turn, the prompt, and a line of
+        # status. The run dashboard opens over it on F5.
         with Horizontal(id="body"):
             yield Sidebar()
             with Vertical(id="main"):
                 yield TranscriptView()
                 yield CompletionBar()
                 yield QueuedStrip()
-                yield Composer()
+            yield SidePanel()
+        # Run state sits right above where you type, then the sub-agent line.
         yield StatusBar()
+        yield Composer()
+        yield Static("", id="agents-line")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -130,8 +145,18 @@ class RlmAgentApp(App[None]):
             pass
         except (ValueError, OSError) as exc:
             self.notify(f"Could not load keybindings: {exc}", severity="error")
+        self.query_one(Sidebar).display = False  # Ctrl+B shows the session list
+        from rich.theme import Theme
+
+        # Inline code in replies in grey, like the rest of the text.
+        self.console.push_theme(Theme({"markdown.code": "#b4b4b4 on #141414"}))
         await self._refresh_sidebar()
         self._refresh_status()
+        self._tick()
+        # Redraws run off a clock, not off events: a fan-out can post hundreds
+        # of changes a second and one repaint per tick is all a terminal shows.
+        self.set_interval(0.1, self._tick)
+        self.query_one(PromptInput).focus()
         if self._bridge is not None:
             self.query_one(TranscriptView).replay(self._bridge.session.transcript)
             tree = getattr(self._bridge.session, "agent_tree", None)
@@ -139,6 +164,67 @@ class RlmAgentApp(App[None]):
                 tree.approver.ask = self._ask_approval
             if tree is not None:
                 tree.approver.question = self._ask_question
+
+    def _book(self):
+        from rlmagent.tui.steps import StepBook
+
+        return self._bridge.steps if self._bridge is not None else StepBook()
+
+    def _tick(self) -> None:
+        self._frame += 1
+        book = self._book()
+        with suppress(NoMatches):
+            main = self.screen_stack[0]
+            line = main.query_one("#agents-line", Static)
+            text = agents_line(book)
+            line.update(text)
+            line.display = bool(text)
+            skills = getattr(self._bridge.session, "skills", ()) if self._bridge is not None else ()
+            main.query_one(SidePanel).show(book, skills() if callable(skills) else skills)
+            # Steps still going show a running clock; redraw just those rows.
+            for card in main.query_one(TranscriptView).cards:
+                if card.step.state not in ("done", "failed"):
+                    card.refresh_step(card.step)
+
+    def on_resize(self, event) -> None:
+        """Narrow terminals give the chat the full width; the panel returns when there is room."""
+        with suppress(NoMatches):
+            panel = self.screen_stack[0].query_one(SidePanel)
+            if not getattr(self, "_panel_pinned", False):
+                panel.display = event.size.width >= 120
+
+    def action_next_panel(self) -> None:
+        """Ctrl+T: the side panel's next tab, showing the panel if it was hidden."""
+        panel = self.query_one(SidePanel)
+        if panel.display:
+            panel.next_tab()
+        else:
+            panel.display = True
+
+    def action_expand_steps(self) -> None:
+        """Ctrl+O: open every step's code and output, or fold them all back to rows."""
+        cards = self.query_one(TranscriptView).cards_all()
+        opening = any(card.collapsed for card in cards)
+        for card in cards:
+            card.set_open(opening)
+
+    def action_toggle_panel(self) -> None:
+        """F7: show or hide the side panel."""
+        panel = self.query_one(SidePanel)
+        panel.display = not panel.display
+        self._panel_pinned = True  # the user chose; resizing no longer overrides it
+
+    def action_dashboard(self) -> None:
+        """F5: open the run dashboard over the conversation; F5 or Esc closes it."""
+        if isinstance(self.screen, DashboardScreen):
+            self.pop_screen()
+            return
+        self.push_screen(DashboardScreen(self._book, lambda: self._question, lambda: self._busy))
+
+    def action_toggle_sessions(self) -> None:
+        """Ctrl+B: show or hide the session list."""
+        bar = self.query_one(Sidebar)
+        bar.display = not bar.display
 
     def action_toggle_auto(self) -> None:
         """Shift+Tab: stop or resume asking before file changes and commands, this session only."""
@@ -244,6 +330,7 @@ class RlmAgentApp(App[None]):
             return
 
         self.query_one(TranscriptView).add_user(text)
+        self._question = text
         self.run_worker(self._stream(text), exclusive=True)
 
     def on_step_card_inspect(self, event) -> None:
