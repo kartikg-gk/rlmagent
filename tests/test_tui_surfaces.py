@@ -183,10 +183,45 @@ async def test_sidebar_groups_sessions_and_searches():
         headings = [h.query_one("Label").content for h in bar.query(SectionHeading)]
         assert [str(h) for h in headings] == ["Running (1)", "Idle (1)", "Inactive (1)"]
         search = bar.query_one("#session-search")
-        search.value = "docs"
-        await pilot.pause()
-        rows = [i.session_id for i in bar.query(SessionItem)]
-        assert rows == ["bbb222"]
-        search.value = "ccc"
-        await pilot.pause()
-        assert [i.session_id for i in bar.query(SessionItem)] == ["ccc333"]
+        async def rows_after(text):
+            search.value = text
+            for _ in range(20):  # the rebuild is async; wait for it to land
+                await pilot.pause(0.05)
+                rows = [i.session_id for i in bar.query(SessionItem)]
+                if bar._shape and bar._shape[0] == text:
+                    return rows
+            return rows
+
+        assert await rows_after("docs") == ["bbb222"]
+        assert await rows_after("ccc") == ["ccc333"]
+
+
+def test_busy_session_names_its_holder(tmp_path):
+    import os
+
+    from rlmagent.harness.session.lease import SessionBusy, describe_holder
+
+    holder = tmp_path / "x.holder"
+    holder.write_text('{"pid": 4242, "since": 0, "command": "rlm-agent worker run"}', encoding="utf-8")
+    text = describe_holder(holder)
+    assert "process 4242" in text and "rlm-agent worker run" in text
+    assert describe_holder(tmp_path / "missing.holder") == ""
+    assert issubclass(SessionBusy, RuntimeError) and os.getpid()
+
+
+def test_attach_reports_drops_returns_and_version_mismatch(monkeypatch):
+    from rlmagent.tui.worker_attach import WorkerAttachApp
+
+    notes = []
+    view = SimpleNamespace(add_notice=lambda text, error=False: notes.append(text))
+    app = WorkerAttachApp("w1")
+    import importlib
+
+    monkeypatch.setattr(importlib.import_module("rlmagent.cli.main"), "get_version", lambda: "1.0.0")
+    app.note_connection(view, {"alive": True, "version": "0.9.0"})
+    assert any("0.9.0" in n and "1.0.0" in n for n in notes)
+    app.note_connection(view, {"alive": True, "version": "0.9.0"})
+    assert sum("0.9.0" in n for n in notes) == 1  # warned once
+    app.note_connection(view, {"alive": False})
+    app.note_connection(view, {"alive": True, "version": "1.0.0"})
+    assert any("stopped" in n for n in notes) and any("back" in n for n in notes)

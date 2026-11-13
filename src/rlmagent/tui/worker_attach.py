@@ -31,6 +31,10 @@ class WorkerAttachApp(App[None]):
         self.history_modified = None
         self.history_session = None
         self.last_model_reply = None
+        #: Whether the worker was alive at the last poll, to report drops and returns.
+        self.was_alive: bool | None = None
+        #: The worker version already warned about, so the warning shows once.
+        self.warned_version: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("", id="worker-status", markup=False)
@@ -93,10 +97,29 @@ class WorkerAttachApp(App[None]):
             elif kind != "reply":
                 transcript.add_notice(text, error=kind == "error")
         state = worker.state_of(self.worker_name)
+        self.note_connection(transcript, state)
         label = state.get("state", "starting") if state["alive"] else "offline · prompts queue"
         if state.get("state") == "passive" and not (worker.folder(self.worker_name) / "stop").exists():
             label = "passive · prompts queue"
         status.update(f"{self.worker_name} · {label}")
+
+    def note_connection(self, transcript, state: dict) -> None:
+        """Say when the worker drops or comes back, and when its version differs."""
+        alive = bool(state.get("alive"))
+        if self.was_alive is not None and alive != self.was_alive:
+            transcript.add_notice("worker is back; reattached" if alive
+                                  else "worker stopped; prompts will queue until it restarts")
+        self.was_alive = alive
+        theirs = state.get("version")
+        if alive and theirs and theirs != self.warned_version:
+            from rlmagent.cli.main import get_version
+
+            ours = get_version()
+            if theirs != ours:
+                transcript.add_notice(
+                    f"This worker runs rlm-agent {theirs}; this window is {ours}. "
+                    "Restart the worker to use the same version.", error=True)
+            self.warned_version = theirs
 
     def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
         if event.text in ("/detach", "/quit", "/exit", "/q"):

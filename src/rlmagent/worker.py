@@ -423,8 +423,10 @@ async def serve(name: str, ns: argparse.Namespace) -> int:
 
     ns.print_mode = True
     base = folder(name)
+    from rlmagent.cli.main import get_version
+
     meta = {"pid": os.getpid(), "cwd": os.getcwd(), "started": time.time(), "beat": time.time(),
-            "state": "starting", "session": None, "error": None}
+            "state": "starting", "session": None, "error": None, "version": get_version()}
     incident_id = os.environ.get("RLM_AGENT_WORKER_INCIDENT", "")
     if re.fullmatch(r"[a-f0-9]{32}", incident_id):
         meta["session"] = ns.resume
