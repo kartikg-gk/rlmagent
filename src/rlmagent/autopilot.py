@@ -24,6 +24,9 @@ from uuid import uuid4
 GATE_SECONDS = 600
 GATE_OUTPUT = 4_000
 STALL_TURNS = 3
+#: A failed gate after goal_done buys this many turns past max_turns, so a
+#: run that thought it was finished gets to fix what the check found.
+GATE_EXTRA_TURNS = 3
 
 
 def _only_reports_result(code: str) -> bool:
@@ -77,6 +80,8 @@ class Autopilot:
     _pending_prompt: str | None = field(default=None, init=False, repr=False)
     gate_results: dict[str, dict] = field(default_factory=dict)
     _verifying: bool = field(default=False, init=False, repr=False)
+    _gate_turns: int = field(default=0, init=False, repr=False)
+    _gate_failure: str = field(default="", init=False, repr=False)
 
     # -- persistence -------------------------------------------------------
 
@@ -136,6 +141,7 @@ class Autopilot:
     def set_goal(self, objective: str, token_budget: int | None = None) -> str:
         self.goal = Goal(objective.strip(), "active", "", token_budget, self._tokens(), time.time())
         self.gate_results.clear()
+        self._gate_turns, self._gate_failure = 0, ""
         self._last_turn, self._unchanged_turns = None, 0
         self._failed_turns.clear()
         self._pending_prompt = None
@@ -201,7 +207,11 @@ class Autopilot:
         finally:
             self._verifying = False
         if failures:
-            return "The gate command failed, so the goal is still open:\n" + "\n".join(failures)
+            report = "\n".join(failures)
+            if self._gate_turns < GATE_EXTRA_TURNS:
+                self._gate_turns += 1
+                self._gate_failure = report
+            return "The gate command failed, so the goal is still open:\n" + report
         goal.summary = str(summary)[:2000]
         goal.status = "done"
         self.save()
@@ -325,7 +335,7 @@ class Autopilot:
         used = self._tokens() - self.tokens_at_start
         if goal.status != "active":
             self.stop_autonomous("goal is " + goal.status)
-        elif self._pending_prompt is None and self.turns >= limits.max_turns:
+        elif self._pending_prompt is None and self.turns >= limits.max_turns + self._gate_turns:
             self.stop_autonomous(f"reached {limits.max_turns} turns")
         elif limits.max_tokens and used >= limits.max_tokens:
             self.stop_autonomous(f"used {used:,} tokens")
@@ -340,6 +350,11 @@ class Autopilot:
         self.turns += 1
         prompt = ("Continue toward the goal. Check what is left, do the next piece, and verify it. "
                   "Call goal_done(summary) only when everything is finished.")
+        if self._gate_failure:
+            prompt = ("goal_done was refused because a check failed:\n"
+                      f"{self._gate_failure[:GATE_OUTPUT]}\n\nFix what it reports, then call "
+                      "goal_done(summary) again.")
+            self._gate_failure = ""
         if self.durable:
             self._pending_prompt = prompt
             self.save()

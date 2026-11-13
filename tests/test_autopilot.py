@@ -227,3 +227,26 @@ async def test_repeated_session_replies_stop_autonomous_turns(tmp_path):
         assert session.autopilot.stopped_because == "no visible progress across 3 turns"
     finally:
         await session.shutdown()
+
+
+async def test_failed_gate_buys_extra_turns_with_the_failure_in_the_prompt(tmp_path):
+    from rlmagent.autopilot import GATE_EXTRA_TURNS
+
+    pilot, _ = _pilot(tmp_path)
+    pilot.set_goal("ship it")
+    pilot.limits.max_turns = 1
+    pilot.command_autonomous(f'gate "{sys.executable}" -c "print(\'red\'); raise SystemExit(2)"')
+    pilot.start_autonomous()
+    assert pilot.next_prompt() is not None  # turn 1 of 1
+
+    await pilot.goal_done("done")
+    prompt = pilot.next_prompt()
+    assert prompt is not None and "refused" in prompt and "red" in prompt
+
+    for _ in range(GATE_EXTRA_TURNS - 1):
+        await pilot.goal_done("done")
+        assert pilot.next_prompt() is not None
+    # The extra turns are spent; a further failure does not add more.
+    await pilot.goal_done("done")
+    assert pilot.next_prompt() is None
+    assert "turns" in pilot.stopped_because
