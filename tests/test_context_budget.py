@@ -355,9 +355,16 @@ class TestEstimateContext:
         assert est.limit == 300_000
 
     def test_threshold_propagated(self) -> None:
-        limits = ContextLimits(compaction_threshold=0.9)
+        limits = ContextLimits(compaction_threshold=0.9, reserve_tokens=0)
         est = estimate_context([], system="", limits=limits)
         assert est.threshold == 0.9
+
+    def test_threshold_leaves_room_for_the_reply(self) -> None:
+        limits = ContextLimits(window=100_000, compaction_threshold=0.95,
+                               reserve_tokens=20_000)
+        est = estimate_context([], system="", limits=limits,
+                               window_override=100_000)
+        assert est.threshold == 0.8
 
 
 # ── exceeds_threshold ───────────────────────────────────────────────────
@@ -723,3 +730,34 @@ class TestCompactionTurnBoundary:
         plan = plan_compaction(transcript, [], limits=ContextLimits(keep_recent=4, min_entries=4))
         assert plan is not None
         assert not isinstance(plan.to_keep[0], ToolOutcomeEntry)
+
+
+class TestKeptTailBudget:
+    def test_huge_recent_results_are_not_all_kept(self) -> None:
+        big = "x" * 40_000  # about 10k tokens each
+        transcript = [_human("start"), _model("ok")]
+        for _ in range(4):
+            transcript += [_model("", calls=[_call()]), _tool_result(big)]
+        transcript.append(_model("done"))
+        limits = ContextLimits(keep_recent_tokens=12_000)
+
+        plan = plan_compaction(transcript, [], limits=limits)
+
+        assert plan is not None
+        kept = sum(estimate_entry_tokens(e) for e in plan.to_keep)
+        assert kept <= 12_000
+        assert not isinstance(plan.to_keep[0], ToolOutcomeEntry)
+
+    def test_one_long_turn_can_still_be_compacted(self) -> None:
+        big = "y" * 40_000
+        transcript = [_human("one long task")]
+        for _ in range(5):
+            transcript += [_model("", calls=[_call()]), _tool_result(big)]
+        transcript.append(_model("done"))
+        limits = ContextLimits(keep_recent_tokens=12_000)
+
+        plan = plan_compaction(transcript, [], limits=limits)
+
+        # The only user turn starts at 0, yet a cut is still found inside it.
+        assert plan is not None
+        assert len(plan.to_summarize) > 1

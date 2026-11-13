@@ -72,7 +72,15 @@ class ContextLimits:
     """Utilization ratio above which automatic compaction is triggered."""
 
     keep_recent: int = 4
-    """Minimum number of recent entries preserved across a compaction."""
+    """Recent entries kept across a compaction when they fit ``keep_recent_tokens``."""
+
+    keep_recent_tokens: int = 20_000
+    """Token budget for the recent part kept word for word. A few huge tool
+    results must not survive a compaction whole and refill the window."""
+
+    reserve_tokens: int = 16_384
+    """Room left for the model's reply: compaction starts before the
+    transcript eats into it, whatever ``compaction_threshold`` says."""
 
     min_entries: int = 6
     """Transcript must be at least this long before compaction is allowed."""
@@ -255,8 +263,15 @@ def estimate_context(
         system=sys_tokens,
         messages=message_tokens,
         limit=window,
-        threshold=cfg.compaction_threshold,
+        threshold=_effective_threshold(cfg, window),
     )
+
+
+def _effective_threshold(cfg: ContextLimits, window: int) -> float:
+    """The configured ratio, lowered when it would leave no room to reply."""
+    if window <= 0 or cfg.reserve_tokens <= 0 or cfg.reserve_tokens >= window:
+        return cfg.compaction_threshold
+    return min(cfg.compaction_threshold, (window - cfg.reserve_tokens) / window)
 
 
 # ── threshold detection ─────────────────────────────────────────────────
@@ -310,6 +325,50 @@ def _turn_boundary(transcript: Sequence[TranscriptEntry], split: int) -> int:
     return len(transcript)
 
 
+def _kept_from(transcript: Sequence[TranscriptEntry], budget: int, want: int) -> int:
+    """Earliest index whose tail fits *budget*, keeping at least one entry.
+
+    Walks back from the end. Stops early once *want* entries are kept and the
+    next one would cross the budget; never keeps more than the budget allows
+    beyond the final entry.
+    """
+    start = len(transcript) - 1
+    used = estimate_entry_tokens(transcript[start])
+    while start > 1:
+        cost = estimate_entry_tokens(transcript[start - 1])
+        if used + cost > budget:
+            break
+        used += cost
+        start -= 1
+    del want  # the budget decides; the entry count only bounds the old rule
+    return start
+
+
+def _split_point(transcript: Sequence[TranscriptEntry], cfg: ContextLimits) -> int:
+    """Where the summarised part ends and the kept part begins.
+
+    Keeps the recent tail that fits ``keep_recent_tokens``, capped at the old
+    count rule so short transcripts behave as before. Prefers a whole user
+    turn; when that turn alone is over budget, cuts inside it, after a tool
+    result rather than between a call and its result.
+    """
+    count = min(max(cfg.keep_recent, len(transcript) // 4), len(transcript) - 1)
+    by_count = len(transcript) - count
+    by_budget = _kept_from(transcript, cfg.keep_recent_tokens, count)
+    start = max(by_count, by_budget)
+
+    turn = _turn_boundary(transcript, start)
+    if 0 < turn < len(transcript):
+        kept = sum(estimate_entry_tokens(e) for e in transcript[turn:])
+        if kept <= cfg.keep_recent_tokens or turn == start:
+            return turn
+    # The turn is too big to keep whole: cut inside it.
+    for index in range(max(start, 1), len(transcript)):
+        if not isinstance(transcript[index], ToolOutcomeEntry):
+            return index
+    return len(transcript)
+
+
 def plan_compaction(
     transcript: Sequence[TranscriptEntry],
     record_ids: Sequence[str],
@@ -322,11 +381,7 @@ def plan_compaction(
     if len(transcript) < cfg.min_entries:
         return None
 
-    keep_count = max(cfg.keep_recent, len(transcript) // 4)
-    # Never keep more than we have.
-    keep_count = min(keep_count, len(transcript) - 1)
-
-    split = _turn_boundary(transcript, len(transcript) - keep_count)
+    split = _split_point(transcript, cfg)
     if split < 1 or split >= len(transcript):
         return None
 

@@ -1124,16 +1124,27 @@ class CodingSession:
             max_chars=_CONTEXT_LIMITS.max_summary_chars,
         )
         summary_text = ""
+        cap = _CONTEXT_LIMITS.max_summary_chars
+        prompt = user_prompt
         for attempt in range(3):
             try:
-                candidate = await self._utility_completion(user_prompt, system_prompt)
+                candidate = await self._utility_completion(prompt, system_prompt)
                 if not candidate.strip():
                     raise ValueError("the summary response was empty")
+                if len(candidate) > cap and attempt < 2:
+                    # Slicing would drop whatever came last, often the most
+                    # recent state. Ask again for a tighter summary instead.
+                    prompt = (
+                        f"{user_prompt}\n\nYour last summary ran to {len(candidate)} "
+                        f"characters; the limit is {cap}. Write it again, shorter, "
+                        "keeping the newest facts and open work."
+                    )
+                    continue
             except ValueError as error:
                 if attempt == 2:
                     raise ValueError("Compaction failed after 3 invalid summaries; history was retained") from error
             else:
-                summary_text = candidate[:_CONTEXT_LIMITS.max_summary_chars]
+                summary_text = candidate[:cap]
                 break
         # The transcript shrinks but the kernel does not: say so, or the
         # model rebuilds variables it still has.
