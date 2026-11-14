@@ -1058,6 +1058,15 @@ async def _async_main(ns: argparse.Namespace) -> int:
     if ns.print_mode and ns.prompt is None:
         _die("Print mode requires a prompt (positional argument or stdin).")
 
+    from rlmagent.runtime import prepare_sandbox
+
+    def _to_stderr(*parts, **_):
+        print(*parts, file=sys.stderr, flush=True)
+
+    note = await prepare_sandbox(ns, say=_to_stderr)
+    if note:
+        _to_stderr(note)
+
     # Shared construction — identical to the path the TUI uses.
     session = await build_session(ns)
     _wire_signals(session)
