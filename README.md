@@ -7,23 +7,83 @@ delegation, and shared budget.
 
 ## Install
 
-Python 3.12 or newer is required. The default sandbox also requires Node.js.
+You need Python 3.12 or newer. The default sandbox, where the agent's code runs,
+also needs Node.js 18 or newer. Without Node, the app still installs and starts,
+and it tells you what to do.
+
+One line, on macOS, Linux or WSL:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/kartikg-gk/rlmagent/v0.2.3/scripts/install.sh | sh
+```
+
+On Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/kartikg-gk/rlmagent/v0.2.3/scripts/install.ps1 | iex
+```
+
+The installer:
+
+1. looks up the latest release on PyPI and installs that exact version;
+2. installs `uv` if it is missing (downloads are https only);
+3. removes an older install named `rlmagent`, if there is one;
+4. installs `rlmness-cli` as a tool, which provides the `rlm-agent` command;
+5. sets up the sandbox when Node is found, or tells you how to add it later.
+
+Each step prints `ok` or a note, and a failure says what to try next. Set
+`RLMAGENT_VERSION=0.2.3` to pin a version, and `NO_COLOR=1` for plain output.
+
+Or install with pip:
 
 ```sh
 pip install rlmness-cli
-rlmness --setup
+rlmness --setup        # sandbox; needs Node
 ```
 
-Or install it as a tool with one line, which also sets up the sandbox when Node is
-present (`RLMAGENT_VERSION` pins a version):
+Open a new terminal afterwards so `rlm-agent` is on your PATH.
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/kartikg-gk/rlmagent/main/scripts/install.sh | sh
-```
+## First run
 
-```powershell
-irm https://raw.githubusercontent.com/kartikg-gk/rlmagent/main/scripts/install.ps1 | iex
-```
+1. Check the setup:
+
+   ```sh
+   rlm-agent status
+   ```
+
+   `ok sandbox` means Node and the sandbox are ready. If Node was missing at
+   install time, install it from https://nodejs.org, then run
+   `rlm-agent doctor --fix`.
+
+2. Start in a project folder:
+
+   ```sh
+   cd my-project
+   rlm-agent
+   ```
+
+   The first start opens a setup page. Pick a provider, paste its key or sign in,
+   and choose a model. It is saved, and later starts go straight to the chat.
+   `rlm-agent config` opens the same page again.
+
+3. Type a task and press Enter. Each step appears as one row. Space opens a row,
+   Ctrl+O opens or folds all rows, and F5 shows the run dashboard.
+
+4. For a single answer without the full screen:
+
+   ```sh
+   rlm-agent -p "Summarize this project"
+   ```
+
+If Node is present but the sandbox was never set up, the first start sets it up
+(one time, needs npm). If Node is missing, the chat shows a note saying what to do.
+The app never switches to running code on your machine by itself;
+`rlm-agent --kernel local` does that when you choose it.
+
+Keep up to date with `rlm-agent update` (or `/update` in the chat).
+`rlm-agent update --rollback` returns to the previous version.
+
+## Configuration
 
 `rlm-agent config show` prints the saved provider and model, and any
 `RLM_AGENT_PROVIDER`, `RLM_AGENT_MODEL`, `RLM_AGENT_API_KEY` or `RLM_AGENT_HOME`
@@ -36,7 +96,7 @@ install the matching backend wheel before the application wheel.
 
 ## Run
 
-Run `rlm-agent` in a project folder. The first run opens a page to pick a provider and model; after that it opens the terminal UI. Where a security policy blocks the `rlm-agent` launcher, `python -m rlmagent` runs the same command.
+Where a security policy blocks the `rlm-agent` launcher, `python -m rlmagent` runs the same command.
 
 Configure an API provider, or use an installed and authenticated external CLI:
 

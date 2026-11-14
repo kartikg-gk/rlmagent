@@ -35,3 +35,46 @@ async def test_no_note_no_notice():
     async with app.run_test(size=(150, 40)) as pilot:
         await pilot.pause()
         assert not app.query_one(TranscriptView).query(NoticeBlock)
+
+
+@pytest.mark.asyncio
+async def test_prepare_sandbox_installs_on_first_use(monkeypatch):
+    from rlmness import home, wasm_runtime
+
+    from rlmagent.runtime import prepare_sandbox
+
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/" + name)
+    ready = {"done": False}
+    monkeypatch.setattr(wasm_runtime, "wasm_available", lambda: ready["done"])
+
+    def fake_setup(print=print):
+        ready["done"] = True
+        return 0
+
+    monkeypatch.setattr(home, "setup", fake_setup)
+    said = []
+    assert await prepare_sandbox(argparse.Namespace(kernel="wasm"), say=said.append) == ""
+    assert ready["done"] and any("sandbox" in line for line in said)
+
+
+@pytest.mark.asyncio
+async def test_prepare_sandbox_reports_failure_and_never_switches_kernel(monkeypatch):
+    from rlmness import home, wasm_runtime
+
+    from rlmagent.runtime import prepare_sandbox
+
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(wasm_runtime, "wasm_available", lambda: False)
+    monkeypatch.setattr(home, "setup", lambda print=print: 1)
+    ns = argparse.Namespace(kernel="wasm")
+    note = await prepare_sandbox(ns, say=lambda *a: None)
+    assert "doctor --fix" in note and "--kernel local" in note
+    assert ns.kernel == "wasm"
+
+
+@pytest.mark.asyncio
+async def test_prepare_sandbox_skips_local_kernel(monkeypatch):
+    from rlmagent.runtime import prepare_sandbox
+
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    assert await prepare_sandbox(argparse.Namespace(kernel="local")) == ""

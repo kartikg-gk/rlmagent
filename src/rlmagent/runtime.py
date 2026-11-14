@@ -12,6 +12,34 @@ if TYPE_CHECKING:
     from rlmagent.trust import Asker, Choice, TrustOutcome, TrustRequest
 
 
+async def prepare_sandbox(ns: argparse.Namespace, say=print) -> str:
+    """Install the sandbox on first use when Node is present; return a note when it still cannot start.
+
+    Never switches to the local kernel by itself: running the agent's code
+    directly on this machine stays a choice the user makes with --kernel local.
+    """
+    import asyncio
+
+    from rlmagent.tui.app import sandbox_note
+
+    if getattr(ns, "kernel", "wasm") != "wasm" or sandbox_note(ns):
+        return sandbox_note(ns)
+    try:
+        from rlmness.wasm_runtime import wasm_available
+        from rlmness import home
+    except ImportError:
+        return ""
+    if wasm_available():
+        return ""
+    say("Setting up the sandbox for the agent's code (one time, needs npm)...")
+    code = await asyncio.to_thread(home.setup, print=say)
+    if code == 0 and wasm_available():
+        return ""
+    return ("The sandbox could not be set up. Run `rlm-agent doctor --fix` to try again.\n"
+            "To run code directly on this machine without the sandbox, start with "
+            "`rlm-agent --kernel local`.")
+
+
 async def build_session(ns: argparse.Namespace, *, session_id: str | None = None) -> CodingSession:
     """Resolve configuration and return a ready ``CodingSession``."""
     from uuid import uuid4

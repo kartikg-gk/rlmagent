@@ -783,15 +783,16 @@ def sandbox_note(ns: argparse.Namespace) -> str:
 
 async def run_app(ns: argparse.Namespace) -> int:
     """Build the shared runtime session and run the TUI over it."""
-    from rlmagent.runtime import build_session, settle_project_trust
+    from rlmagent.runtime import build_session, prepare_sandbox, settle_project_trust
     from rlmagent.tui.trust_dialog import ask_in_dialog
 
     # Settled before the session exists: its answer decides what gets loaded.
     await settle_project_trust(ns, ask=ask_in_dialog)
     if not await setup_if_needed(ns):
         return 1
+    note = await prepare_sandbox(ns)
     bridge = SessionBridge(await build_session(ns))
-    app = RlmAgentApp(bridge, startup_note=sandbox_note(ns))
+    app = RlmAgentApp(bridge, startup_note=note)
     try:
         await app.run_async()
     finally:
