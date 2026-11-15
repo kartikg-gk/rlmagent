@@ -95,7 +95,7 @@ async def test_manual_job_is_single_flight_and_activates_only_at_boundary(tmp_pa
         assert session.refinement.task is first
         await first
         assert session.refinement.phase == "ready"
-        assert session._system == "Base policy" and not path.exists()
+        assert "Saved working guidance" not in session._system and not path.exists()
         assert session.refinement.read_guidance() == []
         session.refinement.at_boundary()
         assert not path.exists()

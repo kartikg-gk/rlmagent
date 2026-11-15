@@ -738,6 +738,22 @@ approval, so enforce any rule it needs in its own code. It cannot replace a buil
 name. `/tools` lists what is really available; in a cell, `await capabilities()`
 reports the same along with the limits in force.
 
+## The agent improves its own guidance
+
+While it works, the agent can keep what it learns for later tasks in the same
+project. From a cell it calls `await save_guidance(id, content, reason,
+kind="prompt", title=None)` to add or change an entry, and
+`await remove_guidance(id, reason)` to drop one that proved wrong. Entries are
+the same kinds `/refine` uses: `prompt`, `skill` and `subagent`.
+
+Each change is saved at once as a new revision with its reason, readable
+straight away through `await guidance(id)`, and part of the prompt from the
+next turn. Nobody is asked to approve it. The result names the revision to go
+back to, so `/refine rollback N` undoes it, and `/refine evidence` tracks
+whether it helped. A turn can make at most 8 such changes. Plan mode, read-only
+runs and `/refine off` block them; `/refine self off` turns off only this, for
+the session, and `/refine self on` turns it back on.
+
 ## Manual harness refinement
 
 Use `/refine` when a conversation contains a correction or procedure worth

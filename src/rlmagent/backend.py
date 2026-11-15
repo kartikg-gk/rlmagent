@@ -337,7 +337,7 @@ class BackendProvider:
         fixed = {"FINAL", "capabilities", "rlm", "gather_rlm", "spawn", "children", "tell_parent",
                  "name_child", "find_child", "child_info", "steer_child", "child_messages",
                  "read_child_message", "child_delivery_receipt"}
-        optional = {"fetch_url", "guidance", "improve", "playbook"}
+        optional = {"fetch_url", "guidance", "save_guidance", "remove_guidance", "improve", "playbook"}
         workspace = Workspace(self.tree.cwd, self.tree.approver).functions()
         extended = getattr(self.tree, "extension_functions", {})
         builtin = getattr(self.tree, "host_functions", {})
@@ -531,6 +531,23 @@ class BackendProvider:
                     refinement = getattr(tree, "refinement", None)
                     return refinement.read_guidance(id) if refinement is not None else []
 
+                async def save_guidance(id, content, reason, kind="prompt", title=None):
+                    """Save or change a guidance entry for later tasks in this project; saved at once.
+    kind: "prompt" (a short note), "skill" (Markdown with name/description frontmatter)
+    or "subagent" (how to hand out work). Say in `reason` what happened that it helps with."""
+                    refinement = getattr(tree, "refinement", None)
+                    if refinement is None:
+                        raise RuntimeError("No saved guidance is attached to this run")
+                    return refinement.agent_edit("save", str(id), kind=kind, title=title,
+                                                 content=content, reason=reason)
+
+                async def remove_guidance(id, reason):
+                    """Remove a guidance entry that proved wrong or stale; saved at once."""
+                    refinement = getattr(tree, "refinement", None)
+                    if refinement is None:
+                        raise RuntimeError("No saved guidance is attached to this run")
+                    return refinement.agent_edit("remove", str(id), reason=reason)
+
                 async def capabilities():
                     names = {name for name in joined if not name.startswith("_")}
                     if "_spawn" in joined:
@@ -573,6 +590,8 @@ class BackendProvider:
 
                     joined["wait_for_activity"] = wrap(wait_for_activity)
                 joined["guidance"] = wrap(guidance)
+                joined["save_guidance"] = wrap(save_guidance)
+                joined["remove_guidance"] = wrap(remove_guidance)
                 joined["capabilities"] = wrap(capabilities)
                 joined.update(
                     playbook=wrap(playbook), improve=wrap(improve), fetch_url=wrap(fetch_url)

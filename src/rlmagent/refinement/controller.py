@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from rlmagent.refinement.engine import evidence_text, review
-from rlmagent.refinement.store import HarnessStore, skill_parts
+from rlmagent.refinement.store import ChangeNote, Guidance, HarnessStore, Snapshot, skill_parts
 from rlmagent.skillset import Skill
 
 
@@ -50,6 +50,10 @@ class Refinement:
         self._next_review_turn = 0
         # A proposal that changes guidance waits for /refine apply before it is saved.
         self.review_first = True
+        # The agent may save, change and remove guidance from its own cells while
+        # it works; each change is saved at once as a new revision.
+        self.self_edit = True
+        self._self_edits = 0
         self._apply_active()
 
     def writable(self):
@@ -78,6 +82,14 @@ class Refinement:
 
     async def command(self, argument):
         mode = argument.strip()
+        if mode == "self" or mode.startswith("self "):
+            selection = mode.removeprefix("self").strip()
+            if not selection:
+                return "Agent edits to guidance: " + ("on" if self.self_edit else "off") + "."
+            if selection not in ("on", "off"):
+                return "Use /refine self on|off."
+            self.self_edit = selection == "on"
+            return "Agent edits to guidance: " + selection + "."
         if mode == "auto" or mode.startswith("auto "):
             selection = mode.removeprefix("auto").strip()
             if not selection:
@@ -288,7 +300,55 @@ class Refinement:
             with suppress(asyncio.CancelledError):
                 await self.task
 
+    def agent_edit(self, action, entry_id, *, kind=None, title=None, content=None, reason=""):
+        """Save one change the agent made to its own guidance, as a new revision.
+
+        Readable at once through guidance(); the prompt picks it up at the next
+        turn boundary, like any other saved change.
+        """
+        if not self.self_edit:
+            raise PermissionError("Agent edits to guidance are off (/refine self on)")
+        if not self.writable():
+            raise PermissionError("Guidance is read-only here (refinement off, plan mode or a read-only run)")
+        if self._self_edits >= SELF_EDIT_LIMIT:
+            raise PermissionError(f"At most {SELF_EDIT_LIMIT} guidance changes per turn")
+        reason = str(reason or "").strip()
+        if not reason:
+            raise ValueError("Give a reason: what happened that this change should help with")
+        baseline = self.store.read()
+        state = baseline.model_copy(deep=True)
+        if action == "remove":
+            if entry_id not in state.entries:
+                raise ValueError(f"No guidance with id {entry_id!r}")
+            del state.entries[entry_id]
+            verb = "delete"
+        else:
+            previous = state.entries.get(entry_id)
+            entry = Guidance.model_validate({
+                "id": entry_id,
+                "kind": kind or (previous.kind if previous else "prompt"),
+                "title": title or (previous.title if previous else entry_id),
+                "content": content if content is not None else (previous.content if previous else ""),
+            })
+            if previous == entry:
+                return {"id": entry_id, "revision": baseline.revision, "changed": False}
+            state.entries[entry_id] = entry
+            verb = "update" if previous else "create"
+        state.revision += 1
+        state.history.append(ChangeNote(
+            id=uuid4().hex, summary=f"Agent {verb} of {entry_id} during a task",
+            evidence=reason[:8000], expected=reason[:2000], edits=[{"action": verb, "id": entry_id}]))
+        self.active = self.store.commit(baseline, Snapshot.model_validate(state.model_dump()))
+        self._self_edits += 1
+        evidence = getattr(self.session, "evidence", None)
+        if evidence is not None:
+            note = self.active.history[-1]
+            evidence.saved(note.id[:12], "agent", [entry_id], note.summary)
+        return {"id": entry_id, "revision": self.active.revision, "changed": True,
+                "undo": f"/refine rollback {baseline.revision}"}
+
     def at_boundary(self):
+        self._self_edits = 0
         if not self.enabled():
             self.cancel()
             self._apply_active()
@@ -338,20 +398,24 @@ class Refinement:
                 parts.append(f"Workflow {entry.id}: {description}")
             else:
                 parts.append(f"{entry.kind} {entry.id} ({entry.title}):\n{_digest(entry)}")
+        note = SELF_EDIT_NOTE if getattr(self, "self_edit", False) and self.writable() else ""
         if not parts:
-            return base
+            return base + note
         return base + (
             "\n\nSaved working guidance (supplements the base instructions):\n"
             + "\n\n".join(parts)
             + "\nRead a selected workflow with await guidance(id), or invoke "
             "/skill:<id>. Read its full procedure before using it."
-        )
+        ) + note
 
     def filter_system(self, text):
         if self.enabled():
             return text
         supplemental = self.render("", ignore_gate=True)
-        return text.replace(supplemental, "") if supplemental else text
+        text = text.replace(supplemental, "") if supplemental else text
+        # The self-edit note is not part of the gated render, so take it out
+        # on its own: with refinement off the agent cannot edit guidance.
+        return text.replace(SELF_EDIT_NOTE, "")
 
     def read_guidance(self, entry_id=None):
         if not self.enabled():
@@ -385,6 +449,19 @@ class Refinement:
         store = self.store if session.cwd == self.session.cwd else HarnessStore(None)
         session.refinement = Refinement(session, store)
         return session.refinement
+
+
+SELF_EDIT_LIMIT = 8
+SELF_EDIT_NOTE = (
+    "\n\nYou can improve your own working guidance for this project while you work. "
+    "When you learn something later tasks here should know (a correction from the user, "
+    "a mistake you made twice, a procedure that worked, a fact about this project), call "
+    "await save_guidance(id, content, reason, kind='prompt', title=None) in a cell. "
+    "kind 'skill' takes Markdown starting with name/description frontmatter; kind "
+    "'subagent' describes how to hand out work. Call await remove_guidance(id, reason) "
+    "for guidance that proved wrong. Changes are saved at once and apply from the next turn; "
+    "keep them short and specific, and update an entry rather than adding a near copy."
+)
 
 
 def proposal_diff(before, after) -> str:
