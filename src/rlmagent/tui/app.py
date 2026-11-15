@@ -769,16 +769,8 @@ async def setup_if_needed(ns: argparse.Namespace) -> bool:
     return True
 
 
-def sandbox_note(ns: argparse.Namespace) -> str:
-    """Why the default sandbox cannot start on this machine, or "" when it can."""
-    import shutil
-
-    if getattr(ns, "kernel", "wasm") != "wasm" or shutil.which("node") is not None:
-        return ""
-    return ("Node.js 18+ was not found, and the sandbox that runs the agent's code needs it.\n"
-            "Install Node (https://nodejs.org), then run `rlm-agent doctor --fix` and start again.\n"
-            "To run code directly on this machine without the sandbox, start with "
-            "`rlm-agent --kernel local`.")
+# Lives with the session code, so a print-mode run never loads the screen.
+from rlmagent.runtime import sandbox_note  # noqa: E402,F401
 
 
 async def run_app(ns: argparse.Namespace) -> int:

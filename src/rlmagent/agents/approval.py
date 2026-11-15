@@ -52,6 +52,8 @@ class Approver:
         self.question = None  # async (question, choices) -> answer; None: nobody to ask
         self.one_question = asyncio.Lock()
         self._always: set[tuple[str, str]] = set()
+        #: Requests refused only because there was nobody to ask, newest last.
+        self.unasked: list[str] = []
 
     async def approve(self, request: Request) -> str:
         """The digest that may run, or Refused."""
@@ -62,6 +64,7 @@ class Approver:
         if self.policy == "auto" or (request.kind, request.target) in self._always:
             return request.digest
         if self.policy != "ask" or self.ask is None:
+            self.unasked.append(f"{request.kind} {request.target}")
             raise Refused(
                 f"refused: {request.kind} {request.target} needs approval "
                 "(run with --auto-approve, or interactively)"

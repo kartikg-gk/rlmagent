@@ -848,7 +848,24 @@ async def _run_one_shot(
     ok = await _consume_events(events, print_mode=print_mode)
     ok = await _keep_going(session, ok, print_mode=print_mode)
     sys.stdout.flush()
-    return 0 if ok else 1
+    refused = _report_unasked(session)
+    return 0 if ok and not refused else 1
+
+
+def _report_unasked(session) -> bool:
+    """Say on stderr what a one-shot run could not do because nobody could approve it.
+
+    The reply above may still read as if the work was done; this line is what a
+    person or a script can rely on.
+    """
+    tree = getattr(session, "agent_tree", None)
+    refused = list(dict.fromkeys(getattr(getattr(tree, "approver", None), "unasked", None) or ()))
+    if not refused:
+        return False
+    shown = "; ".join(refused[:5]) + (f"; and {len(refused) - 5} more" if len(refused) > 5 else "")
+    print(f"Not done: {len(refused)} action(s) needed approval and nobody could give it here: "
+          f"{shown}. Run again with --auto-approve to allow them.", file=sys.stderr)
+    return True
 
 
 async def _keep_going(session: CodingSession, ok: bool, *, print_mode: bool) -> bool:

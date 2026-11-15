@@ -12,6 +12,18 @@ if TYPE_CHECKING:
     from rlmagent.trust import Asker, Choice, TrustOutcome, TrustRequest
 
 
+def sandbox_note(ns: argparse.Namespace) -> str:
+    """Why the default sandbox cannot start on this machine, or "" when it can."""
+    import shutil
+
+    if getattr(ns, "kernel", "wasm") != "wasm" or shutil.which("node") is not None:
+        return ""
+    return ("Node.js 18+ was not found, and the sandbox that runs the agent's code needs it.\n"
+            "Install Node (https://nodejs.org), then run `rlm-agent doctor --fix` and start again.\n"
+            "To run code directly on this machine without the sandbox, start with "
+            "`rlm-agent --kernel local`.")
+
+
 async def prepare_sandbox(ns: argparse.Namespace, say=print) -> str:
     """Install the sandbox on first use when Node is present; return a note when it still cannot start.
 
@@ -19,8 +31,6 @@ async def prepare_sandbox(ns: argparse.Namespace, say=print) -> str:
     directly on this machine stays a choice the user makes with --kernel local.
     """
     import asyncio
-
-    from rlmagent.tui.app import sandbox_note
 
     if getattr(ns, "kernel", "wasm") != "wasm" or sandbox_note(ns):
         return sandbox_note(ns)
