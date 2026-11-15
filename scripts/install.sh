@@ -1,10 +1,12 @@
 #!/bin/sh
 # Install rlm-agent as a command-line tool, with its sandbox when Node is present.
+# Runs on macOS, Linux, WSL and Git Bash on Windows.
 #   curl --proto '=https' --tlsv1.2 -fsSL <url-of-this-file> | sh
 # Set RLMAGENT_VERSION to pin a version, e.g. RLMAGENT_VERSION=0.2.2.
 # Otherwise the latest release on PyPI is looked up and installed by exact version.
 # Set NO_COLOR=1 for plain output.
 set -eu
+windows=""
 
 package="rlmness-cli"
 
@@ -29,9 +31,8 @@ fetch() { curl --proto '=https' --tlsv1.2 -fsSL "$@"; }
 step "Checking this machine"
 case "$(uname -s)" in
     Linux|Darwin) ok "$(uname -s) $(uname -m)" ;;
-    MINGW*|MSYS*|CYGWIN*)
-        fail "This script is for macOS, Linux and WSL." \
-             "On Windows use PowerShell: irm <url>/install.ps1 | iex" ;;
+    MINGW*|MSYS*) windows=1; ok "Windows (Git Bash) $(uname -m)" ;;
+    CYGWIN*) fail "Cygwin is not supported." "Use Git Bash, WSL or PowerShell: irm <url>/install.ps1 | iex" ;;
     *) fail "Unsupported system: $(uname -s)." "Install with pip instead: pip install $package" ;;
 esac
 command -v curl >/dev/null 2>&1 || fail "curl was not found." "Install curl with your package manager and run this again."
@@ -55,8 +56,11 @@ step "Getting uv, which installs and isolates the tool"
 if command -v uv >/dev/null 2>&1; then
     ok "found $(uv --version 2>/dev/null || echo uv)"
 else
-    fetch https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 \
-        || fail "Installing uv failed." "See https://docs.astral.sh/uv/getting-started/installation/ and run this again."
+    if [ "$windows" = 1 ]; then
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex" >/dev/null 2>&1
+    else
+        fetch https://astral.sh/uv/install.sh | sh >/dev/null 2>&1
+    fi || fail "Installing uv failed." "See https://docs.astral.sh/uv/getting-started/installation/ and run this again."
     PATH="$HOME/.local/bin:$PATH"
     export PATH
     command -v uv >/dev/null 2>&1 || fail "uv was installed but is not on PATH." "Open a new terminal and run this again."

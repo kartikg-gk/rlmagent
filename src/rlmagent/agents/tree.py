@@ -248,7 +248,7 @@ class AgentTree:
         if node is None:
             raise RuntimeError(f"unknown agent {agent_id!r}")
         policy = getattr(self, "policy", None)
-        if op in ("guidance", "improve", "playbook") and policy is not None and not policy.allows_tool(op):
+        if op in ("guidance", "save_guidance", "remove_guidance", "improve", "playbook") and policy is not None and not policy.allows_tool(op):
             raise Refused(f"{op} is disabled by the tool policy")
         if op == "context":
             return node.context
@@ -266,6 +266,14 @@ class AgentTree:
             if refinement is None:
                 raise RuntimeError("No refined guidance is attached to this run")
             return refinement.read_guidance(args.get("id"))
+        if op in ("save_guidance", "remove_guidance"):
+            refinement = getattr(self, "refinement", None)
+            if refinement is None:
+                raise RuntimeError("No saved guidance is attached to this run")
+            action = "remove" if op == "remove_guidance" else "save"
+            return refinement.agent_edit(
+                action, str(args.get("id", "")), kind=args.get("kind"), title=args.get("title"),
+                content=args.get("content"), reason=args.get("reason", ""))
         if op in ("improve", "playbook"):
             improver = self._improver_of(node)
             if improver is None:

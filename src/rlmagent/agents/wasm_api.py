@@ -7,6 +7,19 @@ CORE = r'''
 async def guidance(id=None):
     return await _rlmagent("guidance", {"id": id})
 
+
+async def save_guidance(id, content, reason, kind="prompt", title=None):
+    """Save or change a guidance entry for later tasks in this project; saved at once.
+    kind: "prompt" (a short note), "skill" (Markdown with name/description frontmatter)
+    or "subagent" (how to hand out work). Say in `reason` what happened that it helps with."""
+    return await _rlmagent("save_guidance", {"id": id, "content": content, "reason": reason,
+                                         "kind": kind, "title": title})
+
+
+async def remove_guidance(id, reason):
+    """Remove a guidance entry that proved wrong or stale; saved at once."""
+    return await _rlmagent("remove_guidance", {"id": id, "reason": reason})
+
 async def improve(instructions=None, shared=False):
     """Ask for the playbook to be updated from this conversation when the turn ends."""
     return await _rlmagent("improve", {"instructions": instructions, "shared": bool(shared)})

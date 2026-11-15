@@ -11,16 +11,16 @@ You need Python 3.12 or newer. The default sandbox, where the agent's code runs,
 also needs Node.js 18 or newer. Without Node, the app still installs and starts,
 and it tells you what to do.
 
-One line, on macOS, Linux or WSL:
+One line, on macOS, Linux, WSL or Git Bash on Windows:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/kartikg-gk/rlmagent/v0.2.3/scripts/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/kartikg-gk/rlmagent/v0.2.4/scripts/install.sh | sh
 ```
 
 On Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/kartikg-gk/rlmagent/v0.2.3/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/kartikg-gk/rlmagent/v0.2.4/scripts/install.ps1 | iex
 ```
 
 The installer:
@@ -32,7 +32,7 @@ The installer:
 5. sets up the sandbox when Node is found, or tells you how to add it later.
 
 Each step prints `ok` or a note, and a failure says what to try next. Set
-`RLMAGENT_VERSION=0.2.3` to pin a version, and `NO_COLOR=1` for plain output.
+`RLMAGENT_VERSION=0.2.4` to pin a version, and `NO_COLOR=1` for plain output.
 
 Or install with pip:
 
@@ -737,6 +737,22 @@ session`. It runs in the host with your permissions, outside the sandbox and out
 approval, so enforce any rule it needs in its own code. It cannot replace a built-in
 name. `/tools` lists what is really available; in a cell, `await capabilities()`
 reports the same along with the limits in force.
+
+## The agent improves its own guidance
+
+While it works, the agent can keep what it learns for later tasks in the same
+project. From a cell it calls `await save_guidance(id, content, reason,
+kind="prompt", title=None)` to add or change an entry, and
+`await remove_guidance(id, reason)` to drop one that proved wrong. Entries are
+the same kinds `/refine` uses: `prompt`, `skill` and `subagent`.
+
+Each change is saved at once as a new revision with its reason, readable
+straight away through `await guidance(id)`, and part of the prompt from the
+next turn. Nobody is asked to approve it. The result names the revision to go
+back to, so `/refine rollback N` undoes it, and `/refine evidence` tracks
+whether it helped. A turn can make at most 8 such changes. Plan mode, read-only
+runs and `/refine off` block them; `/refine self off` turns off only this, for
+the session, and `/refine self on` turns it back on.
 
 ## Manual harness refinement
 
