@@ -11,16 +11,16 @@ You need Python 3.12 or newer. The default sandbox, where the agent's code runs,
 also needs Node.js 18 or newer. Without Node, the app still installs and starts,
 and it tells you what to do.
 
-One line, on macOS, Linux or WSL:
+One line, on macOS, Linux, WSL or Git Bash on Windows:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/kartikg-gk/rlmagent/v0.2.3/scripts/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/kartikg-gk/rlmagent/v0.2.4/scripts/install.sh | sh
 ```
 
 On Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/kartikg-gk/rlmagent/v0.2.3/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/kartikg-gk/rlmagent/v0.2.4/scripts/install.ps1 | iex
 ```
 
 The installer:
@@ -32,7 +32,7 @@ The installer:
 5. sets up the sandbox when Node is found, or tells you how to add it later.
 
 Each step prints `ok` or a note, and a failure says what to try next. Set
-`RLMAGENT_VERSION=0.2.3` to pin a version, and `NO_COLOR=1` for plain output.
+`RLMAGENT_VERSION=0.2.4` to pin a version, and `NO_COLOR=1` for plain output.
 
 Or install with pip:
 
