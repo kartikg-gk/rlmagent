@@ -37,6 +37,22 @@ def _save(path: Path, text: str) -> None:
         f.write(text)
 
 
+def _capped_note(limit: int, base: Path, regex, rest) -> str:
+    """What a capped search says, so its list is not mistaken for a count.
+
+    When one file was searched, the rest of it is cheap to scan (files over
+    MAX_READ are skipped), so the note can give the true total.
+    """
+    if base.is_file():
+        total = limit + sum(1 for line in rest if regex.search(line))
+        if total > limit:
+            return (f"stopped at {limit} of {total} matching lines; this list is not a count. "
+                    f"The file has {total} matching lines.")
+        return f"stopped at {limit} matching lines, which is all of them."
+    return (f"stopped at {limit} matches and there are more; this list is not a count. "
+            "Narrow the search, or read the files and count in Python.")
+
+
 class Workspace:
     def __init__(self, root: str | Path, approver: Approver) -> None:
         self.root = Path(root).resolve()
@@ -79,7 +95,10 @@ class Workspace:
 
     async def search_files(self, pattern: str, path: str = ".", glob: str | None = None,
                            ignore_case: bool = False, limit: int = MAX_MATCHES) -> list[dict]:
-        """Lines matching a regular expression: [{"path", "line", "text"}], capped at limit."""
+        """Lines matching a regular expression: [{"path", "line", "text"}], at most 500.
+
+        A capped result ends with a {"note"} entry, so its length is not a count:
+        to count or total matches, read the file and do it in Python."""
         flags = re.IGNORECASE if ignore_case else 0
         regex = re.compile(pattern, flags)
         base = self._path(path)
@@ -100,7 +119,7 @@ class Workspace:
                                 "text": text[:MAX_MATCH_TEXT],
                             })
                             if len(found) >= limit:
-                                found.append({"note": f"stopped at {limit} matches; narrow the search"})
+                                found.append({"note": _capped_note(limit, base, regex, f)})
                                 return found
             except (UnicodeDecodeError, OSError):
                 continue
