@@ -73,7 +73,7 @@ def test_a_project_extension_and_capabilities_reach_a_real_cell(tmp_path, kernel
     finally:
         server.shutdown()
     assert done.returncode == 0, done.stderr
-    assert "[3, True, True, False, 'deny']" in done.stdout
+    assert "[3, True, True, False, 'auto']" in done.stdout
 
 
 def test_an_untrusted_folder_gets_no_project_extension(tmp_path):

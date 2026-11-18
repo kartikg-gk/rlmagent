@@ -211,8 +211,6 @@ def parse_contract(doc: object) -> Contract:
             raise ContractError(f"kernel.kind: {k['kind']!r} is not 'wasm' or 'local'")
         if k["approve"] not in ("deny", "auto"):
             raise ContractError(f"kernel.approve: {k['approve']!r} is not 'deny' or 'auto'")
-        if restore and k["kind"] != "wasm":
-            raise ContractError("kernel.restore: requires kernel.kind 'wasm'")
         kernel = KernelSpec(**k, restore=restore)
         doc = {key: value for key, value in doc.items() if key != "kernel"}
     top = _fields(doc, "", {

@@ -12,6 +12,23 @@ if TYPE_CHECKING:
     from rlmagent.trust import Asker, Choice, TrustOutcome, TrustRequest
 
 
+def shell_access_for(ns: argparse.Namespace) -> str:
+    """The shell follows the sandbox unless --shell-access says otherwise."""
+    chosen = getattr(ns, "shell_access", None)
+    if chosen:
+        return chosen
+    return "workspace" if getattr(ns, "kernel", "local") == "wasm" else "host"
+
+
+def approval_policy(ns: argparse.Namespace) -> str:
+    """ask in the interactive UI; a -p run acts without asking unless --read-only."""
+    if getattr(ns, "auto_approve", False):
+        return "auto"
+    if getattr(ns, "print_mode", False) or getattr(ns, "prompt", None) is not None:
+        return "deny" if getattr(ns, "read_only", False) else "auto"
+    return "ask"
+
+
 def sandbox_note(ns: argparse.Namespace) -> str:
     """Why the default sandbox cannot start on this machine, or "" when it can."""
     import shutil
@@ -130,7 +147,7 @@ async def _build_session(ns: argparse.Namespace, *, session_id: str | None = Non
         max_compactions=getattr(ns, "max_compactions", None),
         agent_max_tokens=getattr(ns, "agent_max_tokens", None),
         search_block=list(getattr(ns, "search_block", None) or []),
-        shell_access=getattr(ns, "shell_access", "workspace"),
+        shell_access=shell_access_for(ns),
         shell_network=getattr(ns, "shell_network", False),
     )
     await tree.start()
@@ -322,7 +339,13 @@ async def _build_session(ns: argparse.Namespace, *, session_id: str | None = Non
     elif sessions_dir is not None:
         tree.event_path = sessions_dir / f"{session.session_id}.backend.events.jsonl"
     session.agent_tree = tree
-    session.shadow = Shadow(session.cwd, rlm_agent_home())
+    one_shot = getattr(ns, "print_mode", False) or getattr(ns, "prompt", None) is not None
+    if one_shot and getattr(ns, "no_session", False):
+        # Nothing can be undone after this process exits with no saved session,
+        # so the per-turn workspace snapshot (several git calls) is skipped.
+        session.shadow = None
+    else:
+        session.shadow = Shadow(session.cwd, rlm_agent_home())
     session.load_undo()
     session.tasks = tasks
     session.mcp = hub
@@ -435,12 +458,7 @@ def make_agent_tree(ns, provider, provider_name, model, sessions_dir, *, cwd, ba
         raise ValueError("The WebAssembly sandbox is not installed. Run `rlmness --setup` "
                          "or explicitly select --kernel local for host Python execution.")
     network = getattr(ns, "network", True)
-    if getattr(ns, "auto_approve", False):
-        policy = "auto"
-    elif getattr(ns, "print_mode", False) or getattr(ns, "prompt", None) is not None:
-        policy = "deny"
-    else:
-        policy = "ask"
+    policy = approval_policy(ns)
 
     def system_for(node, tools):
         base = _resolve_system(None, tools=tools, skills=[])

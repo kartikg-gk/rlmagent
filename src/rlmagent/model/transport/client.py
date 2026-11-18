@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import ssl
 from collections.abc import Iterator
@@ -66,12 +67,20 @@ def build_async_client(**kwargs: Any) -> httpx.AsyncClient:
         return httpx.AsyncClient(**kwargs)
 
 
-def certificate_context() -> ssl.SSLContext:
+@functools.lru_cache(maxsize=4)
+def _context_for(extra: str | None) -> ssl.SSLContext:
     context = ssl.create_default_context()
-    context.load_verify_locations(cafile=certifi.where())
-    if extra := os.environ.get("NODE_EXTRA_CA_CERTS"):
+    # The system store is fast to load (~20 ms on Windows); certifi's bundle costs
+    # ~270 ms to parse, so it is only added when the system has no roots of its own.
+    if not context.cert_store_stats().get("x509_ca"):
+        context.load_verify_locations(cafile=certifi.where())
+    if extra:
         context.load_verify_locations(cafile=extra)
     return context
+
+
+def certificate_context() -> ssl.SSLContext:
+    return _context_for(os.environ.get("NODE_EXTRA_CA_CERTS") or None)
 
 
 def fetch_json(url: str, *, timeout: float, follow_redirects: bool = False) -> dict[str, object]:

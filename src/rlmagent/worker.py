@@ -235,7 +235,7 @@ def interrupt(name: str) -> bool:
     return True
 
 
-def _enable_interactive_input(session, name: str) -> None:
+def _enable_interactive_input(session, name: str, auto_approve: bool = False) -> None:
     from rlmagent.agents.approval import DENY
 
     approver = session.agent_tree.approver
@@ -246,7 +246,9 @@ def _enable_interactive_input(session, name: str) -> None:
     async def question(text, choices=None, multiple=False):
         return await _request_input(name, text, approval=False, choices=choices or (), multiple=multiple)
 
-    if approver.policy == "deny":
+    # Print mode acts without asking; a worker has someone to ask, so it asks
+    # unless it was started with --auto-approve.
+    if approver.policy == "deny" or (approver.policy == "auto" and not auto_approve):
         approver.policy = "ask"
     approver.ask = ask
     approver.question = question
@@ -470,7 +472,7 @@ async def serve(name: str, ns: argparse.Namespace) -> int:
     if getattr(ns, "supervised", False):
         for stale in (base / "input").glob("*.json"):
             stale.unlink(missing_ok=True)
-        _enable_interactive_input(session, name)
+        _enable_interactive_input(session, name, getattr(ns, "auto_approve", False))
     history = base / "history.json"
     if (_read(history) or {}).get("session") != session.session_id:
         log = base / "log.jsonl"

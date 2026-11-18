@@ -636,6 +636,11 @@ def build_default_registry() -> CommandRegistry:
             handler=_cmd_tier, usage="/fast on|off",
         ),
         SlashCommand(
+            name="sandbox", description="Show or set whether the agent's code runs in the sandbox",
+            handler=_cmd_tier, usage="/sandbox [on|off]",
+            search_terms=("wasm", "kernel", "isolation", "safety"),
+        ),
+        SlashCommand(
             name="plan",
             description="Toggle read-only plan mode",
             handler=_cmd_plan,

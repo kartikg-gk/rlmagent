@@ -19,7 +19,7 @@ from rlmagent.model.external.cli import own_group
 MAX_READ = 2_000_000
 MAX_OUTPUT = 50 * 1024
 MAX_LIST = 2_000
-MAX_MATCHES = 500
+MAX_MATCHES = 100_000
 MAX_MATCH_TEXT = 300
 MAX_INSTRUCTION = 64 * 1024
 MAX_INSTRUCTIONS = 200
@@ -37,20 +37,11 @@ def _save(path: Path, text: str) -> None:
         f.write(text)
 
 
-def _capped_note(limit: int, base: Path, regex, rest) -> str:
-    """What a capped search says, so its list is not mistaken for a count.
+class Matches(list):
+    """search_files' result. Only ever matches, so len() is the number found;
+    ``truncated`` says an explicit ``limit`` stopped it early."""
 
-    When one file was searched, the rest of it is cheap to scan (files over
-    MAX_READ are skipped), so the note can give the true total.
-    """
-    if base.is_file():
-        total = limit + sum(1 for line in rest if regex.search(line))
-        if total > limit:
-            return (f"stopped at {limit} of {total} matching lines; this list is not a count. "
-                    f"The file has {total} matching lines.")
-        return f"stopped at {limit} matching lines, which is all of them."
-    return (f"stopped at {limit} matches and there are more; this list is not a count. "
-            "Narrow the search, or read the files and count in Python.")
+    truncated = False
 
 
 class Workspace:
@@ -94,17 +85,19 @@ class Workspace:
             raise ValueError(f"{path} is a binary file, not UTF-8 text") from None
 
     async def search_files(self, pattern: str, path: str = ".", glob: str | None = None,
-                           ignore_case: bool = False, limit: int = MAX_MATCHES) -> list[dict]:
-        """Lines matching a regular expression: [{"path", "line", "text"}], at most 500.
+                           ignore_case: bool = False, limit: int | None = None) -> list[dict]:
+        """Every line matching a regular expression: [{"path", "line", "text"}].
 
-        A capped result ends with a {"note"} entry, so its length is not a count:
-        to count or total matches, read the file and do it in Python."""
+        len() of the result is the number of matching lines. With ``limit`` it stops
+        after that many and sets ``.truncated``. More than MAX_MATCHES without a
+        limit is an error rather than a silently short list."""
         flags = re.IGNORECASE if ignore_case else 0
         regex = re.compile(pattern, flags)
         base = self._path(path)
-        limit = max(1, min(int(limit), MAX_MATCHES))
+        capped = limit is not None
+        limit = max(1, min(int(limit), MAX_MATCHES)) if capped else MAX_MATCHES
         files = [base] if base.is_file() else self._walk(base, glob)
-        found: list[dict] = []
+        found = Matches()
         for file in files:
             try:
                 if file.stat().st_size > MAX_READ:
@@ -119,7 +112,11 @@ class Workspace:
                                 "text": text[:MAX_MATCH_TEXT],
                             })
                             if len(found) >= limit:
-                                found.append({"note": _capped_note(limit, base, regex, f)})
+                                if not capped:
+                                    raise ValueError(
+                                        f"search_files found more than {MAX_MATCHES:,} matching "
+                                        "lines; narrow the pattern or the path, or pass limit=")
+                                found.truncated = True
                                 return found
             except (UnicodeDecodeError, OSError):
                 continue

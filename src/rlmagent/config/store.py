@@ -119,6 +119,8 @@ class RlmAgentConfig:
     # How folders with no saved trust decision are treated: ask, always, never.
     # Read only from this user-wide file, never from a project.
     project_trust: str | None = None
+    # Where the agent's code runs by default: "local" (this machine) or "wasm" (sandbox).
+    kernel: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -199,12 +201,14 @@ def load_config() -> RlmAgentConfig:
     provider = data.get("provider")
     model = data.get("model")
     trust = data.get("project_trust")
+    kernel = data.get("kernel")
     return RlmAgentConfig(
         provider=provider if isinstance(provider, str) and provider else None,
         model=model if isinstance(model, str) and model else None,
         api_keys=api_keys,
         base_urls=base_urls,
         project_trust=trust if trust in ("ask", "always", "never") else None,
+        kernel=kernel if kernel in ("wasm", "local") else None,
     )
 
 
@@ -228,6 +232,8 @@ def render_config(config: RlmAgentConfig) -> str:
         lines.append(f"model = {_quote(config.model)}")
     if config.project_trust:
         lines.append(f"project_trust = {_quote(config.project_trust)}")
+    if config.kernel:
+        lines.append(f"kernel = {_quote(config.kernel)}")
 
     names = sorted(set(config.api_keys) | set(config.base_urls))
     for name in names:

@@ -3,6 +3,6 @@
 Useful where a policy blocks the generated `rlm-agent.exe` launcher but allows Python.
 """
 
-from rlmagent.cli.main import main
+from rlmagent.cli.entry import main
 
 raise SystemExit(main())

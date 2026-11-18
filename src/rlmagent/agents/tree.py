@@ -206,7 +206,8 @@ class AgentTree:
             is_child=node.parent_id is not None,
         )
         kernel = KernelSession(
-            cwd=self.cwd, env=env, startup_code=KERNEL_API, timeout=self.cell_timeout
+            cwd=self.cwd, env=env, startup_code=KERNEL_API, timeout=self.cell_timeout,
+            restore=self.restore_kernel,
         )
         self.kernels[node.id] = kernel
         return kernel

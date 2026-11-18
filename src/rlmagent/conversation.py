@@ -101,7 +101,7 @@ _RUNNABLE_COMMANDS: frozenset[str] = frozenset({
     "goal", "autonomous", "btw", "image",
     "export", "help", "model", "name", "plan", "provider", "quit", "reload",
     "refine", "rewind", "session", "shell", "skills", "stats", "system", "think", "tools", "undo",
-    "version", "tier", "fast", "update", "share", "logs", "changelog",
+    "version", "tier", "fast", "update", "share", "logs", "changelog", "sandbox",
 })
 
 _RUNNABLE_COMMAND_TABLE: tuple[tuple[str, str], ...] = tuple(
@@ -663,21 +663,40 @@ class CodingSession:
         async for event in self._run_wrapped(self._harness.submit(content)):
             yield event
 
+    async def settle_undo(self) -> None:
+        """Wait for a workspace snapshot still being taken in the background."""
+        tree = getattr(self, "agent_tree", None)
+        gate = getattr(tree, "undo_gate", None)
+        if gate is not None:
+            await asyncio.shield(gate)
+
     async def _before_turn(self, text: str) -> str:
         """Snapshot the workspace for /undo; preload the files and links the prompt names."""
+        await self.settle_undo()
         if self.shadow is not None and self.shadow.available:
-            try:
-                commit = await asyncio.to_thread(self.shadow.snapshot, f"before: {text[:80]}")
-                backend = getattr(self, "backend", None)
-                state = backend.checkpoint_state() if backend is not None else None
-                self._undo_stack.append(
-                    (commit, self._tip_id, list(self._harness.transcript), state))
-                self._save_undo()
-                self._undo_problem = None
-            except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
-                self._undo_problem = str(exc) or type(exc).__name__
-                print(f"rlm-agent: /undo will not cover this turn: {self._undo_problem}",
-                      file=sys.stderr)
+            backend = getattr(self, "backend", None)
+            state = backend.checkpoint_state() if backend is not None else None
+            entry = (self._tip_id, list(self._harness.transcript), state)
+
+            async def snapshot():
+                try:
+                    commit = await asyncio.to_thread(self.shadow.snapshot,
+                                                     f"before: {text[:80]}")
+                    self._undo_stack.append((commit, *entry))
+                    self._save_undo()
+                    self._undo_problem = None
+                except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+                    self._undo_problem = str(exc) or type(exc).__name__
+                    print(f"rlm-agent: /undo will not cover this turn: {self._undo_problem}",
+                          file=sys.stderr)
+
+            tree = getattr(self, "agent_tree", None)
+            if backend is not None and tree is not None:
+                # Taken while the first model call is in flight; the model's reply
+                # waits for it before any of its code can touch the workspace.
+                tree.undo_gate = asyncio.ensure_future(snapshot())
+            else:
+                await snapshot()
         tree = getattr(self, "agent_tree", None)
         if tree is None or not self.cwd:
             return ""
@@ -968,6 +987,7 @@ class CodingSession:
         return tasks.render()
 
     async def _cmd_undo(self, arg: str) -> str:
+        await CodingSession.settle_undo(self)
         if not self._undo_stack:
             ready = self.shadow is not None and self.shadow.available
             return "Nothing to undo." if ready else self._why_no_undo("Undo")
@@ -1408,6 +1428,7 @@ class CodingSession:
             "think": self._cmd_think,
             "tier": self._cmd_tier,
             "fast": self._cmd_fast,
+            "sandbox": self._cmd_sandbox,
             "plan": self._cmd_plan,
             "compact": self._cmd_compact,
             "improve": self._cmd_improve,
@@ -2214,6 +2235,31 @@ class CodingSession:
         if arg.strip().lower() not in ("on", "off"):
             return "Use /fast on|off. Priority service pricing applies when enabled."
         return await self._cmd_tier("priority" if arg.strip().lower() == "on" else "default")
+
+    def _cmd_sandbox(self, arg: str) -> str:
+        """Show where this session's code runs, or save the default for new sessions."""
+        from rlmagent.config.store import load_config, save_config
+
+        tree = getattr(self, "agent_tree", None)
+        current = "on" if getattr(tree, "kernel_kind", None) == "wasm" else "off"
+        argument = arg.strip().lower()
+        if not argument:
+            saved = "on" if load_config().kernel == "wasm" else "off"
+            where = "in the sandbox" if current == "on" else "directly on this machine"
+            return (f"Sandbox is {current} for this session (code runs {where}); "
+                    f"new sessions start with it {saved}. Use /sandbox on|off to change that.")
+        if argument not in ("on", "off"):
+            return f"Unknown argument: {arg!r}. Use /sandbox [on|off]."
+        cfg = load_config()
+        cfg.kernel = "wasm" if argument == "on" else "local"
+        save_config(cfg)
+        note = ("the agent's code will run in WebAssembly, away from your files (needs Node.js 18+)"
+                if argument == "on" else
+                "the agent's code will run directly on this machine with your permissions")
+        if argument == current:
+            return f"Sandbox {argument} saved as the default; {note}."
+        return (f"Sandbox {argument} saved; {note}. This session keeps its current kernel and "
+                "variables; restart rlm-agent to switch.")
 
     def _cmd_plan(self, arg: str) -> str:
         """Toggle plan mode, or set it explicitly with ``on``/``off``."""

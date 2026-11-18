@@ -12,6 +12,8 @@ from rlmagent.skillset import Skill, build_skill_index
 from rlmagent.harness.contracts.tooling import ToolSpec
 
 _AGENTS_FILE = "AGENTS.md"
+# Many projects already keep their agent instructions here; read it the same way.
+_CLAUDE_FILE = "CLAUDE.md"
 
 _BASE_IDENTITY = """You are rlm-agent, a coding agent working in the user's project. Your main tool is a persistent Python kernel; your other tools read, write and edit files.
 
@@ -57,6 +59,8 @@ def _agents_md_search_paths(cwd: str) -> list[Path]:
         *user,
         paths.project / ".rlm-agent" / _AGENTS_FILE,     # <project>/.rlm-agent/AGENTS.md
         paths.project / ".agents" / _AGENTS_FILE,    # <project>/.agents/AGENTS.md
+        paths.project / ".claude" / _CLAUDE_FILE,    # <project>/.claude/CLAUDE.md
+        paths.project / _CLAUDE_FILE,                # <project>/CLAUDE.md
         paths.project / _AGENTS_FILE,                # <project>/AGENTS.md (highest)
     ]
 
@@ -82,7 +86,7 @@ def _project_sections(cwd: str) -> list[PromptSection]:
     for index, (path, content) in enumerate(found):
         text = content
         if index == 0:
-            text = f"## Project instructions ({_AGENTS_FILE})\n\n{content}"
+            text = f"## Project instructions ({path.name})\n\n{content}"
         sections.append(PromptSection("Project instructions", str(path), text))
     return sections
 

@@ -19,7 +19,7 @@ The python tool runs code in one sandboxed kernel (Python compiled to WebAssembl
     text  = await read_file("src/app.py")
     part  = await read_file("src/app.py", 100, 160)   # only lines 100 to 160
     paths = await list_files("**/*.py")
-    hits  = await search_files(r"def main", glob="*.py")  # [{"path", "line", "text"}], at most 500
+    hits  = await search_files(r"def main", glob="*.py")  # [{"path", "line", "text"}], every match; len() counts them
     # to count matches, read the file and count in Python: a capped search is not a count
     await write_file("src/app.py", text)          # asks the user first
     await edit_file("src/app.py", old, new)       # old must occur exactly once

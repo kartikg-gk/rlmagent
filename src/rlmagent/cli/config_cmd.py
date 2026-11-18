@@ -33,7 +33,34 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("show", help="Show the saved configuration (keys masked).")
     sub.add_parser("path", help="Print the configuration file path.")
     sub.add_parser("doctor", help="Report this terminal's hidden-input support.")
+    sb = sub.add_parser("sandbox", help="Show or set whether the agent's code runs in the sandbox.")
+    sb.add_argument("state", nargs="?", choices=("on", "off"), default=None)
     return p
+
+
+def _sandbox(state: str | None) -> int:
+    """Show or save where the agent's code runs by default."""
+    from rlmagent.cli.main import default_kernel
+
+    if state is None:
+        on = default_kernel() == "wasm"
+        prompts.info(f"Sandbox: {'on' if on else 'off'}"
+                     + ("" if on else " (the agent's code runs directly on this machine)"))
+        if os.environ.get("RLM_AGENT_KERNEL"):
+            prompts.info(f"  set by RLM_AGENT_KERNEL={os.environ['RLM_AGENT_KERNEL']}")
+        prompts.info("Change it with: rlm-agent config sandbox on|off")
+        return 0
+    cfg = load_config()
+    cfg.kernel = "wasm" if state == "on" else "local"
+    path = save_config(cfg)
+    if state == "on":
+        prompts.info("Sandbox on: the agent's code runs in WebAssembly, away from your files "
+                     "(needs Node.js 18+; slower start).")
+    else:
+        prompts.info("Sandbox off: the agent's code runs directly on this machine with your "
+                     "permissions (faster start).")
+    prompts.info(f"Saved to {path}. Override one run with --sandbox or --no-sandbox.")
+    return 0
 
 
 def _doctor() -> int:
@@ -82,7 +109,8 @@ def _save_noninteractive(
 
 
 #: Environment variables that take precedence over the saved file for a run.
-OVERRIDES = ("RLM_AGENT_PROVIDER", "RLM_AGENT_MODEL", "RLM_AGENT_API_KEY", "RLM_AGENT_HOME")
+OVERRIDES = ("RLM_AGENT_PROVIDER", "RLM_AGENT_MODEL", "RLM_AGENT_API_KEY", "RLM_AGENT_HOME",
+             "RLM_AGENT_KERNEL")
 
 
 def _show() -> int:
@@ -98,6 +126,7 @@ def _show() -> int:
         prompts.info(f"Config: {path}")
         prompts.info(f"Provider: {cfg.provider or '(unset)'}")
         prompts.info(f"Model:    {cfg.model or '(unset)'}")
+        prompts.info(f"Sandbox:  {'on' if cfg.kernel == 'wasm' else 'off'}")
         for name in sorted(cfg.api_keys):
             prompts.info(f"  {name}: {mask_key(cfg.api_keys[name])}")
     if overrides:
@@ -162,6 +191,8 @@ def handle_config(argv: Sequence[str]) -> int:
         return 0
     if ns.action == "doctor":
         return _doctor()
+    if ns.action == "sandbox":
+        return _sandbox(ns.state)
 
     api_key = ns.api_key or os.environ.get("RLM_AGENT_API_KEY")
     if ns.provider and (api_key or ns.model):

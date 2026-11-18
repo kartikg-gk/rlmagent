@@ -107,6 +107,19 @@ def _session_path(base: Path, session_id: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
+def default_kernel() -> str:
+    """Where the agent's code runs when no flag says: RLM_AGENT_KERNEL, then the saved setting, then local."""
+    env = os.environ.get("RLM_AGENT_KERNEL", "").strip().lower()
+    if env in ("wasm", "local"):
+        return env
+    try:
+        from rlmagent.config.store import load_config
+
+        return load_config().kernel or "local"
+    except Exception:
+        return "local"
+
+
 def _build_run_parser() -> argparse.ArgumentParser:
     """Build the argument parser for the default run mode."""
     p = argparse.ArgumentParser(
@@ -155,8 +168,10 @@ def _build_run_parser() -> argparse.ArgumentParser:
     p.add_argument("--deny-git", action="store_true",
                    help="Refuse git commands that touch other branches, remotes or history "
                         "(push, fetch, checkout, branch, tag, reset, ...).")
-    p.add_argument("--shell-access", choices=("workspace", "host"), default="workspace",
-                   help="Shell filesystem access: isolated workspace (default), or grant host access.")
+    p.add_argument("--shell-access", choices=("workspace", "host"), default=None,
+                   help="Shell filesystem access: an isolated workspace (Linux/WSL bubblewrap) or "
+                        "this machine. Default follows the sandbox: workspace when it is on, "
+                        "host when it is off.")
     p.add_argument("--shell-network", action="store_true",
                    help="Allow network access from workspace-isolated shell commands.")
     p.add_argument("--max-tool-output", type=int, default=None, metavar="BYTES",
@@ -175,18 +190,28 @@ def _build_run_parser() -> argparse.ArgumentParser:
                    help="Check whether to update the playbook every N finished tasks (default 5).")
     p.add_argument("--improve-cooldown", type=float, default=900.0,
                    help="Seconds between automatic playbook checks (default 900).")
-    p.add_argument("--kernel", choices=("wasm", "local"), default="wasm",
-                   help="Where the python tool runs: a WebAssembly sandbox (default) or a "
-                        "local IPython kernel.")
+    kernel = p.add_mutually_exclusive_group()
+    kernel.add_argument("--kernel", choices=("wasm", "local"), default=default_kernel(),
+                        help="Where the python tool runs: a local IPython kernel on this machine, "
+                             "or a WebAssembly sandbox. Default comes from "
+                             "`rlm-agent config sandbox on|off` (local when unset).")
+    kernel.add_argument("--sandbox", dest="kernel", action="store_const", const="wasm",
+                        help="Run the agent's code in the WebAssembly sandbox for this run.")
+    kernel.add_argument("--no-sandbox", dest="kernel", action="store_const", const="local",
+                        help="Run the agent's code directly on this machine for this run.")
     p.add_argument("--engine", choices=("session", "rlmness"), default="rlmness",
                    help="Execution backend (default rlmness; session reads the previous engine).")
     p.add_argument("--restore-kernel", action="store_true",
-                   help="Recover the last sandbox checkpoint after a restart (WASM only).")
+                   help="Recover the kernel's last checkpoint after it crashes or is restarted.")
     p.add_argument("--no-network", dest="network", action="store_false",
                    help="Keep the sandbox offline: no internet, no package installs.")
     p.add_argument("--auto-approve", action="store_true",
-                   help="Let the sandbox write files and run commands without asking. "
-                        "Only for scratch folders.")
+                   help="Let the agent write files and run commands without asking, "
+                        "also in the interactive UI. -p runs already do.")
+    p.add_argument("--read-only", action="store_true",
+                   help="In -p runs, refuse file writes and commands instead of doing them.")
+    p.add_argument("--mode", choices=("text", "json"), default="text",
+                   help="-p output: the final text (default), or one JSON event per line.")
     p.add_argument(
         "--contract", metavar="FILE", default=None,
         help="Run with exactly the settings in this run contract (JSON); needs -p.",
@@ -388,7 +413,9 @@ def _load_skills(cwd: str, verbose: bool = False) -> list[object]:
 
         paths = default_paths(project=Path(cwd))
         dirs = skill_search_paths(paths)
-        skills = load_skills(dirs)
+        from rlmagent.builtin_skills import with_builtins
+
+        skills = with_builtins(load_skills(dirs))
         if verbose:
             searched = ", ".join(str(d) for d in dirs)
             _info(f"Loaded {len(skills)} skill(s) (searched: {searched}).")
@@ -817,9 +844,13 @@ async def _consume_events(
     events: AsyncIterator[AgentEvent],
     *,
     print_mode: bool,
+    output: str = "text",
 ) -> bool:
     """Consume the event stream and render output, returning overall success."""
-    mode = OutputMode.TEXT if print_mode else OutputMode.TRANSCRIPT
+    if output == "json":
+        mode = OutputMode.JSON
+    else:
+        mode = OutputMode.TEXT if print_mode else OutputMode.TRANSCRIPT
     renderer = make_renderer(mode)
     async for event in events:
         renderer.render(event)
@@ -842,11 +873,15 @@ async def _run_one_shot(
     prompt: str,
     *,
     print_mode: bool,
+    output: str = "text",
 ) -> int:
     """Submit a single prompt and exit."""
     events = session.submit(prompt)
-    ok = await _consume_events(events, print_mode=print_mode)
-    ok = await _keep_going(session, ok, print_mode=print_mode)
+    ok = await _consume_events(events, print_mode=print_mode, output=output)
+    ok = await _keep_going(session, ok, print_mode=print_mode, output=output)
+    settle = getattr(session, "settle_undo", None)
+    if settle is not None:
+        await settle()
     sys.stdout.flush()
     refused = _report_unasked(session)
     return 0 if ok and not refused else 1
@@ -864,16 +899,18 @@ def _report_unasked(session) -> bool:
         return False
     shown = "; ".join(refused[:5]) + (f"; and {len(refused) - 5} more" if len(refused) > 5 else "")
     print(f"Not done: {len(refused)} action(s) needed approval and nobody could give it here: "
-          f"{shown}. Run again with --auto-approve to allow them.", file=sys.stderr)
+          f"{shown}. Run again without --read-only to allow them.", file=sys.stderr)
     return True
 
 
-async def _keep_going(session: CodingSession, ok: bool, *, print_mode: bool) -> bool:
+async def _keep_going(session: CodingSession, ok: bool, *, print_mode: bool,
+                      output: str = "text") -> bool:
     """Run the turns autonomous mode starts on its own, until it stops."""
     pilot = getattr(session, "autopilot", None)
     while ok and pilot is not None and (following := pilot.next_prompt()):
         _info(f"[autonomous turn {pilot.turns}]")
-        ok = await _consume_events(session.submit(following), print_mode=print_mode)
+        ok = await _consume_events(session.submit(following), print_mode=print_mode,
+                                   output=output)
     if pilot is not None and pilot.stopped_because:
         _info(f"[autonomous mode stopped: {pilot.stopped_because}]")
         pilot.stopped_because = ""
@@ -1095,7 +1132,8 @@ async def _async_main(ns: argparse.Namespace) -> int:
 
     try:
         if ns.prompt:
-            return await _run_one_shot(session, ns.prompt, print_mode=ns.print_mode)
+            return await _run_one_shot(session, ns.prompt, print_mode=ns.print_mode,
+                                       output=getattr(ns, "mode", "text"))
         return await _run_interactive(session)
     finally:
         await session.shutdown()

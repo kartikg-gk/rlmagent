@@ -91,10 +91,17 @@ RESTARTED = ("The kernel stopped (it crashed or was killed) and has been started
              "Variables, imports and functions from this run are gone; set up again what "
              "you need. Files on disk and background jobs are unaffected.")
 
+RESTORED = ("The kernel stopped (it crashed or was killed) and has been started again from "
+            "its last checkpoint. Restored: {restored}. Not restored: {missing}. Changes from "
+            "the cell that was running are lost; files on disk are unaffected.")
 
-def shape_cells(runtime, policy, rebuild=None) -> None:
+
+def shape_cells(runtime, policy, rebuild=None, restore=False) -> None:
     """Cap what a cell shows the model, add a hint when it failed in a familiar way, and
-    start a fresh kernel when this one dies, rather than ending the run."""
+    start a fresh kernel when this one dies, rather than ending the run.
+
+    With ``restore``, the namespace is checkpointed after every finished cell and a
+    restarted kernel starts from that checkpoint instead of empty."""
     from rlmness.runtime import RuntimeGone
 
     from rlmagent.hints import hint_for
@@ -102,12 +109,24 @@ def shape_cells(runtime, policy, rebuild=None) -> None:
 
     limit = getattr(policy, "max_tool_output_bytes", DEFAULT_OUTPUT_BYTES)
     setup: list[str] = []
+    checkpoint: dict = {}
+    # Names the kernel starts with (helpers, PROMPT): rebuilt by setup, never restored.
+    base = ({name for kind in runtime.sweep().values() for name in kind}
+            if restore else set())
 
     def run(code):
         return type(runtime).execute(runtime, code)
 
+    def save(code):
+        state = runtime.sweep(code)
+        if state:
+            checkpoint.clear()
+            checkpoint.update({kind: {name: value for name, value in entries.items()
+                                      if name not in base}
+                               for kind, entries in state.items()})
+
     def restart():
-        fresh = rebuild()
+        fresh = rebuild(checkpoint) if restore else rebuild()
         # The engine holds this object, so the new kernel moves into it.
         runtime.__dict__.clear()
         runtime.__dict__.update(fresh.__dict__)
@@ -128,7 +147,17 @@ def shape_cells(runtime, policy, rebuild=None) -> None:
             runtime.restarts = restarts + 1
             from rlmness.runtime import CellOutcome
 
+            if restore:
+                failed = set(getattr(runtime, "restore_failed", ()) or ())
+                saved = set().union(*(checkpoint.get(k, {}) for k in
+                                      ("variables", "functions", "modules")))
+                missing = sorted(set(checkpoint.get("dropped", {})) | failed)
+                return CellOutcome(error=RESTORED.format(
+                    restored=", ".join(sorted(saved - failed)) or "nothing",
+                    missing=", ".join(missing) or "nothing"))
             return CellOutcome(error=RESTARTED)
+        if restore and not outcome.error and len(setup) >= SETUP_CELLS:
+            save(code)
         outcome.stdout = cap_output(outcome.stdout or "", limit)
         hint = hint_for(code, (outcome.stdout or "") + "\n" + (outcome.error or ""))
         if hint and outcome.error:
@@ -155,6 +184,7 @@ class Client:
         record=None,
         images=(),
         activity_waits=None,
+        attached=None,
     ):
         self.provider, self.loop, self.signal = provider, loop, signal
         self.pending = pending if pending is not None else set()
@@ -163,6 +193,8 @@ class Client:
         self.background = background
         self.accounting, self.record = accounting, record
         self.images = images
+        # Images an agent attached from its kernel, shown with its next model call.
+        self.attached: dict[str, list] = attached if attached is not None else {}
         self.activity_waits = activity_waits if activity_waits is not None else {}
         self.host_context = contextvars.copy_context()
 
@@ -187,6 +219,12 @@ class Client:
                 for m in messages
                 if m["role"] != "system"
             ]
+            if attached := self.attached.pop(agent, None):
+                for index in range(len(entries) - 1, -1, -1):
+                    if isinstance(entries[index], HumanEntry):
+                        entries[index] = HumanEntry(
+                            content=[TextSegment(text=entries[index].text), *attached])
+                        break
             if agent == "root" and self.images:
                 for index, entry in enumerate(entries):
                     if isinstance(entry, HumanEntry):
@@ -260,6 +298,11 @@ class Client:
                         )
                     if tracer is not None:
                         tracer.end(call, usage, event.reason)
+                    gate = getattr(self.tree, "undo_gate", None)
+                    if gate is not None and not gate.done():
+                        # The workspace snapshot for /undo must exist before this
+                        # reply's code runs.
+                        await asyncio.shield(gate)
                     return event.message.text, Spend(
                         prompt_tokens=usage.input + usage.cache_read + usage.cache_write,
                         completion_tokens=usage.output,
@@ -398,6 +441,7 @@ class BackendProvider:
                 self.provider = with_external(tree.provider.inner)
             workspace = Workspace(tree.cwd, tree.approver)
             workspace.policy = getattr(tree, "policy", None)
+            attached: dict[str, list] = {}
             workspace.on_output = lambda text: updates.put({"kind": "command_output", "text": text})
             updates = queue.Queue()
             context = threading.local()
@@ -609,6 +653,22 @@ class BackendProvider:
                     "    exec(entry['content'], namespace)\n"
                     "    return namespace[entry['callable']]"
                 ) if "playbook" in joined else ""
+                async def attach_image(path):
+                    from rlmagent.tools.files import _read_image
+
+                    target = workspace._path(str(path))
+                    if target.suffix.lower() not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+                        raise ValueError("attach_image takes a PNG, JPEG, GIF or WebP file")
+                    if not target.is_file():
+                        raise ValueError(f"no file at {path}")
+                    segment = _read_image(target).content[0]
+                    if getattr(segment, "type", "") != "image":
+                        raise ValueError(getattr(segment, "text", "could not read the image"))
+                    attached.setdefault(agent, []).append(segment)
+                    return (f"Attached {target.name}; you will see it with your next step. "
+                            "End this cell now.")
+
+                joined["attach_image"] = wrap(attach_image)
                 if "_delivery" in joined:
                     startup += ("\nasync def child_delivery(handle, receipt):\n"
                                 "    return await _delivery(handle.id, receipt)\n")
@@ -698,18 +758,22 @@ class BackendProvider:
                                       for pattern, hint in _RULES],
                         },
                     }
-                from rlmness.runtime import SubprocessRuntime
+                from rlmagent.prewarm import runtime_class
 
                 runtime_type = (
                     WasmRuntime
                     if getattr(tree, "kernel_kind", "wasm") == "wasm"
-                    else SubprocessRuntime
+                    else runtime_class()
                 )
                 # Host startup and helper installation have their own bounded window.
                 # The requested cell deadline still applies to every model-written cell.
-                def build():
+                restore = bool(getattr(tree, "restore_kernel", False)) and owner_session is None
+
+                def build(checkpoint=None):
                     if owner_session is not None:
                         kwargs["session"] = owner_session.state_for_guest()
+                    elif restore:
+                        kwargs["session"] = dict(checkpoint or {})
                     built = runtime_type(prompt, joined, max(30.0, timeout), tools, **kwargs)
                     built.execute(startup)
                     if tree.network and isinstance(built, WasmRuntime):
@@ -731,7 +795,8 @@ class BackendProvider:
                         reuse.close()
                     runtime = build()
                 runtimes.append(runtime)
-                shape_cells(runtime, getattr(tree, "policy", None), rebuild=build)
+                shape_cells(runtime, getattr(tree, "policy", None), rebuild=build,
+                            restore=restore)
                 return runtime
 
             factory.SEALED = True
@@ -767,7 +832,7 @@ class BackendProvider:
                 + (
                     "Complete the user's coding task. Workspace access uses async read_file(path, start=None, end=None) "
                     "(line numbers from 1, both ends included), list_files(pattern), "
-                    "search_files(regex, path='.', glob=None, ignore_case=False) for matching lines (at most 500, so count in Python over read_file instead), write_file(path, content), edit_file(path, old, new), "
+                    "search_files(regex, path='.', glob=None, ignore_case=False) for every matching line (len() of the result is the count), write_file(path, content), edit_file(path, old, new), "
                     "apply_patch(unified_diff) for several edits or files, all or none, "
                     "and run(cmd, timeout=120). Changes and commands use host approval. "
                     "await ask_user(question, choices=None, multiple=False) asks the user; use it only "
@@ -799,6 +864,7 @@ class BackendProvider:
                     "await factory_run(name) runs a named workflow from the user's library "
                     "when workspace approval allows it. "
                     "await web_search(query) searches the web when a search key is set. "
+                    "await attach_image(path) lets you see an image file with your next step. "
                     "await context_usage() reports how full the context is; await compact() "
                     "summarizes older conversation when this turn ends. "
                     "Other agents: await list_agents(), await send_message(to, text), "
@@ -842,6 +908,7 @@ class BackendProvider:
                         self.record_event,
                         images=images,
                         activity_waits=activity_waits,
+                        attached=attached,
                     ),
                     config=config,
                     instruction=instruction,

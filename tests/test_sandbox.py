@@ -151,12 +151,35 @@ async def test_files_named_in_the_prompt_reach_the_sandbox(tmp_path):
         await session.shutdown()
 
 
-def test_the_cli_defaults_to_the_sandbox():
+def test_the_cli_runs_on_this_machine_unless_the_sandbox_is_turned_on(tmp_path, monkeypatch):
+    from rlmagent.cli.config_cmd import handle_config
     from rlmagent.cli.main import _build_run_parser
 
+    monkeypatch.setenv("RLM_AGENT_HOME", str(tmp_path))
+    monkeypatch.delenv("RLM_AGENT_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("RLM_AGENT_KERNEL", raising=False)
     ns = _build_run_parser().parse_args([])
-    assert ns.kernel == "wasm" and ns.auto_approve is False
+    assert ns.kernel == "local" and ns.auto_approve is False
+    assert _build_run_parser().parse_args(["--sandbox"]).kernel == "wasm"
+
+    assert handle_config(["sandbox", "on"]) == 0
+    assert _build_run_parser().parse_args([]).kernel == "wasm"
+    assert _build_run_parser().parse_args(["--no-sandbox"]).kernel == "local"
     assert json.dumps(_build_run_parser().parse_args(["--kernel", "local"]).kernel) == '"local"'
+
+    monkeypatch.setenv("RLM_AGENT_KERNEL", "local")
+    assert _build_run_parser().parse_args([]).kernel == "local"
+    monkeypatch.delenv("RLM_AGENT_KERNEL")
+    assert handle_config(["sandbox", "off"]) == 0
+    assert _build_run_parser().parse_args([]).kernel == "local"
+
+
+def test_sandbox_flags_cannot_be_combined():
+    import pytest
+    from rlmagent.cli.main import _build_run_parser
+
+    with pytest.raises(SystemExit):
+        _build_run_parser().parse_args(["--sandbox", "--no-sandbox"])
 
 
 __all__ = ["asyncio"]
@@ -253,6 +276,6 @@ async def test_workspace_reads_line_ranges_and_searches(tmp_path):
         {"path": "src/a.py", "line": 2, "text": "def main():"}
     ]
     capped = await ws.search_files("e", limit=1)
-    assert len(capped) == 2 and "stopped at 1" in capped[-1]["note"]
+    assert len(capped) == 1 and capped.truncated and "note" not in capped[0]
     with pytest.raises(ValueError, match="outside the workspace"):
         await ws.search_files("x", path="..")

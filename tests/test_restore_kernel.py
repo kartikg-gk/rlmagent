@@ -61,8 +61,7 @@ async def test_contract_restore_is_optional_and_typed():
     with pytest.raises(ContractError, match='kernel.restore'):
         parse_contract(doc)
     doc['kernel'].update(restore=True, kind='local')
-    with pytest.raises(ContractError, match='kernel.restore'):
-        parse_contract(doc)
+    assert parse_contract(doc).kernel.restore
 
 async def test_cli_accepts_restore():
     from rlmagent.cli.main import _build_run_parser
